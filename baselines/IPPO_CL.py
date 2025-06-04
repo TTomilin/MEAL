@@ -51,7 +51,6 @@ class Config:
     reward_shaping: bool = True
     reward_shaping_horizon: float = 2.5e6
 
-    explore_fraction: float = 0.0
     activation: str = "relu"
     env_name: str = "overcooked"
     alg_name: str = "ippo"
@@ -488,9 +487,6 @@ def main():
                 # Initialize memory buffer
                 agem_mem = init_agem_memory(config.agem_memory_size, obs_dim[0])
 
-        # How many steps to explore the environment with random actions
-        exploration_steps = int(config.explore_fraction * config.total_timesteps)
-
         # reset the learning rate and the optimizer
         tx = optax.chain(
             optax.clip_by_global_norm(config.max_grad_norm),
@@ -541,14 +537,8 @@ def main():
                 # apply the policy network to the observations to get the suggested actions and their values
                 pi, value = network.apply(train_state.params, obs_batch, env_idx=env_idx)
 
-                # Decide whether to explore randomly or use the policy
-                policy_action = pi.sample(seed=_rng)
-                random_action = jax.random.randint(_rng, (config.num_actors,), 0, env.action_space().n)
-                explore = (steps_for_env < exploration_steps)
-
-                # Expand bool to match the shape of action arrays:
-                mask = jnp.repeat(jnp.array([explore]), config.num_actors)
-                action = jnp.where(mask, random_action, policy_action)
+                # Sample and action from the policy
+                action = pi.sample(seed=_rng)
 
                 log_prob = pi.log_prob(action)
 
@@ -591,7 +581,6 @@ def main():
 
                 # Increment steps_for_env by the number of parallel envs
                 steps_for_env = steps_for_env + config.num_envs
-                info["explore"] = jnp.ones((config.num_envs,), dtype=jnp.float32) * jnp.float32(explore)
 
                 runner_state = (train_state, env_state, obsv, update_step, steps_for_env, rng)
                 return runner_state, (transition, info)
@@ -831,10 +820,8 @@ def main():
             # General section
             # Update the step counter
             update_step += 1
-            mean_explore = jnp.mean(info["explore"])
 
             metrics["General/env_index"] = env_idx
-            metrics["General/explore"] = mean_explore
             metrics["General/update_step"] = update_step
             metrics["General/steps_for_env"] = steps_for_env
             metrics["General/env_step"] = update_step * config.num_steps * config.num_envs
