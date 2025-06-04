@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 from flax import struct
+from jax._src.flatten_util import ravel_pytree
 
 
 @struct.dataclass
@@ -119,36 +120,32 @@ def init_agem_memory(max_memory_size: int, obs_dim: int):
     )
 
 
-def agem_project(grads_ppo, grads_mem):
+def agem_project(grads_ppo, grads_mem, max_norm=40.):
     """
     Implements the AGEM projection:
       If g_new^T g_mem < 0:
          g_new := g_new - (g_new^T g_mem / ||g_mem||^2) * g_mem
     """
-    dot_g = sum([jnp.vdot(gn, gm) for gn, gm in zip(jax.tree_util.tree_leaves(grads_ppo),
-                                                    jax.tree_util.tree_leaves(grads_mem))])
-    dot_mem = sum([jnp.vdot(gm, gm2) for gm, gm2 in zip(jax.tree_util.tree_leaves(grads_mem),
-                                                        jax.tree_util.tree_leaves(grads_mem))])
+    g_new, unravel = ravel_pytree(grads_ppo)
+    g_mem, _       = ravel_pytree(grads_mem)
 
-    def project_fn(g_new):
-        # Scale factor
-        alpha = dot_g / (dot_mem + 1e-12)
-        # Sub each leaf: g_new := g_new - alpha*g_mem
-        return jax.tree_util.tree_map(lambda gn, gm: gn - alpha * gm, g_new, grads_mem)
 
-    grads_projected = jax.lax.cond(
-        dot_g < 0.0,
-        project_fn,
-        lambda x: x,
-        grads_ppo
+    dot_g   = jnp.vdot(g_new, g_mem)
+    dot_mem = jnp.vdot(g_mem, g_mem) + 1e-12
+    alpha   = dot_g / dot_mem
+    projected = jax.lax.cond(
+        dot_g < 0,
+        lambda _: g_new - alpha * g_mem,
+        lambda _: g_new,
+        operand=None
     )
-    stats = {
-        "agem/dot_g": dot_g,
-        "agem/dot_mem": dot_mem,
-        "agem/alpha": dot_g / (dot_mem + 1e-12),
-        "agem/is_projected": (dot_g < 0.0),
-    }
-    return grads_projected, stats
+
+    # second global-norm clip (recommended in AGEM paper)
+    norm = jnp.linalg.norm(projected)
+    projected = jnp.where(norm > max_norm, projected * (max_norm / norm), projected)
+
+    stats = dict(agem_dot_g=dot_g, agem_alpha=alpha, agem_is_proj=(dot_g < 0))
+    return unravel(projected), stats
 
 
 def sample_memory(agem_mem: AGEMMemory, sample_size: int, rng: jax.random.PRNGKey):
