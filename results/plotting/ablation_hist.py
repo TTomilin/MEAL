@@ -75,14 +75,16 @@ def ci95(arr: np.ndarray) -> float:
     """Half‑width of the 95 % t‑CI."""
     if len(arr) < 2:
         return float("nan")
-    return arr.std(ddof=1) / np.sqrt(len(arr)) * t.ppf(0.975, len(arr) - 1)
+    return arr.std(ddof=1) / np.sqrt(len(arr)) * t.ppf(0.85, len(arr) - 1)
 
 
 def nice_label(ver: str) -> str:
     """Human‑friendly label for legend."""
     if ver == "main":
         return "Original"
-    return ver.replace("_", " ").title()
+    ver = ver.replace("_", " ")
+    print(ver)
+    return ver.upper() if ver == 'cnn' else ver.title()
 
 
 # -------------------------------------------------------------
@@ -145,23 +147,20 @@ def main() -> None:
         offsets = x - (n_ver - 1) * bar_w / 2 + i * bar_w
         means = piv[ver].values
         errs = ci_piv[ver].values
-        ax.bar(offsets, means, bar_w, yerr=errs, capsize=5,
-               color=palette[ver], label=nice_label(ver), alpha=0.9)
+        ax.bar(offsets, means, bar_w, yerr=errs, capsize=5, color=palette[ver], label=nice_label(ver), alpha=0.9)
 
     # Axis & legend tweaks --------------------------------------
     ax.set_xticks(x)
-    ax.set_xticklabels(args.methods, rotation=15)
+    ax.set_xticklabels(args.methods)
     ax.set_ylabel("Normalized Score")
-    ax.set_xlabel("CL Method")
     ax.set_ylim(bottom=0)  # bars start from bottom
 
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12),
-              ncol=n_ver // 2, frameon=False, title="Variant")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=n_ver // 2, frameon=False)
 
     plt.tight_layout()
     out_dir = root / "plots"
     out_dir.mkdir(exist_ok=True)
-    stem = args.plot_name or "ablation_" + "_".join(args.experiments)
+    stem = args.plot_name or "ablation"
     plt.savefig(out_dir / f"{stem}.png", dpi=300)
     plt.savefig(out_dir / f"{stem}.pdf")
     plt.show()
