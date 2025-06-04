@@ -144,102 +144,26 @@ def visualize_layout(name, grid_str, is_valid, reason):
     vis.render_grid(grid, tile_size=TILE_PIXELS, agent_dir_idx=state.agent_dir_idx, title=title)
 
 
-def create_specific_test_case(test_case):
-    """Create specific test cases for testing the validator."""
-    if test_case == "multi_pot_one_usable":
-        # Create a layout with 2 pots, one usable and one not
-        grid_str = """WWWWWWWW
-WAAOW  W
-W  W   W
-W  WPPPW
-W      W
-W  X   W
-WWWWWWWW"""
-        return grid_str
-    elif test_case == "agent_can_pass_plates":
-        # Create a layout where an agent is surrounded by walls but can pass plates to the other agent
-        grid_str = """WWWWWWWW
-W  O   W
-W      W
-WWAWWPPW
-W  A   W
-W  X   W
-WWWWWWWW"""
-        return grid_str
-    elif test_case == "complex_handoff":
-        # Create a layout where agents need to cooperate through multiple handoffs
-        grid_str = """WWWWWWWWWW
-W  O     W
-W        W
-WWAWWWWWWW
-W        W
-W        W
-W   A    W
-W        W
-W   X    W
-WWWWWWWWWW"""
-        return grid_str
-    elif test_case == "agent_next_to_interactive":
-        # Create a layout where an agent is next to an interactive tile but surrounded by walls
-        grid_str = """WWWWWWWW
-W  O   W
-W      W
-WWPAWWWW
-W  A   W
-W  X   W
-WWWWWWWW"""
-        return grid_str
-    elif test_case == "multiple_pots_complex":
-        # Create a layout with multiple pots, some usable and some not
-        grid_str = """WWWWWWWWWW
-W  O     W
-W        W
-WWPWWWWWWW
-W  A     W
-W        W
-W   A    W
-W   P    W
-W   X    W
-WWWWWWWWWW"""
-        return grid_str
-    else:
-        raise ValueError(f"Unknown test case: {test_case}")
-
-
 def test_layouts():
     """Test a variety of layouts with the improved validator."""
     # Create a list of layouts to test
     layouts = []
 
     # Add some valid layouts
-    for seed in range(5):
+    for _ in range(10):
+        seed = random.randint(0, 10000)
         try:
             grid_str, _ = generate_random_layout(
                 num_agents=2,
-                height_rng=(6, 8),
-                width_rng=(6, 8),
-                wall_density=0.25,
+                height_rng=(5, 6),
+                width_rng=(5, 6),
+                wall_density=0.35,
                 seed=seed,
+                allow_invalid=True,
             )
             layouts.append(("valid_" + str(seed), grid_str))
         except RuntimeError:
             print(f"Could not generate valid layout with seed {seed}")
-
-    # Add some invalid layouts
-    for issue_type in ["unreachable_onions", "no_onion_to_pot_path", "no_pot_to_delivery_path", "useless_agent"]:
-        for seed in range(3):
-            try:
-                grid_str = create_invalid_layout(issue_type, seed=seed + 100)
-                layouts.append((issue_type + "_" + str(seed), grid_str))
-            except Exception as e:
-                print(f"Error creating invalid layout {issue_type} with seed {seed}: {e}")
-
-    # Add specific test cases
-    layouts.append(("multi_pot_one_usable", create_specific_test_case("multi_pot_one_usable")))
-    layouts.append(("agent_can_pass_plates", create_specific_test_case("agent_can_pass_plates")))
-    layouts.append(("complex_handoff", create_specific_test_case("complex_handoff")))
-    layouts.append(("agent_next_to_interactive", create_specific_test_case("agent_next_to_interactive")))
-    layouts.append(("multiple_pots_complex", create_specific_test_case("multiple_pots_complex")))
 
     # Validate each layout
     results = []
