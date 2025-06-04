@@ -7,7 +7,7 @@ Optimized logic:
 2. Fetch each key's full time series separately, only once.
 3. Skip keys whose output files already exist (unless `--overwrite`).
 4. Write files in
-   `data/<algo>/<cl_method>/<arch>/<ablation>/<strategy>_<seq_len>/seed_<seed>/`.
+   `data/<algo>/<cl_method>/<experiment>/<strategy>_<seq_len>/seed_<seed>/`.
 """
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ def store_array(arr: List[float], path: Path, fmt: str) -> None:
         np.savez_compressed(path.with_suffix('.npz'), data=np.asarray(arr, dtype=np.float32))
 
 
-def ablation_suffix(cfg: dict) -> str:
+def experiment_suffix(cfg: dict) -> str:
     """Return folder name encoding ablation settings."""
     suffixes = []
     if not cfg.get("use_multihead", True):
@@ -81,7 +81,9 @@ def ablation_suffix(cfg: dict) -> str:
         suffixes.append("reg_critic")
     if not cfg.get("use_layer_norm", True):
         suffixes.append("no_layer_norm")
-    return "-".join(suffixes) if suffixes else "baseline"
+    if cfg.get("use_cnn"):
+        suffixes.append("cnn")
+    return "-".join(suffixes) if suffixes else "main"
 
 
 # ---------------------------------------------------------------------------
@@ -101,25 +103,18 @@ def main() -> None:
         algo = cfg.get("alg_name")
         cl_method = cfg.get("cl_method", "UNKNOWN_CL")
 
-        # --- Temporary replacements because old runs are still using the old names --- #
         if algo == 'ippo_cbp':
             algo = 'ippo'
             cl_method = 'CBP'
-        if 'EWC' in run.name:
-            cl_method = 'EWC'
-            if cfg.get("ewc_mode") == "online":
-                cl_method = "Online_EWC"
-        elif 'MAS' in run.name:
-            cl_method = 'MAS'
-        elif cl_method is None:
-            cl_method = "FT"
-        # --- Temporary replacements because old runs are still using the old names --- #
+        if cl_method == 'EWC' and cfg.get("ewc_mode") == "online":
+            cl_method = "Online_EWC"
 
         strategy = cfg.get("strategy")
         seq_len = cfg.get("seq_length")
         seed = max(cfg.get("seed", 1), 1)
-        arch = "CNN" if cfg.get("use_cnn") else "MLP"
-        ablation = ablation_suffix(cfg)
+        experiment = experiment_suffix(cfg)
+        if experiment == 'main':
+            continue
 
         # find eval keys as W&B actually logged them
         eval_keys = discover_eval_keys(run)
@@ -127,8 +122,8 @@ def main() -> None:
             print(f"[warn] {run.name} has no Scaled_returns/ keys")
             continue
 
-        out_base = (base_workspace / args.output / algo / cl_method / arch /
-                    ablation / f"{strategy}_{seq_len}" / f"seed_{seed}")
+        out_base = (base_workspace / args.output / algo / cl_method /
+                    experiment / f"{strategy}_{seq_len}" / f"seed_{seed}")
 
         # iterate keys, skipping existing files unless overwrite
         for key in discover_eval_keys(run):
