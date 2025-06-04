@@ -31,3 +31,4 @@ model_*
 *.png
 *.pdf
 *.txt
+/.env
