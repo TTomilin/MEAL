@@ -850,7 +850,7 @@ def main():
                 agem_stats = loss_dict["agem_stats"]
                 for k, v in agem_stats.items():
                     if v.size > 0:  # Only add if there are values
-                        metrics[k] = jnp.mean(v, axis=0)
+                        metrics[k] = v.mean()
 
             # Soup section
             agent_0_soup = info["soups"]["agent_0"].sum()
