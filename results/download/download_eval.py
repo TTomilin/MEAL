@@ -6,7 +6,8 @@ Optimized logic:
 1. Discover available evaluation keys per run via `run.history(samples=1)`.
 2. Fetch each key's full time series separately, only once.
 3. Skip keys whose output files already exist (unless `--overwrite`).
-4. Write files in `data/<algo>/<cl_method>/<strategy>_<seq_len>/seed_<seed>/`.
+4. Write files in
+   `data/<algo>/<cl_method>/<arch>/<ablation>/<strategy>_<seq_len>/seed_<seed>/`.
 """
 from __future__ import annotations
 
@@ -69,6 +70,20 @@ def store_array(arr: List[float], path: Path, fmt: str) -> None:
         np.savez_compressed(path.with_suffix('.npz'), data=np.asarray(arr, dtype=np.float32))
 
 
+def ablation_suffix(cfg: dict) -> str:
+    """Return folder name encoding ablation settings."""
+    suffixes = []
+    if not cfg.get("use_multihead", True):
+        suffixes.append("no_multihead")
+    if not cfg.get("use_task_id", True):
+        suffixes.append("no_task_id")
+    if cfg.get("regularize_critic"):
+        suffixes.append("reg_critic")
+    if not cfg.get("use_layer_norm", True):
+        suffixes.append("no_layer_norm")
+    return "-".join(suffixes) if suffixes else "baseline"
+
+
 # ---------------------------------------------------------------------------
 # MAIN
 # ---------------------------------------------------------------------------
@@ -104,6 +119,7 @@ def main() -> None:
         seq_len = cfg.get("seq_length")
         seed = max(cfg.get("seed", 1), 1)
         arch = "CNN" if cfg.get("use_cnn") else "MLP"
+        ablation = ablation_suffix(cfg)
 
         # find eval keys as W&B actually logged them
         eval_keys = discover_eval_keys(run)
@@ -112,7 +128,7 @@ def main() -> None:
             continue
 
         out_base = (base_workspace / args.output / algo / cl_method / arch /
-                    f"{strategy}_{seq_len}" / f"seed_{seed}")
+                    ablation / f"{strategy}_{seq_len}" / f"seed_{seed}")
 
         # iterate keys, skipping existing files unless overwrite
         for key in discover_eval_keys(run):
