@@ -122,8 +122,16 @@ def main() -> None:
             print(f"[warn] {run.name} has no Scaled_returns/ keys")
             continue
 
+        # Handle repeat_sequence parameter
+        effective_seq_len = seq_len
+        if args.repeat_sequence is not None:
+            run_repeat_sequence = cfg.get("repeat_sequence")
+            if run_repeat_sequence is not None:
+                effective_seq_len = seq_len * args.repeat_sequence
+                print(f"[info] {run.name} using repeat_sequence={args.repeat_sequence}, effective seq_len={effective_seq_len}")
+
         out_base = (base_workspace / args.output / algo / cl_method /
-                    experiment / f"{strategy}_{seq_len}" / f"seed_{seed}")
+                    experiment / f"{strategy}_{effective_seq_len}" / f"seed_{seed}")
 
         # iterate keys, skipping existing files unless overwrite
         for key in discover_eval_keys(run):

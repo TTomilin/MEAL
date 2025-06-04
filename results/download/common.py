@@ -16,6 +16,7 @@ def cli() -> argparse.Namespace:
     p.add_argument("--output", default="data", help="Base folder for output")
     p.add_argument("--format", choices=["json", "npz"], default="json", help="Output file format")
     p.add_argument("--seq_length", type=int, nargs="+", default=[])
+    p.add_argument("--repeat_sequence", type=int, default=None, help="Repeat sequence value to multiply with seq_length")
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--strategy", choices=["ordered", "random", "generate"], default=None)
     p.add_argument("--algos", nargs="+", default=[], help="Filter by alg_name")
