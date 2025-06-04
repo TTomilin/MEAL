@@ -79,7 +79,7 @@ def collect_env_curves(base: Path, algo: str, method: str, strat: str,
     Returns:
         Tuple of (environment_names, curves_per_environment)
     """
-    folder = base / algo / method / f"{strat}_{seq_len}"
+    folder = base / algo / method / "main" / f"{strat}_{seq_len}"
     env_names, per_env_seed = [], []
 
     # discover envs

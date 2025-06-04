@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import List
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -48,7 +47,7 @@ def parse_args():
     p.add_argument('--seeds', type=int, nargs='+', default=[1, 2, 3, 4, 5], help="Seeds to include")
     p.add_argument('--sigma', type=float, default=1.5, help="Smoothing parameter")
     p.add_argument('--confidence', type=float, default=0.95, choices=[0.9, 0.95, 0.99], help="Confidence level")
-    p.add_argument('--metric', choices=['reward', 'soup'], default='reward', help="Metric to plot")
+    p.add_argument('--metric', choices=['reward', 'soup'], default='soup', help="Metric to plot")
     p.add_argument('--plot_name', default=None, help="Custom plot name")
     return p.parse_args()
 
@@ -73,7 +72,7 @@ def plot():
     methods = args.methods
     fig_height = 2.5 * len(methods) if len(methods) > 1 else 2.8
     fig, axes = plt.subplots(len(methods), 1, sharex=False, sharey=True, figsize=(12, fig_height))
-    if len(methods) == 1: 
+    if len(methods) == 1:
         axes = [axes]
 
     # Create one subplot per method
@@ -82,7 +81,7 @@ def plot():
 
         # Collect data for this method
         envs, curves = collect_env_curves(
-            data_root, args.algo, method, args.strategy, 
+            data_root, args.algo, method, args.strategy,
             args.seq_len, args.seeds, args.metric
         )
 

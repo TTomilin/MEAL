@@ -32,33 +32,37 @@ def compute_metrics(
         AP_seeds, F_seeds, PL_seeds = [], [], []
 
         base_folder = Path(
-            __file__).resolve().parent.parent / data_root / algo / method / arch / f"{strategy}_{seq_len}"
+            __file__).resolve().parent.parent / data_root / algo / method / "main"/ f"{strategy}_{seq_len}"
         for seed in seeds:
             sd = base_folder / f"seed_{seed}"
             if not sd.exists():
                 continue
 
             # 1) Load training curve for Plasticity
-            training_fp = sd / "training_reward.json"
+            training_fp = sd / "training_soup.json"
             if not training_fp.exists():
-                print(f"[warn] missing training_reward.json for {method} seed {seed}")
+                print(f"[warn] missing training_soup.json for {method} seed {seed}")
                 continue
             training = load_series(training_fp)
             n_train = len(training)
             chunk = n_train // seq_len
 
             # 2) Load per‐env evaluation series
-            env_files = sorted([f for f in sd.glob("*_reward.*") if "training" not in f.name])
+            env_files = sorted([f for f in sd.glob("*_soup.*") if "training" not in f.name])
             if len(env_files) != seq_len:
                 print(f"[warn] expected {seq_len} env files, found {len(env_files)} for {method} seed {seed}")
                 continue
             env_series = [load_series(f) for f in env_files]
             # ensure equal length
             L = max(len(s) for s in env_series)
-            env_mat = np.vstack([np.pad(s, (0, L - len(s)), constant_values=np.nan) for s in env_series])
+            # pad each task with its last value so the curve doesn’t nosedive
+            env_mat = np.vstack([
+                np.pad(s, (0, L - len(s)), constant_values=s[-1])
+                for s in env_series
+            ])
 
             # --- Average Performance (AP) ---
-            AP_seeds.append(np.nanmean(env_mat))
+            AP_seeds.append(env_mat.mean(axis=0)[-1])
 
             # --- Plasticity (PL): mean training return over last end_window_evals evals of each task chunk ---
             pl_vals = []
@@ -72,11 +76,12 @@ def compute_metrics(
             f_vals = []
             final_idx = env_mat.shape[1] - 1
             for i in range(seq_len):
-                end_idx = (i + 1) * chunk - 1
-                # average over last window of final performance for that env
-                fw_start = max(0, final_idx - end_window_evals + 1)
+                # average over the last window for stability
+                fw_start  = max(0, final_idx - end_window_evals + 1)
                 final_avg = np.nanmean(env_mat[i, fw_start: final_idx + 1])
-                f_vals.append(env_mat[i, end_idx] - final_avg)
+
+                best_perf = np.nanmax(env_mat[i, :final_idx + 1])  # best ever
+                f_vals.append(max(best_perf - final_avg, 0.0))     # clip ↯
             F_seeds.append(np.nanmean(f_vals))
 
         # aggregate across seeds
