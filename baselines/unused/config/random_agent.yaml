@@ -1,0 +1,9 @@
+"NUM_ENVS": 16
+"NUM_STEPS": 128
+"TOTAL_TIMESTEPS": 5e6
+"UPDATE_EPOCHS": 4
+"NUM_MINIBATCHES": 4
+"GAMMA": 0.99
+"ENV_NAME": "overcooked"
+"ENV_KWARGS": 
+  "layout" : "cramped_room"
