@@ -124,6 +124,7 @@ def generate_random_layout(
         wall_density: float = 0.15,
         seed: Optional[int] = None,
         max_attempts: int = 2000,
+        allow_invalid: bool = False,
 ):
     """Generate and return a random solvable Overcooked layout.
 
@@ -185,7 +186,7 @@ def generate_random_layout(
             # Convert to string and validate -----------------------------------
             grid_str = "\n".join("".join(row) for row in grid)
             is_valid, reason = evaluate_grid(grid_str)
-            if is_valid:
+            if is_valid or allow_invalid:
                 return grid_str, layout_grid_to_dict(grid_str)
 
             print(f"[Attempt {attempt}] Generated layout not solvable: {reason}. Retrying…")
