@@ -949,6 +949,7 @@ def main():
             # --- Train on environment i using the *current* ewc_state ---
             runner_state, metrics = train_on_environment(rng, train_state, env, cl_state, i)
             train_state = runner_state[0]
+            cl_state = runner_state[6]
 
             importance = cl.compute_importance(train_state.params, env, network, i, rng, config.use_cnn,
                                                config.importance_episodes, config.importance_steps,

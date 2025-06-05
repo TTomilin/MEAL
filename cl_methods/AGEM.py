@@ -156,16 +156,16 @@ def agem_project(grads_ppo, grads_mem, max_norm=40.):
 
 
 def sample_memory(mem: AGEMMemory, sample_size: int, rng):
-    size = jnp.maximum(mem.size, 1)               # avoid zero
+    size = jnp.maximum(mem.size, 1)  # avoid zero
     # draw `sample_size` indices *with replacement*
     idxs = jax.random.randint(rng, (sample_size,), 0, size)
 
-    obs      = mem.obs[idxs]                      # (sample_size, obs_dim)
-    actions  = mem.actions[idxs]
-    logp     = mem.log_probs[idxs]
-    advs     = mem.advantages[idxs]
-    targets  = mem.targets[idxs]
-    values   = mem.values[idxs]
+    obs = mem.obs[idxs]  # (sample_size, obs_dim)
+    actions = mem.actions[idxs]
+    logp = mem.log_probs[idxs]
+    advs = mem.advantages[idxs]
+    targets = mem.targets[idxs]
+    values = mem.values[idxs]
     return obs, actions, logp, advs, targets, values
 
 
