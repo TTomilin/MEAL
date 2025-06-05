@@ -636,13 +636,14 @@ def main():
                 returns the updated update_state and the total loss
                 '''
 
-                def _update_minbatch(train_state, batch_info):
+                def _update_minbatch(carry, batch_info):
                     '''
                     performs a single update minibatch in the training loop
                     @param train_state: the current state of the training
                     @param batch_info: the information of the batch
                     returns the updated train_state and the total loss
                     '''
+                    train_state, cl_state = carry
                     # unpack the batch information
                     traj_batch, advantages, targets = batch_info
 
@@ -731,7 +732,7 @@ def main():
                     train_state = train_state.apply_gradients(grads=grads)
 
                     # Of course we also need to add the network to the carry here
-                    return train_state, loss_information
+                    return (train_state, cl_state), loss_information
 
                 train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state = update_state
 
@@ -763,9 +764,9 @@ def main():
                     f=(lambda x: jnp.reshape(x, [config.num_minibatches, -1] + list(x.shape[1:]))), tree=shuffled_batch,
                 )
 
-                train_state, loss_information = jax.lax.scan(
+                (train_state, cl_state), loss_information = jax.lax.scan(
                     f=_update_minbatch,
-                    init=train_state,
+                    init=(train_state, cl_state),
                     xs=minibatches
                 )
 
