@@ -23,145 +23,42 @@ folder `…/plasticity/generate_100/…`.
 
 from __future__ import annotations
 
-import argparse
-import json
 from pathlib import Path
-from typing import List
 
-import matplotlib.pyplot as plt
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 
-# z‑scores for confidence bands
-CRIT = {0.9: 1, 0.95: 1.96, 0.99: 2.576}
-
-COL = {
-    "CBP": "#2F4B7C",
-    "EWC": "#12939A",
-    "MAS": "#FF6E54",
-    "AGEM": "#FFA600",
-    "L2": "#003F5C",
-    "PackNet": "#BC5090",
-    "ReDo": "#58508D",
-}
+# Try relative import first (when imported as a module)
+from results.plotting.utils import (
+    CRIT, METHOD_COLORS, collect_plasticity_runs, setup_plasticity_grid, save_plot,
+    create_plasticity_parser
+)
 
 
 # ───────────────────────── CLI ──────────────────────────
 
 def _cli():
-    p = argparse.ArgumentParser(
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-        description="Plot plasticity curves aggregated by task position.",
-    )
-    p.add_argument("--data_root", required=True, help="Root folder with algo/method runs.")
-    p.add_argument("--algo", required=True)
-    p.add_argument("--strategy", required=True, help="Prefix of the data folder, e.g. 'generate'.")
-    p.add_argument("--methods", nargs="+", required=True)
-    p.add_argument("--seq_len", type=int, required=True, help="Tasks per sequence.")
-    p.add_argument("--repeat_sequence", type=int, default=1, help="Sequence repetitions inside the file.")
-    p.add_argument("--steps_per_task", type=float, default=1e7, help="x‑axis scaling.")
-    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
-    p.add_argument("--sigma", type=float, default=1.5, help="Gaussian smoothing σ.")
-    p.add_argument("--confidence", type=float, default=0.9, choices=[0.9, 0.95, 0.99])
-    p.add_argument("--plot_name", default="plasticity_curve")
+    """Parse command line arguments for the plasticity plot script."""
+    p = create_plasticity_parser(description="Plot plasticity curves aggregated by task position.")
+    # Set default confidence level to 0.9 (overriding the default from create_plasticity_parser)
+    p.set_defaults(confidence=0.9, plot_name="plasticity_curve")
     return p.parse_args()
-
-
-# ─────────────────── helpers ───────────────────
-
-def _load(fp: Path) -> np.ndarray:
-    """Load a 1‑D trace from *fp* (.json or .npz with key 'data')."""
-    if fp.suffix == ".json":
-        return np.asarray(json.loads(fp.read_text()), dtype=float)
-    if fp.suffix == ".npz":
-        return np.load(fp)["data"].astype(float)
-    raise ValueError(f"Unsupported file type: {fp.suffix}")
-
-
-def _collect_runs(
-        base: Path,
-        algo: str,
-        method: str,
-        strat: str,
-        seq_len: int,
-        repeats: int,
-        seeds: List[int],
-) -> list[np.ndarray]:
-    """Return a list where item *i* contains all curves for task *i* across seeds.
-
-    Each trace ("*_soup.*") is assumed to contain *repeats* consecutive
-    sequences of *seq_len* tasks.  For every seed we build **one** curve per
-    task by concatenating all its segments across repetitions, then taking
-    the cumulative average (normalised to 1.0 at the end).
-    """
-
-    task_runs: list[list[np.ndarray]] = [[] for _ in range(seq_len)]
-    folder = f"{strat}_{seq_len * repeats}"
-
-    for seed in seeds:
-        run_dir = base / algo / method / "plasticity" / folder / f"seed_{seed}"
-        if not run_dir.exists():
-            print(f"Warning: no directory {run_dir}")
-            continue
-
-        for fp in sorted(run_dir.glob("*_soup.*")):
-            trace = _load(fp)
-            if trace.ndim != 1:
-                raise ValueError(f"Trace in {fp} is not 1‑D (shape {trace.shape})")
-
-            total_chunks = seq_len * repeats
-            L_est = len(trace) // total_chunks
-            if L_est == 0:
-                print(f"Warning: trace in {fp} shorter than expected; skipped.")
-                continue
-
-            # build one long segment per task by concatenating its occurrences
-            for task_idx in range(seq_len):
-                slices = []
-                for rep in range(repeats):
-                    start = (rep * seq_len + task_idx) * L_est
-                    end = start + L_est
-                    if end > len(trace):  # safety for ragged endings
-                        break
-                    slices.append(trace[start:end])
-                if not slices:
-                    continue
-
-                task_trace = np.concatenate(slices)
-                task_runs[task_idx].append(task_trace)
-
-    # pad to equal length so we can average ----------------------------------
-    processed: list[np.ndarray] = []
-    for idx, runs in enumerate(task_runs):
-        if not runs:
-            processed.append(np.array([]))
-            continue
-        T = max(len(r) for r in runs)
-        padded = [np.pad(r, (0, T - len(r)), constant_values=np.nan) for r in runs]
-        processed.append(np.vstack(padded))
-    return processed
 
 
 # ────────────────────────── main ─────────────────────────
 
 def main():
     args = _cli()
-    data_dir = Path(__file__).resolve().parent.parent / args.data_root
+    base_dir = Path(__file__).resolve().parent.parent
+    data_dir = base_dir / args.data_root
 
-    # figure grid ------------------------------------------------------------
-    if args.seq_len == 10:
-        n_rows, n_cols = 2, 5
-    else:
-        n_rows = int(np.ceil(np.sqrt(args.seq_len)))
-        n_cols = int(np.ceil(args.seq_len / n_rows))
-
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 3 * n_rows), squeeze=False)
-    axes = axes.flatten()
+    # Set up figure grid
+    fig, axes = setup_plasticity_grid(args.seq_len)
 
     method_lines, method_names = [], []
 
     for method in args.methods:
-        task_data = _collect_runs(
+        task_data = collect_plasticity_runs(
             data_dir,
             args.algo,
             method,
@@ -170,7 +67,7 @@ def main():
             args.repeat_sequence,
             args.seeds,
         )
-        color = COL.get(method)
+        color = METHOD_COLORS.get(method)
 
         for idx, curves in enumerate(task_data):
             if idx >= args.seq_len or curves.size == 0:
@@ -202,9 +99,9 @@ def main():
 
     fig.tight_layout(rect=[0.01, 0.03, 1, 0.98])
 
-    Path("plots").mkdir(exist_ok=True)
-    for ext in ("png", "pdf"):
-        fig.savefig(Path("plots") / f"{args.plot_name}.{ext}")
+    # Save the plot
+    out_dir = base_dir / Path("plots")
+    save_plot(fig, out_dir, args.plot_name)
 
     fig.show()
 

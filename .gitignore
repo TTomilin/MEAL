@@ -31,4 +31,5 @@ model_*
 *.png
 *.pdf
 *.txt
+*.csv
 /.env

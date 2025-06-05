@@ -13,42 +13,26 @@ Additional features:
 """
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 
-# Import utilities from the utils package
-try:
-    # Try relative import first (when imported as a module)
-    from .utils import (
-        collect_env_curves, smooth_and_ci, add_task_boundaries,
-        setup_task_axes, save_plot, CRIT
-    )
-except ImportError:
-    # Fall back to absolute import (when run as a script)
-    from results.plotting.utils import (
-        collect_env_curves, smooth_and_ci, add_task_boundaries,
-        setup_task_axes, save_plot, CRIT
-    )
+from results.plotting.utils import (
+    collect_env_curves, smooth_and_ci, add_task_boundaries,
+    save_plot, create_eval_parser
+)
 
 
 def parse_args():
     """Parse command line arguments for the per-task evaluation plot script."""
-    p = argparse.ArgumentParser(description="Plot per-task evaluation metrics for MARL continual-learning benchmark")
-    p.add_argument('--data_root', required=True, help="Root directory for data")
-    p.add_argument('--algo', required=True, help="Algorithm name")
-    p.add_argument('--methods', nargs='+', required=True, help="Method names to plot")
-    p.add_argument('--strategy', required=True, help="Training strategy")
-    p.add_argument('--seq_len', type=int, required=True, help="Sequence length")
-    p.add_argument('--steps_per_task', type=float, default=1e7, help="Steps per task")
-    p.add_argument('--seeds', type=int, nargs='+', default=[1, 2, 3, 4, 5], help="Seeds to include")
-    p.add_argument('--sigma', type=float, default=1.5, help="Smoothing parameter")
-    p.add_argument('--confidence', type=float, default=0.95, choices=[0.9, 0.95, 0.99], help="Confidence level")
-    p.add_argument('--metric', choices=['reward', 'soup'], default='soup', help="Metric to plot")
-    p.add_argument('--plot_name', default=None, help="Custom plot name")
+    p = create_eval_parser(
+        description="Plot per-task evaluation metrics for MARL continual-learning benchmark",
+        metric_choices=['reward', 'soup']
+    )
+    # Set default metric to 'soup' (overriding the default from create_eval_parser)
+    p.set_defaults(metric='soup')
     return p.parse_args()
 
 

@@ -24,11 +24,9 @@ import numpy as np
 import yaml
 from scipy.stats import sem
 
+from results.plotting.utils import create_parser_with_common_args, add_metric_arg, METHOD_COLORS
+
 # ---------- constants -------------------------------------------------
-METHOD_COLORS = {
-    'EWC': '#12939A', 'MAS': '#FF6E54', 'AGEM': '#FFA600',
-    'L2': '#58508D', 'PackNet': '#BC5090', 'ReDo': '#003F5C', 'CBP': '#2F4B7C'
-}
 Z95 = 1.96  # critical value for 95 % CI
 
 
@@ -36,19 +34,27 @@ Z95 = 1.96  # critical value for 95 % CI
 
 
 def parse_args():
-    p = argparse.ArgumentParser()
-    p.add_argument('--data_root', required=True)
-    p.add_argument('--algo', required=True)
-    p.add_argument('--methods', nargs='+', required=True)
-    p.add_argument('--strategy', required=True)
-    p.add_argument('--seq_len', type=int, required=True)
-    p.add_argument('--steps_per_task', type=float, default=8e6)
-    p.add_argument('--seeds', type=int, nargs='+', default=[1, 2, 3, 4, 5])
-    p.add_argument('--metric', choices=['success', 'reward'], default='success')
+    """Parse command line arguments for the forgetting histogram plot script."""
+    p = create_parser_with_common_args(description="Plot forgetting for MARL continual-learning benchmark")
+
+    # Override default steps_per_task
+    p.set_defaults(steps_per_task=8e6, plot_name='forgetting')
+
+    # Replace the metric argument with different choices
+    # First, remove the existing metric argument if it exists
+    for action in p._actions:
+        if action.dest == 'metric':
+            p._remove_action(action)
+            break
+
+    # Add the metric argument with different choices
+    add_metric_arg(p, choices=['success', 'reward'], default='success')
+
+    # Add script-specific arguments
     p.add_argument('--baseline_file',
                    default='practical_reward_baseline_results.yaml',
                    help='Only used for --metric success')
-    p.add_argument('--plot_name', default='forgetting')
+
     return p.parse_args()
 
 

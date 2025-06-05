@@ -1,4 +1,3 @@
-import argparse
 from pathlib import Path
 
 import numpy as np
@@ -6,24 +5,19 @@ import numpy as np
 from results.plotting.utils import (
     collect_runs, setup_figure, add_task_boundaries,
     setup_task_axes, smooth_and_ci, save_plot, finalize_plot,
-    METHOD_COLORS
+    METHOD_COLORS, create_eval_parser
 )
 
 
 def parse_args():
     """Parse command line arguments for the training plot script."""
-    p = argparse.ArgumentParser(description="Plot training metrics for MARL continual-learning benchmark")
-    p.add_argument('--data_root', required=True, help="Root directory for data")
-    p.add_argument('--algo', required=True, help="Algorithm name")
-    p.add_argument('--methods', nargs='+', required=True, help="Method names to plot")
-    p.add_argument('--strategy', required=True, help="Training strategy")
-    p.add_argument('--seq_len', type=int, required=True, help="Sequence length")
-    p.add_argument('--steps_per_task', type=float, default=1e7, help="Steps per task")
-    p.add_argument('--seeds', type=int, nargs='+', default=[1, 2, 3, 4, 5], help="Seeds to include")
-    p.add_argument('--sigma', type=float, default=1.5, help="Smoothing parameter")
-    p.add_argument('--confidence', type=float, default=0.9, choices=[0.9, 0.95, 0.99], help="Confidence level")
-    p.add_argument('--metric', choices=['reward', 'soup'], default='soup', help="Metric to plot")
-    p.add_argument('--plot_name', default=None, help="Custom plot name")
+    p = create_eval_parser(
+        description="Plot training metrics for MARL continual-learning benchmark",
+        metric_choices=['reward', 'soup']
+    )
+    # Set default confidence level to 0.9 (overriding the default from create_eval_parser)
+    p.set_defaults(confidence=0.9, metric='soup')
+    # Add script-specific arguments
     p.add_argument('--legend_anchor', type=float, default=0.87, help="Legend anchor position")
     return p.parse_args()
 

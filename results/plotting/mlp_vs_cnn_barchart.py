@@ -10,7 +10,6 @@ python plot_bar.py --data_root results --algo ippo \
 """
 from __future__ import annotations
 
-import argparse
 import json
 from pathlib import Path
 
@@ -20,6 +19,22 @@ import pandas as pd
 import seaborn as sns
 from scipy.stats import t
 
+# Import utilities from the utils package
+try:
+    # Try relative import first (when imported as a module)
+    from .utils import (
+        create_base_parser, add_common_args, add_metric_arg, load_series
+    )
+except ImportError:
+    # Fall back to absolute import (when run as a script)
+    import sys
+    import os
+    # Add the parent directory to sys.path
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+    from results.plotting.utils import (
+        create_base_parser, add_common_args, add_metric_arg, load_series
+    )
+
 sns.set_theme(style="whitegrid", context="notebook")
 
 
@@ -27,27 +42,27 @@ sns.set_theme(style="whitegrid", context="notebook")
 # CLI
 # ----------------------------------------------------------------------
 def parse_args():
-    p = argparse.ArgumentParser()
+    """Parse command line arguments for the MLP vs CNN bar chart script."""
+    p = create_base_parser(description="Compare MLP vs. CNN for several CL methods with a bar-chart")
+
+    # Add only the arguments needed for this script
     p.add_argument("--data_root", required=True,
                    help="root folder: results/<algo>/<method>/<arch>/strategy_len/seed_*")
-    p.add_argument("--algo", required=True)
-    p.add_argument("--methods", nargs="+", required=True)
-    p.add_argument("--strategy", required=True)
-    p.add_argument("--seq_len", type=int, required=True)
-    p.add_argument("--metric", choices=["reward", "success"], default="reward")
-    p.add_argument("--seeds", nargs="+", type=int, default=[3])
+    p.add_argument("--algo", required=True, help="Algorithm name")
+    p.add_argument("--methods", nargs="+", required=True, help="Method names to plot")
+    p.add_argument("--strategy", required=True, help="Training strategy")
+    p.add_argument("--seq_len", type=int, required=True, help="Sequence length")
+    p.add_argument("--seeds", nargs="+", type=int, default=[3], help="Seeds to include")
+
+    # Add metric argument
+    add_metric_arg(p, choices=["reward", "soup"], default="soup")
+
     return p.parse_args()
 
 
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
-def load_series(fp: Path) -> np.ndarray:
-    if fp.suffix == ".json":
-        return np.asarray(json.loads(fp.read_text()), dtype=float)
-    if fp.suffix == ".npz":
-        return np.load(fp)["data"].astype(float)
-    raise ValueError(fp)
 
 
 def final_scores(folder: Path, metric: str, seeds: list[int]) -> list[float]:
@@ -79,7 +94,7 @@ def main():
     rows = []
 
     for method in args.methods:
-        for arch in ("MLP", "CNN"):
+        for arch in ("main", "cnn"):
             run_dir = base / method / arch / f"{args.strategy}_{args.seq_len}"
             vals = final_scores(run_dir, args.metric, args.seeds)
             for v in vals:
@@ -103,16 +118,17 @@ def main():
     width = max(6, len(args.methods) * 1.5)
     fig, ax = plt.subplots(figsize=(width, 4))
 
-    palette = {"MLP": "#4C72B0", "CNN": "#DD8452"}
+    palette = {"main": "#4C72B0", "cnn": "#DD8452"}
     bar_w = 0.35
     x = np.arange(len(args.methods))
 
-    for i, arch in enumerate(("MLP", "CNN")):
+    for i, arch in enumerate(("main", "cnn")):
         sub = agg[agg.arch == arch]
         offsets = x - bar_w / 2 + i * bar_w
+        label = "MLP" if arch == "main" else "CNN"
         ax.bar(offsets, sub["mean"], bar_w,
                yerr=sub["ci95"], capsize=5,
-               color=palette[arch], label=arch, alpha=0.9)
+               color=palette[arch], label=label, alpha=0.9)
 
     ax.set_xticks(x)
     ax.set_xticklabels(args.methods)

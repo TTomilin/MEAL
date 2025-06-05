@@ -94,8 +94,11 @@ def main():
     ap.add_argument("--sigma", type=float, default=1.0, help="Gaussian σ before metric computation")
     args = ap.parse_args()
 
-    base = Path(__file__).resolve().parent.parent / args.data_root
-    out_dir = Path("plots"); out_dir.mkdir(exist_ok=True)
+    base = Path(__file__).resolve().parent.parent
+    data_dir = base / args.data_root
+    out_dir = base / Path("plots")
+    data_dir.mkdir(exist_ok=True)
+    out_dir.mkdir(exist_ok=True)
 
     csv_rows = [("method", "task", "time_to_τ", "time_norm", "aupc_loss", "aupc_norm")]
 

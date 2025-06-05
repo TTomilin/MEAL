@@ -15,43 +15,24 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Import utilities from the utils package
-try:
-    # Try relative import first (when imported as a module)
-    from .utils import (
-        collect_cumulative_runs, setup_figure, add_task_boundaries,
-        setup_task_axes, smooth_and_ci, save_plot, finalize_plot,
-        CRIT, METHOD_COLORS, forward_fill
-    )
-except ImportError:
-    # Fall back to absolute import (when run as a script)
-    from results.plotting.utils import (
-        collect_cumulative_runs, setup_figure, add_task_boundaries,
-        setup_task_axes, smooth_and_ci, save_plot, finalize_plot,
-        CRIT, METHOD_COLORS, forward_fill
-    )
+from results.plotting.utils import (
+    collect_cumulative_runs, setup_figure, add_task_boundaries,
+    setup_task_axes, smooth_and_ci, save_plot, finalize_plot,
+    METHOD_COLORS, create_eval_parser
+)
 
 
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments for the cumulative evaluation plot script."""
-    p = argparse.ArgumentParser(description="Plot cumulative average performance for MARL continual-learning benchmark")
-    p.add_argument('--data_root', required=True, help="Root directory for data")
-    p.add_argument('--algo', required=True, help="Algorithm name")
-    p.add_argument('--arch', required=True, help="Architecture name")
-    p.add_argument('--methods', nargs='+', required=True, help="Method names to plot")
-    p.add_argument('--strategy', required=True, help="Training strategy")
-    p.add_argument('--seq_len', type=int, required=True, help="Sequence length")
-    p.add_argument('--steps_per_task', type=float, default=1e7, help="Steps per task")
-    p.add_argument('--seeds', type=int, nargs='+', default=[1, 2, 3, 4, 5], help="Seeds to include")
-    p.add_argument('--sigma', type=float, default=1.5, help="Smoothing parameter")
-    p.add_argument('--confidence', type=float, default=0.95, choices=[0.9, 0.95, 0.99], help="Confidence level")
-    p.add_argument('--metric', choices=['reward', 'soup'], default='soup', help="Metric to plot")
-    p.add_argument('--plot_name', default=None, help="Custom plot name")
+    p = create_eval_parser(
+        description="Plot cumulative average performance for MARL continual-learning benchmark",
+        metric_choices=['reward', 'soup']
+    )
+    # Set default metric to 'soup' (overriding the default from create_eval_parser)
+    p.set_defaults(metric='soup')
+    # Add script-specific arguments
     p.add_argument('--legend_anchor', type=float, default=0.87, help="Legend anchor position")
     return p.parse_args()
-
-
-# This function has been moved to utils.data_loading
 
 
 def plot():
@@ -75,8 +56,7 @@ def plot():
     for method in args.methods:
         # Use the utility function to collect cumulative runs
         data = collect_cumulative_runs(
-            data_root, args.algo, method, args.arch,
-            args.strategy, args.metric, args.seq_len, args.seeds
+            data_root, args.algo, method, args.strategy, args.metric, args.seq_len, args.seeds
         )
         method_data[method] = data
 

@@ -36,7 +36,7 @@ TRAINING_KEY = "Soup/scaled"
 # ---------------------------------------------------------------------------
 def discover_eval_keys(run: Run) -> List[str]:
     """Retrieve & sort eval keys, plus the one training key if present."""
-    df = run.history(samples=10000)  # Increased from 500 to get more keys
+    df = run.history(samples=500)
     # only exact eval keys
     keys = [k for k in df.columns if KEY_PATTERN.match(k)]
     # include training series, if logged
@@ -54,7 +54,7 @@ def discover_eval_keys(run: Run) -> List[str]:
 def fetch_full_series(run: Run, key: str) -> List[float]:
     """Fetch every recorded value for a single key via scan_history."""
     vals: List[float] = []
-    for row in run.scan_history(keys=[key], page_size=10000):  # Increased from 1000 to get more data points
+    for row in run.scan_history(keys=[key], page_size=10000):
         v = row.get(key)
         if v is not None:
             vals.append(v)

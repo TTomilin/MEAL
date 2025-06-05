@@ -20,7 +20,9 @@ import numpy as np
 import pandas as pd
 from scipy.stats import t
 
-from results.plotting.utils import load_series
+from results.plotting.utils import (
+    create_parser_with_common_args, add_metric_arg, load_series
+)
 
 
 # -------------------------------------------------------------
@@ -28,23 +30,16 @@ from results.plotting.utils import load_series
 # -------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Compare ablated runs against main")
-    p.add_argument("--data_root", required=True,
-                   help="root folder with algorithm subfolders")
-    p.add_argument("--algo", required=True)
-    p.add_argument("--methods", nargs="+", required=True,
-                   help="ordered list of CL methods to show on x‑axis")
+    """Parse command line arguments for the ablation histogram plot script."""
+    p = create_parser_with_common_args(description="Compare ablated runs against main")
+
+    # Add script-specific arguments
     p.add_argument("--experiments", nargs="+", required=True,
                    help="one or more ablation folder names (no 'main')")
-    p.add_argument("--strategy", required=True)
-    p.add_argument("--seq_len", type=int, required=True,
-                   help="sequence length of the ablated runs")
     p.add_argument("--main_seq_len", type=int, default=20,
                    help="sequence length of the main runs (sliced to 10 tasks)")
-    p.add_argument("--metric", choices=["reward", "soup"], default="soup")
-    p.add_argument("--seeds", nargs="+", type=int, default=[1, 2, 3, 4, 5])
-    p.add_argument("--plot_name", default=None,
-                   help="stem for the output file names (png/pdf)")
+    add_metric_arg(p, choices=["reward", "soup"], default="soup")
+
     return p.parse_args()
 
 
