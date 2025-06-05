@@ -1,6 +1,9 @@
 import os
 from pathlib import Path
 
+from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
+    update_agem_memory
+from cl_methods.FT import FT
 from cl_methods.L2 import L2
 from cl_methods.MAS import MAS
 
@@ -15,7 +18,7 @@ from flax.training.train_state import TrainState
 from jax_marl.registration import make
 from jax_marl.viz.overcooked_visualizer import OvercookedVisualizer
 from jax_marl.wrappers.baselines import LogWrapper
-from architectures.shared_mlp import ActorCritic as MLPActorCritic
+from architectures.mlp import ActorCritic as MLPActorCritic
 from architectures.cnn import ActorCritic as CNNActorCritic
 from baselines.utils import *
 from cl_methods.EWC import EWC
@@ -72,13 +75,19 @@ class Config:
     ewc_mode: str = "online"  # "online", "last" or "multi"
     ewc_decay: float = 0.9  # Only for online EWC
 
+    # AGEM specific
+    agem_memory_size: int = 50000
+    agem_sample_size: int = 128
+
     # Environment
     seq_length: int = 2
+    repeat_sequence: int = 1
     strategy: str = "random"
     layouts: Optional[Sequence[str]] = field(default_factory=lambda: [])
     env_kwargs: Optional[Sequence[dict]] = None
     layout_name: Optional[Sequence[str]] = None
     evaluation: bool = True
+    eval_forward_transfer: bool = False
     record_gif: bool = True
     log_interval: int = 75
     eval_num_steps: int = 1000
@@ -124,7 +133,9 @@ def main():
 
     method_map = dict(ewc=EWC(mode=config.ewc_mode, decay=config.ewc_decay),
                       mas=MAS(),
-                      l2=L2())
+                      l2=L2(),
+                      ft=FT(),
+                      agem=AGEM(memory_size=config.agem_memory_size, sample_size=config.agem_sample_size))
 
     cl = method_map[config.cl_method.lower()]
 
@@ -291,6 +302,7 @@ def main():
                 obs: Any
                 done: bool
                 total_reward: float
+                soup: float
                 step_count: int
 
             def cond_fun(state: EvalState):
@@ -308,7 +320,7 @@ def main():
                 returns the updated state
                 '''
 
-                key, state_env, obs, _, total_reward, step_count = state
+                key, state_env, obs, _, total_reward, total_soup, step_count = state
                 subkeys = jax.random.split(key, num_agents + 2)
                 key, *agent_keys, key_s = subkeys
 
@@ -345,15 +357,17 @@ def main():
                 next_obs, next_state, reward, done_step, info = env.step(key_s, state_env, actions)
                 done = done_step["__all__"]
                 reward = reward["agent_0"]  # Common reward
+                soups_this_step = info["soups"]["agent_0"] + info["soups"]["agent_1"]
                 total_reward += reward
+                total_soup += soups_this_step
                 step_count += 1
 
-                return EvalState(key, next_state, next_obs, done, total_reward, step_count)
+                return EvalState(key, next_state, next_obs, done, total_reward, total_soup, step_count)
 
             # Initialize
             key, key_s = jax.random.split(key_r)
             obs, state = env.reset(key_s)
-            init_state = EvalState(key, state, obs, False, 0.0, 0)
+            init_state = EvalState(key, state, obs, False, 0.0, 0.0, 0)
 
             # Run while loop
             final_state = jax.lax.while_loop(
@@ -362,10 +376,11 @@ def main():
                 init_val=init_state
             )
 
-            return final_state.total_reward
+            return final_state.total_reward, final_state.soup
 
         # Loop through all environments
         all_avg_rewards = []
+        all_avg_soups = []
 
         envs = pad_observation_space()
 
@@ -373,14 +388,16 @@ def main():
             env = make(config.env_name, layout=env, num_agents=config.num_agents)  # Create the environment
 
             # Run k episodes
-            all_rewards = jax.vmap(lambda k: run_episode_while(env, k, config.eval_num_steps))(
+            all_rewards, all_soups = jax.vmap(lambda k: run_episode_while(env, k, config.eval_num_steps))(
                 jax.random.split(key, config.eval_num_episodes)
             )
 
             avg_reward = jnp.mean(all_rewards)
+            avg_soups = jnp.sum(all_soups)
             all_avg_rewards.append(avg_reward)
+            all_avg_soups.append(avg_soups)
 
-        return all_avg_rewards
+        return all_avg_rewards, all_avg_soups
 
     padded_envs = pad_observation_space()
     num_agents = config.num_agents
@@ -495,7 +512,7 @@ def main():
                 returns the updated runner state and the transition
                 '''
                 # Unpack the runner state
-                train_state, env_state, last_obs, update_step, steps_for_env, rng = runner_state
+                train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
 
                 # split the random number generator for action selection
                 rng, _rng = jax.random.split(rng)
@@ -558,7 +575,7 @@ def main():
                 steps_for_env = steps_for_env + config.num_envs
                 info["explore"] = jnp.ones((config.num_envs,), dtype=jnp.float32) * jnp.float32(explore)
 
-                runner_state = (train_state, env_state, obsv, update_step, steps_for_env, rng)
+                runner_state = (train_state, env_state, obsv, update_step, steps_for_env, rng, cl_state)
                 return runner_state, (transition, info)
 
             # Apply the _env_step function a series of times, while keeping track of the runner state
@@ -570,7 +587,7 @@ def main():
             )
 
             # unpack the runner state that is returned after the scan function
-            train_state, env_state, last_obs, update_step, steps_for_env, rng = runner_state
+            train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
 
             # create a batch of the observations that is compatible with the network
             last_obs_batch = batchify(last_obs, agents, config.num_actors, not config.use_cnn)
@@ -631,17 +648,17 @@ def main():
                 returns the updated update_state and the total loss
                 '''
 
-                def _update_minbatch(train_state, batch_info):
+                def _update_minbatch(carry, batch_info):
                     '''
                     performs a single update minibatch in the training loop
-                    @param train_state: the current state of the training
+                    @param carry: the current state of the training and cl_state
                     @param batch_info: the information of the batch
-                    returns the updated train_state and the total loss
+                    returns the updated train_state, cl_state and the total loss
                     '''
+                    train_state, cl_state = carry
                     # unpack the batch information
                     traj_batch, advantages, targets = batch_info
 
-                    # @profile
                     def _loss_fn(params, traj_batch, gae, targets):
                         '''
                         calculates the loss of the network
@@ -681,7 +698,7 @@ def main():
                         loss_actor = loss_actor.mean()
                         entropy = pi.entropy().mean()
 
-                        # EWC penalty
+                        # CL penalty (for regularization-based methods)
                         cl_penalty = cl.penalty(params, cl_state, config.reg_coef)
 
                         total_loss = (loss_actor
@@ -696,13 +713,38 @@ def main():
                     # call the grad_fn function to get the total loss and the gradients
                     total_loss, grads = grad_fn(train_state.params, traj_batch, advantages, targets)
 
-                    loss_information = total_loss, grads
+                    # For AGEM, we need to project the gradients if this is not the first environment
+                    agem_stats = {}
+                    if config.cl_method.lower() == "agem" and env_idx > 0 and cl_state is not None:
+                        # Sample from memory
+                        rng_1, sample_rng = jax.random.split(rng)
+                        # Pick a random sample from AGEM memory
+                        mem_obs, mem_actions, mem_log_probs, mem_advs, mem_targets, mem_values = sample_memory(
+                            cl_state, config.agem_sample_size, sample_rng
+                        )
+
+                        # Compute memory gradient
+                        grads_mem, grads_stats = compute_memory_gradient(
+                            network, train_state.params,
+                            config.clip_eps, config.vf_coef, config.ent_coef,
+                            mem_obs, mem_actions, mem_advs, mem_log_probs,
+                            mem_targets, mem_values,
+                            env_idx=env_idx
+                        )
+
+                        # Project new grads
+                        grads, proj_stats = agem_project(grads, grads_mem)
+
+                        # Combine stats for logging
+                        agem_stats = {**grads_stats, **proj_stats}
+
+                    loss_information = total_loss, grads, agem_stats
 
                     # apply the gradients to the network
                     train_state = train_state.apply_gradients(grads=grads)
 
                     # Of course we also need to add the network to the carry here
-                    return train_state, loss_information
+                    return (train_state, cl_state), loss_information
 
                 train_state, traj_batch, advantages, targets, steps_for_env, rng = update_state
 
@@ -734,19 +776,27 @@ def main():
                     f=(lambda x: jnp.reshape(x, [config.num_minibatches, -1] + list(x.shape[1:]))), tree=shuffled_batch,
                 )
 
-                train_state, loss_information = jax.lax.scan(
+                (train_state, cl_state), loss_information = jax.lax.scan(
                     f=_update_minbatch,
-                    init=train_state,
+                    init=(train_state, cl_state),
                     xs=minibatches
                 )
 
-                total_loss, grads = loss_information
+                # Handle different return formats based on CL method
+                total_loss, grads, agem_stats = loss_information
+                # Create a dictionary to store all loss information
+                loss_dict = {
+                    "total_loss": total_loss
+                }
+                if config.cl_method.lower() == "agem" and env_idx > 0:
+                    loss_dict["agem_stats"] = agem_stats
+
                 avg_grads = jax.tree_util.tree_map(lambda x: jnp.mean(x, axis=0), grads)
-                update_state = (train_state, traj_batch, advantages, targets, steps_for_env, rng)
-                return update_state, total_loss
+                update_state = (train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state)
+                return update_state, loss_dict
 
             # create a tuple to be passed into the jax.lax.scan function
-            update_state = (train_state, traj_batch, advantages, targets, steps_for_env, rng)
+            update_state = (train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state)
 
             update_state, loss_info = jax.lax.scan(
                 f=_update_epoch,
@@ -756,7 +806,7 @@ def main():
             )
 
             # unpack update_state
-            train_state, traj_batch, advantages, targets, steps_for_env, rng = update_state
+            train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state = update_state
             metric = info
             current_timestep = update_step * config.num_steps * config.num_envs
             metric = jax.tree_util.tree_map(lambda x: x.mean(), metric)
@@ -778,12 +828,25 @@ def main():
                 metric["General/learning_rate"] = config.lr
 
             # Losses section
-            total_loss, (value_loss, loss_actor, entropy, reg_loss) = loss_info
+            # Extract total_loss and components from loss_info
+            loss_dict = loss_info
+            total_loss = loss_dict["total_loss"]
+            # Unpack the components of total_loss
+            value_loss, loss_actor, entropy, reg_loss = total_loss[1]
+            total_loss = total_loss[0]  # The actual scalar loss value
+
             metric["Losses/total_loss"] = total_loss.mean()
             metric["Losses/value_loss"] = value_loss.mean()
             metric["Losses/actor_loss"] = loss_actor.mean()
             metric["Losses/entropy"] = entropy.mean()
             metric["Losses/reg_loss"] = reg_loss.mean()
+
+            # Add AGEM stats to metrics if they exist
+            if "agem_stats" in loss_dict:
+                agem_stats = loss_dict["agem_stats"]
+                for k, v in agem_stats.items():
+                    if v.size > 0:  # Only add if there are values
+                        metric[k] = v.mean()
 
             # Rewards section
             for agent in agents:
@@ -838,15 +901,36 @@ def main():
             # Evaluate the model and log the metrics
             evaluate_and_log(rng=rng, update_step=update_step)
 
-            rng = update_state[-1]
-            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, rng)
+            rng = update_state[-2]  # cl_state is now the last element
+            cl_state = update_state[-1]
+
+            # For AGEM, we need to update the memory if this is the current environment
+            if config.cl_method.lower() == "agem" and cl_state is not None:
+                rng, mem_rng = jax.random.split(rng)
+                perm = jax.random.permutation(mem_rng, advantages.shape[0])  # length = traj_len
+                idx = perm[: config.agem_sample_size]
+
+                obs_for_mem = traj_batch.obs[idx].reshape(-1, traj_batch.obs.shape[-1])
+                acts_for_mem = traj_batch.action[idx].reshape(-1)
+                logp_for_mem = traj_batch.log_prob[idx].reshape(-1)
+                adv_for_mem = advantages[idx].reshape(-1)
+                tgt_for_mem = targets[idx].reshape(-1)
+                val_for_mem = traj_batch.value[idx].reshape(-1)
+
+                cl_state = update_agem_memory(
+                    cl_state,
+                    obs_for_mem, acts_for_mem, logp_for_mem,
+                    adv_for_mem, tgt_for_mem, val_for_mem
+                )
+
+            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state)
 
             return runner_state, metric
 
         rng, train_rng = jax.random.split(rng)
 
         # initialize a carrier that keeps track of the states and observations of the agents
-        runner_state = (train_state, env_state, obsv, 0, 0, train_rng)
+        runner_state = (train_state, env_state, obsv, 0, 0, train_rng, cl_state)
 
         # apply the _update_step function a series of times, while keeping track of the state
         runner_state, metric = jax.lax.scan(
@@ -928,6 +1012,15 @@ def main():
     # Run the model
     rng, train_rng = jax.random.split(rng)
     cl_state = cl.init_state(train_state.params, config.regularize_critic, config.regularize_heads)
+
+    # Initialize AGEM memory if using AGEM and this is the first environment
+    if config.cl_method.lower() == "agem":
+        # Get observation dimension
+        obs_dim = temp_env.observation_space().shape
+        if not config.use_cnn:
+            obs_dim = (np.prod(obs_dim),)
+        # Initialize memory buffer
+        cl_state = init_agem_memory(config.agem_memory_size, obs_dim)
 
     # apply the loop_over_envs function to the environments
     loop_over_envs(train_rng, train_state, cl_state, envs)

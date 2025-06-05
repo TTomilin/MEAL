@@ -19,7 +19,7 @@ from jax_marl.registration import make
 from jax_marl.viz.overcooked_visualizer import OvercookedVisualizer
 from jax_marl.wrappers.baselines import LogWrapper
 from jax_marl.environments.overcooked_environment.overcooked_upper_bound import estimate_max_soup
-from architectures.shared_mlp import ActorCritic as MLPActorCritic
+from architectures.mlp import ActorCritic as MLPActorCritic
 from architectures.cnn import ActorCritic as CNNActorCritic
 from baselines.utils import *
 from cl_methods.EWC import EWC
