@@ -74,7 +74,7 @@ class Config:
     ewc_decay: float = 0.9  # Only for online EWC
 
     # AGEM specific
-    agem_memory_size: int = 1000
+    agem_memory_size: int = 50000
     agem_sample_size: int = 128
 
     # Environment
@@ -509,7 +509,7 @@ def main():
                 returns the updated runner state and the transition
                 '''
                 # Unpack the runner state
-                train_state, env_state, last_obs, update_step, steps_for_env, rng = runner_state
+                train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
 
                 # split the random number generator for action selection
                 rng, _rng = jax.random.split(rng)
@@ -567,7 +567,7 @@ def main():
                 # Increment steps_for_env by the number of parallel envs
                 steps_for_env = steps_for_env + config.num_envs
 
-                runner_state = (train_state, env_state, obsv, update_step, steps_for_env, rng)
+                runner_state = (train_state, env_state, obsv, update_step, steps_for_env, rng, cl_state)
                 return runner_state, (transition, info)
 
             # Apply the _env_step function a series of times, while keeping track of the runner state
@@ -579,7 +579,7 @@ def main():
             )
 
             # unpack the runner state that is returned after the scan function
-            train_state, env_state, last_obs, update_step, steps_for_env, rng = runner_state
+            train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
 
             # create a batch of the observations that is compatible with the network
             last_obs_batch = batchify(last_obs, env.agents, config.num_actors, not config.use_cnn)
@@ -733,7 +733,7 @@ def main():
                     # Of course we also need to add the network to the carry here
                     return train_state, loss_information
 
-                train_state, traj_batch, advantages, targets, steps_for_env, rng = update_state
+                train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state = update_state
 
                 # set the batch size and check if it is correct
                 batch_size = config.minibatch_size * config.num_minibatches
@@ -779,11 +779,12 @@ def main():
                     loss_dict["agem_stats"] = agem_stats
 
                 avg_grads = jax.tree_util.tree_map(lambda x: jnp.mean(x, axis=0), grads)
-                update_state = (train_state, traj_batch, advantages, targets, steps_for_env, rng)
+
+                update_state = (train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state)
                 return update_state, loss_dict
 
             # create a tuple to be passed into the jax.lax.scan function
-            update_state = (train_state, traj_batch, advantages, targets, steps_for_env, rng)
+            update_state = (train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state)
 
             update_state, loss_info = jax.lax.scan(
                 f=_update_epoch,
@@ -793,9 +794,27 @@ def main():
             )
 
             # unpack update_state
-            train_state, traj_batch, advantages, targets, steps_for_env, rng = update_state
+            train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state = update_state
             current_timestep = update_step * config.num_steps * config.num_envs
             metrics = jax.tree_util.tree_map(lambda x: x.mean(), info)
+
+            if config.cl_method.lower() == "agem" and cl_state is not None:
+                rng, mem_rng = jax.random.split(rng)
+                perm = jax.random.permutation(mem_rng, advantages.shape[0])  # length = traj_len
+                idx = perm[: config.agem_sample_size]
+
+                obs_for_mem  = traj_batch.obs[idx].reshape(-1, traj_batch.obs.shape[-1])
+                acts_for_mem = traj_batch.action[idx].reshape(-1)
+                logp_for_mem = traj_batch.log_prob[idx].reshape(-1)
+                adv_for_mem  = advantages[idx].reshape(-1)
+                tgt_for_mem  = targets[idx].reshape(-1)
+                val_for_mem  = traj_batch.value[idx].reshape(-1)
+
+                cl_state = update_agem_memory(
+                    cl_state,
+                    obs_for_mem, acts_for_mem, logp_for_mem,
+                    adv_for_mem, tgt_for_mem, val_for_mem
+                )
 
             # General section
             # Update the step counter
@@ -886,15 +905,14 @@ def main():
             # Evaluate the model and log the metrics
             evaluate_and_log(rng=rng, update_step=update_step)
 
-            rng = update_state[-1]
-            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, rng)
+            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state)
 
             return runner_state, metrics
 
         rng, train_rng = jax.random.split(rng)
 
         # initialize a carrier that keeps track of the states and observations of the agents
-        runner_state = (train_state, env_state, obsv, 0, 0, train_rng)
+        runner_state = (train_state, env_state, obsv, 0, 0, train_rng, cl_state)
 
         # apply the _update_step function a series of times, while keeping track of the state
         runner_state, metrics = jax.lax.scan(
@@ -903,34 +921,6 @@ def main():
             xs=None,
             length=config.num_updates
         )
-
-        # Update AGEM memory if using AGEM and this is not the first environment
-        if config.cl_method.lower() == "agem" and env_idx > 0 and cl_state is not None:
-            # Sample a batch of data from the current environment
-            # We'll use the last batch from the training loop
-            train_state, env_state, last_obs, update_step, steps_for_env, rng = runner_state
-
-            # Prepare the data for updating the memory
-            obs_batch = batchify(last_obs, env.agents, config.num_actors, not config.use_cnn)
-
-            # Get values and log_probs for the current observations
-            pi, value = network.apply(train_state.params, obs_batch, env_idx=env_idx)
-
-            # Sample actions from the policy
-            rng, _rng = jax.random.split(rng)
-            actions = pi.sample(seed=_rng)
-            log_probs = pi.log_prob(actions)
-
-            # Use dummy advantages and targets (these will be replaced in the next environment)
-            advantages = jnp.zeros_like(log_probs)
-            targets = jnp.zeros_like(log_probs)
-
-            # Update the memory buffer
-            cl_state = update_agem_memory(
-                cl_state,
-                obs_batch, actions, log_probs,
-                advantages, targets, value
-            )
 
         # Return the runner state after the training loop, and the metrics arrays
         return runner_state, metrics
