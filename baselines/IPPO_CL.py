@@ -472,21 +472,6 @@ def main():
 
         print(f"Training on environment: {env.task_id} - {env.layout_name}")
 
-        # Initialize AGEM memory if using AGEM and this is the first environment
-        agem_mem = None
-        if config.cl_method.lower() == "agem" and env_idx > 0:
-            # For AGEM, we need to initialize the memory buffer if it doesn't exist
-            if cl_state is None:
-                # Get observation dimension
-                obs_dim = env.observation_space().shape
-                if not config.use_cnn:
-                    obs_dim = (np.prod(obs_dim),)
-                else:
-                    obs_dim = obs_dim
-
-                # Initialize memory buffer
-                agem_mem = init_agem_memory(config.agem_memory_size, obs_dim[0])
-
         # reset the learning rate and the optimizer
         tx = optax.chain(
             optax.clip_by_global_norm(config.max_grad_norm),
@@ -602,9 +587,6 @@ def main():
             # apply the network to the batch of observations to get the value of the last state
             _, last_val = network.apply(train_state.params, last_obs_batch, env_idx=env_idx)
 
-            # this returns the value network for the last observation batch
-
-            # @profile
             def _calculate_gae(traj_batch, last_val):
                 '''
                 calculates the generalized advantage estimate (GAE) for the trajectory batch
@@ -647,7 +629,6 @@ def main():
             advantages, targets = _calculate_gae(traj_batch, last_val)
 
             # UPDATE NETWORK
-            # @profile
             def _update_epoch(update_state, unused):
                 '''
                 performs a single update epoch in the training loop
@@ -665,7 +646,6 @@ def main():
                     # unpack the batch information
                     traj_batch, advantages, targets = batch_info
 
-                    # @profile
                     def _loss_fn(params, traj_batch, gae, targets):
                         '''
                         calculates the loss of the network
@@ -722,12 +702,12 @@ def main():
 
                     # For AGEM, we need to project the gradients if this is not the first environment
                     agem_stats = {}
-                    if config.cl_method.lower() == "agem" and env_idx > 0 and agem_mem is not None:
+                    if config.cl_method.lower() == "agem" and env_idx > 0 and cl_state is not None:
                         # Sample from memory
                         rng_1, sample_rng = jax.random.split(rng)
                         # Pick a random sample from AGEM memory
                         mem_obs, mem_actions, mem_log_probs, mem_advs, mem_targets, mem_values = sample_memory(
-                            agem_mem, config.agem_sample_size, sample_rng
+                            cl_state, config.agem_sample_size, sample_rng
                         )
 
                         # Compute memory gradient
@@ -925,7 +905,7 @@ def main():
         )
 
         # Update AGEM memory if using AGEM and this is not the first environment
-        if config.cl_method.lower() == "agem" and env_idx > 0 and agem_mem is not None:
+        if config.cl_method.lower() == "agem" and env_idx > 0 and cl_state is not None:
             # Sample a batch of data from the current environment
             # We'll use the last batch from the training loop
             train_state, env_state, last_obs, update_step, steps_for_env, rng = runner_state
@@ -946,15 +926,11 @@ def main():
             targets = jnp.zeros_like(log_probs)
 
             # Update the memory buffer
-            agem_mem = update_agem_memory(
-                agem_mem,
+            cl_state = update_agem_memory(
+                cl_state,
                 obs_batch, actions, log_probs,
-                advantages, targets, value,
-                config.agem_memory_size
+                advantages, targets, value
             )
-
-            # Store the updated memory in cl_state
-            cl_state = agem_mem
 
         # Return the runner state after the training loop, and the metrics arrays
         return runner_state, metrics
@@ -1030,6 +1006,15 @@ def main():
     # Run the model
     rng, train_rng = jax.random.split(rng)
     cl_state = cl.init_state(train_state.params, config.regularize_critic, config.regularize_heads)
+
+    # Initialize AGEM memory if using AGEM and this is the first environment
+    if config.cl_method.lower() == "agem":
+        # Get observation dimension
+        obs_dim = envs[0].observation_space().shape
+        if not config.use_cnn:
+            obs_dim = (np.prod(obs_dim),)
+        # Initialize memory buffer
+        cl_state = init_agem_memory(config.agem_memory_size, obs_dim)
 
     # apply the loop_over_envs function to the environments
     loop_over_envs(train_rng, train_state, cl_state, envs)

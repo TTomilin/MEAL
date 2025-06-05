@@ -6,12 +6,15 @@ from jax._src.flatten_util import ravel_pytree
 
 @struct.dataclass
 class AGEMMemory:
-    obs: jnp.ndarray
-    actions: jnp.ndarray
-    log_probs: jnp.ndarray
-    advantages: jnp.ndarray
-    targets: jnp.ndarray
-    values: jnp.ndarray
+    obs: jnp.ndarray  # [M, *obs_shape]
+    actions: jnp.ndarray  # [M]
+    log_probs: jnp.ndarray  # [M]
+    advantages: jnp.ndarray  # [M]
+    targets: jnp.ndarray  # [M]
+    values: jnp.ndarray  # [M]
+    ptr: jnp.ndarray  # ()   write pointer  (static int32 on device)
+    size: jnp.ndarray  # ()   how many valid samples in buffer
+    max_size: int
 
 
 class AGEM:
@@ -109,14 +112,19 @@ class AGEM:
         return 0.0
 
 
-def init_agem_memory(max_memory_size: int, obs_dim: int):
+def init_agem_memory(max_size: int, obs_shape: tuple):
+    """Create an *empty* buffer."""
+    zeros = lambda *shape: jnp.zeros(shape, dtype=jnp.float32)
     return AGEMMemory(
-        obs=jnp.zeros((max_memory_size, obs_dim)),
-        actions=jnp.zeros((max_memory_size,)),
-        log_probs=jnp.zeros((max_memory_size,)),
-        advantages=jnp.zeros((max_memory_size,)),
-        targets=jnp.zeros((max_memory_size,)),
-        values=jnp.zeros((max_memory_size,)),
+        obs=zeros(max_size, *obs_shape),
+        actions=zeros(max_size, ),
+        log_probs=zeros(max_size, ),
+        advantages=zeros(max_size, ),
+        targets=zeros(max_size, ),
+        values=zeros(max_size, ),
+        ptr=jnp.array(0, dtype=jnp.int32),
+        size=jnp.array(0, dtype=jnp.int32),
+        max_size=max_size,
     )
 
 
@@ -127,12 +135,11 @@ def agem_project(grads_ppo, grads_mem, max_norm=40.):
          g_new := g_new - (g_new^T g_mem / ||g_mem||^2) * g_mem
     """
     g_new, unravel = ravel_pytree(grads_ppo)
-    g_mem, _       = ravel_pytree(grads_mem)
+    g_mem, _ = ravel_pytree(grads_mem)
 
-
-    dot_g   = jnp.vdot(g_new, g_mem)
+    dot_g = jnp.vdot(g_new, g_mem)
     dot_mem = jnp.vdot(g_mem, g_mem) + 1e-12
-    alpha   = dot_g / dot_mem
+    alpha = dot_g / dot_mem
     projected = jax.lax.cond(
         dot_g < 0,
         lambda _: g_new - alpha * g_mem,
@@ -148,15 +155,11 @@ def agem_project(grads_ppo, grads_mem, max_norm=40.):
     return unravel(projected), stats
 
 
-def sample_memory(agem_mem: AGEMMemory, sample_size: int, rng: jax.random.PRNGKey):
-    idxs = jax.random.randint(rng, (sample_size,), minval=0, maxval=agem_mem.obs.shape[0])
-    obs = agem_mem.obs[idxs]
-    actions = agem_mem.actions[idxs]
-    log_probs = agem_mem.log_probs[idxs]
-    advs = agem_mem.advantages[idxs]
-    targets = agem_mem.targets[idxs]
-    vals = agem_mem.values[idxs]
-    return obs, actions, log_probs, advs, targets, vals
+def sample_memory(mem: AGEMMemory, sample_size: int, rng):
+    max_idx = jnp.maximum(mem.size, 1)  # avoid 0-length
+    idxs = jax.random.randint(rng, (sample_size,), 0, max_idx)
+    return (mem.obs[idxs], mem.actions[idxs], mem.log_probs[idxs],
+            mem.advantages[idxs], mem.targets[idxs], mem.values[idxs])
 
 
 def compute_memory_gradient(network, params,
@@ -210,39 +213,20 @@ def compute_memory_gradient(network, params,
     return grads, stats
 
 
-def update_agem_memory(agem_mem: AGEMMemory,
+def update_agem_memory(mem: AGEMMemory,
                        new_obs, new_actions, new_log_probs,
-                       new_advantages, new_targets, new_values,
-                       max_memory_size: int) -> AGEMMemory:
-    """
-    Insert new transitions into our ring-buffer memory, all at once.
-    `new_obs` shape: [B, obs_dim]
-    The others shape: [B]
-    We'll just do a simple "append and keep last max_memory_size".
-    """
-    # Concat
-    obs_combined = jnp.concatenate([agem_mem.obs, new_obs], axis=0)
-    actions_combined = jnp.concatenate([agem_mem.actions, new_actions], axis=0)
-    log_probs_combined = jnp.concatenate([agem_mem.log_probs, new_log_probs], axis=0)
-    advs_combined = jnp.concatenate([agem_mem.advantages, new_advantages], axis=0)
-    targets_combined = jnp.concatenate([agem_mem.targets, new_targets], axis=0)
-    vals_combined = jnp.concatenate([agem_mem.values, new_values], axis=0)
+                       new_adv, new_tgt, new_val):
+    b = new_obs.shape[0]  # batch size to insert
+    idxs = (jnp.arange(b) + mem.ptr) % mem.max_size
 
-    total_len = obs_combined.shape[0]
-    if total_len > max_memory_size:
-        keep_slice = slice(total_len - max_memory_size, total_len)
-        obs_combined = obs_combined[keep_slice]
-        actions_combined = actions_combined[keep_slice]
-        log_probs_combined = log_probs_combined[keep_slice]
-        advs_combined = advs_combined[keep_slice]
-        targets_combined = targets_combined[keep_slice]
-        vals_combined = vals_combined[keep_slice]
-
-    return AGEMMemory(
-        obs=obs_combined,
-        actions=actions_combined,
-        log_probs=log_probs_combined,
-        advantages=advs_combined,
-        targets=targets_combined,
-        values=vals_combined,
+    mem = mem.replace(
+        obs=mem.obs.at[idxs].set(new_obs),
+        actions=mem.actions.at[idxs].set(new_actions),
+        log_probs=mem.log_probs.at[idxs].set(new_log_probs),
+        advantages=mem.advantages.at[idxs].set(new_adv),
+        targets=mem.targets.at[idxs].set(new_tgt),
+        values=mem.values.at[idxs].set(new_val),
+        ptr=(mem.ptr + b) % mem.max_size,
+        size=jnp.minimum(mem.size + b, mem.max_size),
     )
+    return mem
