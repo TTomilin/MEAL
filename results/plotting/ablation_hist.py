@@ -124,7 +124,8 @@ def main() -> None:
         .agg(["mean", "count", "std"])
         .reset_index()
     )
-    agg["ci95"] = agg.apply(lambda r: ci95(df[(df.method == r["method"]) & (df.version == r["version"])]["score"].values), axis=1)
+    agg["ci95"] = agg.apply(
+        lambda r: ci95(df[(df.method == r["method"]) & (df.version == r["version"])]["score"].values), axis=1)
 
     # pivot to align bars
     piv = agg.pivot(index="method", columns="version", values="mean")

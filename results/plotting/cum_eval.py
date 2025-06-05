@@ -1,43 +1,13 @@
-#!/usr/bin/env python3
-"""
-Plot average *success* or *reward* for the MARL continual-learning benchmark.
-
-Metric semantics
-----------------
-success : curves are divided by per-environment baseline avg_rewards
-          (0 = random agent, 1 = baseline, >1 = out-performing baseline)
-reward  : raw reward curves, no normalisation
-
-Usage (examples)
-----------------
-# success (default)
-python plot_avg.py --metric success --data_root results ...
-
-# reward
-python plot_avg.py --metric reward --data_root results ...
-"""
-
 import argparse
 from pathlib import Path
-from typing import List
 
 import numpy as np
 
-# Import utilities from the utils package
-try:
-    # Try relative import first (when imported as a module)
-    from .utils import (
-        collect_runs, setup_figure, add_task_boundaries, 
-        setup_task_axes, smooth_and_ci, save_plot, finalize_plot,
-        CRIT, METHOD_COLORS
-    )
-except ImportError:
-    # Fall back to absolute import (when run as a script)
-    from results.plotting.utils import (
-        collect_runs, setup_figure, add_task_boundaries, 
-        setup_task_axes, smooth_and_ci, save_plot, finalize_plot,
-        CRIT, METHOD_COLORS
-    )
+from results.plotting.utils import (
+    collect_runs, setup_figure, add_task_boundaries,
+    setup_task_axes, smooth_and_ci, save_plot, finalize_plot,
+    METHOD_COLORS
+)
 
 
 def parse_args():
@@ -45,7 +15,6 @@ def parse_args():
     p = argparse.ArgumentParser(description="Plot training metrics for MARL continual-learning benchmark")
     p.add_argument('--data_root', required=True, help="Root directory for data")
     p.add_argument('--algo', required=True, help="Algorithm name")
-    p.add_argument('--arch', required=True, help="Architecture name")
     p.add_argument('--methods', nargs='+', required=True, help="Method names to plot")
     p.add_argument('--strategy', required=True, help="Training strategy")
     p.add_argument('--seq_len', type=int, required=True, help="Sequence length")
@@ -80,8 +49,7 @@ def plot():
     # Collect data for each method
     for method in args.methods:
         data, env_names = collect_runs(
-            data_root, args.algo, method, args.arch,
-            args.strategy, args.seq_len, args.seeds, args.metric
+            data_root, args.algo, method, args.strategy, args.seq_len, args.seeds, args.metric
         )
         method_data[method] = data
 

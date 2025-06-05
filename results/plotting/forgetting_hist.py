@@ -14,7 +14,8 @@ Directory layout, filename conventions and the --metric switch
 are identical to plot_avg.py.
 """
 
-import argparse, json
+import argparse
+import json
 from pathlib import Path
 from typing import List
 
@@ -26,22 +27,24 @@ from scipy.stats import sem
 # ---------- constants -------------------------------------------------
 METHOD_COLORS = {
     'EWC': '#12939A', 'MAS': '#FF6E54', 'AGEM': '#FFA600',
-    'L2':  '#58508D', 'PackNet': '#BC5090', 'ReDo': '#003F5C', 'CBP': '#2F4B7C'
+    'L2': '#58508D', 'PackNet': '#BC5090', 'ReDo': '#003F5C', 'CBP': '#2F4B7C'
 }
-Z95 = 1.96             # critical value for 95 % CI
+Z95 = 1.96  # critical value for 95 % CI
+
+
 # ---------------------------------------------------------------------
 
 
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument('--data_root', required=True)
-    p.add_argument('--algo',      required=True)
-    p.add_argument('--methods',   nargs='+', required=True)
-    p.add_argument('--strategy',  required=True)
-    p.add_argument('--seq_len',   type=int,  required=True)
+    p.add_argument('--algo', required=True)
+    p.add_argument('--methods', nargs='+', required=True)
+    p.add_argument('--strategy', required=True)
+    p.add_argument('--seq_len', type=int, required=True)
     p.add_argument('--steps_per_task', type=float, default=8e6)
-    p.add_argument('--seeds',     type=int, nargs='+', default=[1,2,3,4,5])
-    p.add_argument('--metric',    choices=['success', 'reward'], default='success')
+    p.add_argument('--seeds', type=int, nargs='+', default=[1, 2, 3, 4, 5])
+    p.add_argument('--metric', choices=['success', 'reward'], default='success')
     p.add_argument('--baseline_file',
                    default='practical_reward_baseline_results.yaml',
                    help='Only used for --metric success')
@@ -74,7 +77,7 @@ def collect_env_series(base: Path, algo: str, method: str, strat: str,
     env_names, per_seed = [], []
 
     pattern = f"*_reward.*"
-    suffix  = f"_reward"
+    suffix = f"_reward"
 
     for seed in seeds:
         sd = folder / f"seed_{seed}"
@@ -113,17 +116,17 @@ def forgetting_per_seed(env_series: List[np.ndarray], total_steps: float,
     seq_len = len(env_series)
     forget_values = []
 
-    for i, arr in enumerate(env_series[:-1]):     # skip last env
+    for i, arr in enumerate(env_series[:-1]):  # skip last env
         if arr.size == 0 or np.all(np.isnan(arr)):
             forget_values.append(np.nan)
             continue
 
         after_mask = time_indices(len(arr), total_steps,
-                                  start=i*steps_per_task,
-                                  end  =(i+1)*steps_per_task)
+                                  start=i * steps_per_task,
+                                  end=(i + 1) * steps_per_task)
         final_mask = time_indices(len(arr), total_steps,
-                                  start=total_steps-steps_per_task,
-                                  end  =total_steps)
+                                  start=total_steps - steps_per_task,
+                                  end=total_steps)
 
         after_val = np.nanmean(arr[after_mask])
         final_val = np.nanmean(arr[final_mask])
@@ -137,7 +140,7 @@ def forgetting_per_seed(env_series: List[np.ndarray], total_steps: float,
 def main():
     args = parse_args()
 
-    data_root  = Path(__file__).resolve().parent.parent / args.data_root
+    data_root = Path(__file__).resolve().parent.parent / args.data_root
     total_steps = args.seq_len * args.steps_per_task
 
     baselines = {}
@@ -158,20 +161,20 @@ def main():
                  for seed_series in per_seed]
 
         mean = np.nanmean(fvals)
-        ci   = Z95 * sem(fvals, nan_policy='omit')
+        ci = Z95 * sem(fvals, nan_policy='omit')
         means.append(mean)
         cis.append(ci)
 
     # ---------- plot --------------------------------------------------
-    fig, ax = plt.subplots(figsize=(max(6, 1.5*len(means)), 4))
+    fig, ax = plt.subplots(figsize=(max(6, 1.5 * len(means)), 4))
     x = np.arange(len(args.methods))
     colors = [METHOD_COLORS.get(m.upper(), '#333333') for m in args.methods]
 
     ax.bar(x, means, yerr=cis, color=colors, alpha=0.8, capsize=5)
     ax.set_xticks(x)
     ax.set_xticklabels(args.methods, rotation=45, ha='right')
-    ax.set_ylabel('Forgetting' + (' (success-normalised)' if args.metric=='success' else ''))
-    ax.set_title(f'Average Forgetting over {args.seq_len-1} tasks')
+    ax.set_ylabel('Forgetting' + (' (success-normalised)' if args.metric == 'success' else ''))
+    ax.set_title(f'Average Forgetting over {args.seq_len - 1} tasks')
     ax.axhline(0, color='black', lw=0.8)
 
     plt.tight_layout()

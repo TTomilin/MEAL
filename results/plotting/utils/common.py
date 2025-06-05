@@ -7,10 +7,9 @@ used across different plotting scripts.
 
 import json
 from pathlib import Path
-from typing import Dict, List, Union, Any
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 import seaborn as sns
 from scipy.ndimage import gaussian_filter1d
 
@@ -26,6 +25,7 @@ METHOD_COLORS = {
     'EWC': '#12939A', 'MAS': '#FF6E54', 'AGEM': '#FFA600',
     'L2': '#003F5C', 'PackNet': '#BC5090', 'ReDo': '#58508D', 'CBP': '#2F4B7C'
 }
+
 
 def load_series(fp: Path) -> np.ndarray:
     """
@@ -46,6 +46,7 @@ def load_series(fp: Path) -> np.ndarray:
         return np.load(fp)['data'].astype(float)
     raise ValueError(f'Unsupported file suffix: {fp.suffix}')
 
+
 def smooth_and_ci(data: np.ndarray, sigma: float, conf: float):
     """
     Calculate smoothed mean and confidence intervals.
@@ -63,6 +64,7 @@ def smooth_and_ci(data: np.ndarray, sigma: float, conf: float):
     ci = CRIT[conf] * sd / np.sqrt(data.shape[0])
     return mean, ci
 
+
 def get_output_path(filename: str = None, default_name: str = "plot") -> Path:
     """
     Get the output path for saving plots.
@@ -77,6 +79,7 @@ def get_output_path(filename: str = None, default_name: str = "plot") -> Path:
     out_dir = Path(__file__).resolve().parent.parent.parent / 'plots'
     out_dir.mkdir(exist_ok=True)
     return out_dir, filename or default_name
+
 
 def forward_fill(a: np.ndarray) -> np.ndarray:
     """

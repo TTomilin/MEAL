@@ -6,14 +6,15 @@ structure, including collecting runs and processing time series data.
 """
 
 from pathlib import Path
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple
 
 import numpy as np
 
-from .common import load_series, forward_fill
+from .common import load_series
 
-def collect_runs(base: Path, algo: str, method: str, arch: str, strat: str,
-                seq_len: int, seeds: List[int], metric: str) -> Tuple[np.ndarray, List[str]]:
+
+def collect_runs(base: Path, algo: str, method: str, strat: str, seq_len: int, seeds: List[int], metric: str) -> Tuple[
+    np.ndarray, List[str]]:
     """
     Collect run data for training plots.
     
@@ -21,7 +22,6 @@ def collect_runs(base: Path, algo: str, method: str, arch: str, strat: str,
         base: Base directory for data
         algo: Algorithm name
         method: Method name
-        arch: Architecture name
         strat: Strategy name
         seq_len: Sequence length
         seeds: List of seeds to collect
@@ -30,7 +30,7 @@ def collect_runs(base: Path, algo: str, method: str, arch: str, strat: str,
     Returns:
         Tuple of (data_array, environment_names)
     """
-    folder = base / algo / method / arch / f"{strat}_{seq_len}"
+    folder = base / algo / method / "main" / f"{strat}_{seq_len}"
     env_names, per_seed = [], []
 
     for seed in seeds:
@@ -45,12 +45,12 @@ def collect_runs(base: Path, algo: str, method: str, arch: str, strat: str,
         if not env_names:
             suffix = f"_{metric}"
             env_names = [f.name.split('_', 1)[1].rsplit(suffix, 1)[0]
-                        for f in files]
+                         for f in files]
 
         arrs = [load_series(f) for f in files]
         L = max(map(len, arrs))
         padded = [np.pad(a, (0, L - len(a)), constant_values=np.nan)
-                 for a in arrs]
+                  for a in arrs]
 
         per_seed.append(np.nanmean(padded, axis=0))
 
@@ -59,11 +59,12 @@ def collect_runs(base: Path, algo: str, method: str, arch: str, strat: str,
 
     N = max(map(len, per_seed))
     data = np.vstack([np.pad(a, (0, N - len(a)), constant_values=np.nan)
-                     for a in per_seed])
+                      for a in per_seed])
     return data, env_names
 
+
 def collect_env_curves(base: Path, algo: str, method: str, strat: str,
-                      seq_len: int, seeds: List[int], metric: str = "reward") -> Tuple[List[str], List[np.ndarray]]:
+                       seq_len: int, seeds: List[int], metric: str = "reward") -> Tuple[List[str], List[np.ndarray]]:
     """
     Collect per-environment curves for per-task evaluation plots.
     
@@ -94,19 +95,19 @@ def collect_env_curves(base: Path, algo: str, method: str, strat: str,
         env_names = [f.name.split('_', 1)[1].rsplit(suffix, 1)[0] for f in files]
         per_env_seed = [[] for _ in env_names]
         break
-    if not env_names: 
+    if not env_names:
         raise RuntimeError(f'No data for {method}')
 
     # gather
     for seed in seeds:
         sd = folder / f"seed_{seed}"
-        if not sd.exists(): 
+        if not sd.exists():
             continue
         for idx, env in enumerate(env_names):
             fp = sd / f"{idx}_{env}_{metric}.json"
-            if not fp.exists(): 
+            if not fp.exists():
                 fp = sd / f"{idx}_{env}_{metric}.npz"
-            if not fp.exists(): 
+            if not fp.exists():
                 continue
             arr = load_series(fp)
             per_env_seed[idx].append(arr)
@@ -116,15 +117,16 @@ def collect_env_curves(base: Path, algo: str, method: str, strat: str,
     for env_curves in per_env_seed:
         if env_curves:
             stacked = np.vstack([np.pad(a, (0, T_max - len(a)), constant_values=np.nan)
-                               for a in env_curves])
+                                 for a in env_curves])
         else:
             stacked = np.full((1, T_max), np.nan)
         curves.append(stacked)
 
     return env_names, curves
 
-def collect_cumulative_runs(base: Path, algo: str, method: str, arch: str, strat: str, 
-                           metric: str, seq_len: int, seeds: List[int]) -> np.ndarray:
+
+def collect_cumulative_runs(base: Path, algo: str, method: str, strat: str,
+                            metric: str, seq_len: int, seeds: List[int]) -> np.ndarray:
     """
     Collect run data for cumulative evaluation plots.
     
@@ -132,7 +134,6 @@ def collect_cumulative_runs(base: Path, algo: str, method: str, arch: str, strat
         base: Base directory for data
         algo: Algorithm name
         method: Method name
-        arch: Architecture name
         strat: Strategy name
         metric: Metric to collect
         seq_len: Sequence length
@@ -141,7 +142,7 @@ def collect_cumulative_runs(base: Path, algo: str, method: str, arch: str, strat
     Returns:
         Array of shape (n_seeds, L) containing the cumulative-average-so-far curve for every seed
     """
-    folder = base / algo / method / arch / f"{strat}_{seq_len}"
+    folder = base / algo / method / "main" / f"{strat}_{seq_len}"
     per_seed = []
 
     for seed in seeds:

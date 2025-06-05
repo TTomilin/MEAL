@@ -75,7 +75,7 @@ def plot():
     for method in args.methods:
         # Use the utility function to collect cumulative runs
         data = collect_cumulative_runs(
-            data_root, args.algo, method, args.arch, 
+            data_root, args.algo, method, args.arch,
             args.strategy, args.metric, args.seq_len, args.seeds
         )
         method_data[method] = data
