@@ -6,6 +6,7 @@ from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memor
 from cl_methods.FT import FT
 from cl_methods.L2 import L2
 from cl_methods.MAS import MAS
+from cl_methods.Packnet_CL import PacknetCL
 
 os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
 from typing import Sequence, Any, Optional, List
@@ -128,11 +129,14 @@ def main():
 
     config = tyro.cli(Config)
 
-    method_map = dict(ewc=EWC(mode=config.ewc_mode, decay=config.ewc_decay),
-                      mas=MAS(),
-                      l2=L2(),
-                      ft=FT(),
-                      agem=AGEM(memory_size=config.agem_memory_size, sample_size=config.agem_sample_size))
+    method_map = dict(
+        ewc=EWC(mode=config.ewc_mode, decay=config.ewc_decay),
+        mas=MAS(),
+        l2=L2(),
+        ft=FT(),
+        agem=AGEM(memory_size=config.agem_memory_size, sample_size=config.agem_sample_size),
+        packnet=PacknetCL(seq_length=config.seq_length),
+    )
 
     cl = method_map[config.cl_method.lower()]
 
@@ -728,8 +732,13 @@ def main():
 
                     loss_information = total_loss, grads, agem_stats
 
+                    params_copy = train_state.params if config.cl_method.lower() == "packnet" else None
+
                     # apply the gradients to the network
                     train_state = train_state.apply_gradients(grads=grads)
+
+                    if config.cl_method.lower() == "packnet":
+                        train_state = cl.on_backwards_end(cl_state, train_state, params_copy)
 
                     # Of course we also need to add the network to the carry here
                     return (train_state, cl_state), loss_information
@@ -952,11 +961,18 @@ def main():
             train_state = runner_state[0]
             cl_state = runner_state[6]
 
-            importance = cl.compute_importance(train_state.params, env, network, i, rng, config.use_cnn,
-                                               config.importance_episodes, config.importance_steps,
-                                               config.normalize_importance)
+            if config.cl_method.lower() == "packnet":
+                new_params, cl_state = cl.on_train_end(train_state.params["params"], cl_state)
+                train_state = train_state.replace(params=new_params)
+                cl_state = cl.on_finetune_end(cl_state)
+            else:
+                importance = cl.compute_importance(
+                    train_state.params, env, network, i, rng, config.use_cnn,
+                    config.importance_episodes, config.importance_steps,
+                    config.normalize_importance,
+                )
 
-            cl_state = cl.update_state(cl_state, train_state.params, importance)
+                cl_state = cl.update_state(cl_state, train_state.params, importance)
 
             if config.record_gif:
                 # Generate & log a GIF after finishing task i
