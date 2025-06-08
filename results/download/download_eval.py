@@ -75,6 +75,14 @@ def experiment_suffix(cfg: dict) -> str:
     suffixes = []
     if not cfg.get("evaluation", True):
         return "plasticity"
+
+    ##### ----- Temporary hardcoded levels for wall density ----- #####
+    if cfg.get("wall_density") == 0.25:
+        return "level_2"
+    if cfg.get("wall_density") == 0.35:
+        return "level_3"
+    ##### ----- Temporary hardcoded levels for wall density ----- #####
+
     if not cfg.get("use_multihead", True):
         suffixes.append("no_multihead")
     if not cfg.get("use_task_id", True):

@@ -6,7 +6,7 @@ This package contains common utilities for plotting results from JAXOvercooked e
 
 # Import key functions and constants from modules
 from .common import (
-    CRIT, METHOD_COLORS, 
+    CRIT, METHOD_COLORS, LEVEL_COLORS,
     load_series, smooth_and_ci, get_output_path, forward_fill
 )
 
@@ -30,7 +30,7 @@ from .cli import (
 
 __all__ = [
     # From common
-    'CRIT', 'METHOD_COLORS', 'load_series', 'smooth_and_ci', 
+    'CRIT', 'METHOD_COLORS', 'LEVEL_COLORS', 'load_series', 'smooth_and_ci',
     'get_output_path', 'forward_fill',
 
     # From data_loading

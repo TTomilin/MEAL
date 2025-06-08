@@ -26,6 +26,12 @@ METHOD_COLORS = {
     'L2': '#003F5C', 'PackNet': '#BC5090', 'ReDo': '#58508D', 'CBP': '#2F4B7C'
 }
 
+LEVEL_COLORS = {
+    'Level 1': '#2ECC71',  # green
+    'Level 2': '#F1C40F',  # yellow
+    'Level 3': '#E74C3C',  # red
+}
+
 
 def load_series(fp: Path) -> np.ndarray:
     """

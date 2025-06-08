@@ -125,7 +125,7 @@ def collect_env_curves(base: Path, algo: str, method: str, strat: str,
     return env_names, curves
 
 
-def collect_cumulative_runs(base: Path, algo: str, method: str, strat: str,
+def collect_cumulative_runs(base: Path, algo: str, method: str, experiment: str, strat: str,
                             metric: str, seq_len: int, seeds: List[int]) -> np.ndarray:
     """
     Collect run data for cumulative evaluation plots.
@@ -142,7 +142,7 @@ def collect_cumulative_runs(base: Path, algo: str, method: str, strat: str,
     Returns:
         Array of shape (n_seeds, L) containing the cumulative-average-so-far curve for every seed
     """
-    folder = base / algo / method / "main" / f"{strat}_{seq_len}"
+    folder = base / algo / method / experiment / f"{strat}_{seq_len}"
     per_seed = []
 
     for seed in seeds:

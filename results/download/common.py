@@ -18,6 +18,7 @@ def cli() -> argparse.Namespace:
     p.add_argument("--seq_length", type=int, nargs="+", default=[])
     p.add_argument("--repeat_sequence", type=int, default=None, help="Repeat sequence value to multiply with seq_length")
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
+    p.add_argument("--wall_density", type=float, default=0.15, help="Wall density for the environment")
     p.add_argument("--strategy", choices=["ordered", "random", "generate"], default=None)
     p.add_argument("--algos", nargs="+", default=[], help="Filter by alg_name")
     p.add_argument("--cl_methods", nargs="+", default=[], help="Filter by cl_method")
@@ -39,6 +40,7 @@ def want(run: Run, args: argparse.Namespace) -> bool:
     if args.cl_methods and cfg.get("cl_method") not in args.cl_methods: return False
     if args.seq_length and cfg.get("seq_length") not in args.seq_length: return False
     if args.strategy and cfg.get("strategy") != args.strategy: return False
+    if args.wall_density and cfg.get("wall_density") != args.wall_density: return False
     if 'tags' in cfg:
         tags = set(cfg['tags'])
         if args.wandb_tags and not tags.intersection(args.wandb_tags):
