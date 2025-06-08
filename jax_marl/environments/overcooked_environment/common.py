@@ -1,6 +1,16 @@
+from __future__ import annotations
+
 import jax
 import jax.numpy as jnp
 import numpy as np
+
+FLOOR: str = " "
+WALL: str = "W"
+GOAL: str = "X"
+ONION_PILE: str = "O"
+PLATE_PILE: str = "B"
+POT: str = "P"
+AGENT: str = "A"
 
 OBJECT_TO_INDEX = {
     "unseen": 0,

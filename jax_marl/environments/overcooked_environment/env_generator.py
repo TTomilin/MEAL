@@ -30,12 +30,12 @@ from PIL import Image
 from flax.core.frozen_dict import FrozenDict
 
 from jax_marl.environments import Overcooked
-from jax_marl.gridworld.grid_viz import TILE_PIXELS
-from jax_marl.viz.overcooked_visualizer import OvercookedVisualizer
+from jax_marl.viz.overcooked_visualizer import OvercookedVisualizer, TILE_PIXELS
 from jax_marl.environments.overcooked_environment.env_validator import (
-    evaluate_grid, FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT,
-    UNPASSABLE_TILES, INTERACTIVE_TILES
+    evaluate_grid, UNPASSABLE_TILES, INTERACTIVE_TILES
 )
+from jax_marl.environments.overcooked_environment.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
+
 
 ###############################################################################
 # ─── Conversion helper ───────────────────────────────────────────────────────
@@ -253,43 +253,97 @@ def main(argv=None):
     parser = argparse.ArgumentParser("Random Overcooked layout generator")
     parser.add_argument("--seed", type=int, default=None, help="RNG seed")
     parser.add_argument("--num_agents", type=int, default=2, help="number of agents in layout")
-    parser.add_argument("--height-min", type=int, default=6, help="minimum layout height")
-    parser.add_argument("--height-max", type=int, default=10, help="maximum layout height")
-    parser.add_argument("--width-min", type=int, default=6, help="minimum layout width")
-    parser.add_argument("--width-max", type=int, default=10, help="maximum layout width")
-    parser.add_argument("--wall-density", type=float, default=0.25, help="fraction of unpassable internal cells")
+    parser.add_argument("--height-min", type=int, default=10, help="minimum layout height")
+    parser.add_argument("--height-max", type=int, default=11, help="maximum layout height")
+    parser.add_argument("--width-min", type=int, default=10, help="minimum layout width")
+    parser.add_argument("--width-max", type=int, default=11, help="maximum layout width")
+    parser.add_argument("--wall-density", type=float, default=0.35, help="fraction of unpassable internal cells")
+    parser.add_argument("--difficulty", type=str, choices=["easy", "med", "hard"], 
+                        help="difficulty level (overrides height, width, and wall density)")
+    parser.add_argument("--num-envs", type=int, default=1, help="number of environments to generate")
     parser.add_argument("--show", action="store_true", help="preview with matplotlib")
     parser.add_argument("--oc", action="store_true", help="open JAX‑MARL Overcooked viewer")
     parser.add_argument("--save", action="store_true", help="save PNG to assets/screenshots/generated/")
     args = parser.parse_args(argv)
 
-    grid_str, layout = generate_random_layout(
-        num_agents=args.num_agents,
-        height_rng=(args.height_min, args.height_max),
-        width_rng=(args.width_min, args.width_max),
-        wall_density=args.wall_density,
-        seed=args.seed,
-    )
-    print(grid_str)
+    # Override parameters based on difficulty
+    if args.difficulty:
+        if args.difficulty == "easy":
+            args.height_min = args.width_min = 6
+            args.height_max = args.width_max = 7
+            args.wall_density = 0.15
+        elif args.difficulty == "med":
+            args.height_min = args.width_min = 8
+            args.height_max = args.width_max = 9
+            args.wall_density = 0.25
+        elif args.difficulty == "hard":
+            args.height_min = args.width_min = 10
+            args.height_max = args.width_max = 11
+            args.wall_density = 0.35
 
-    if args.show:
-        mpl_show(grid_str, "Random kitchen")
+    # Generate environments
+    layouts = []
+    for i in range(args.num_envs):
+        # Use a different seed for each environment if seed is provided
+        env_seed = None if args.seed is None else args.seed + i
 
-    if args.oc:
-        oc_show(layout)
+        grid_str, layout = generate_random_layout(
+            num_agents=args.num_agents,
+            height_rng=(args.height_min, args.height_max),
+            width_rng=(args.width_min, args.width_max),
+            wall_density=args.wall_density,
+            seed=env_seed,
+        )
+        layouts.append((grid_str, layout, env_seed))
+        print(f"Environment {i+1}/{args.num_envs}:")
+        print(grid_str)
 
-    if args.save:
-        env = Overcooked(layout=layout, layout_name="generated", random_reset=False)
-        _, state = env.reset(jax.random.PRNGKey(args.seed or 0))
-        grid_arr = np.asarray(_crop_to_grid(state, env.agent_view_size))
-        vis = OvercookedVisualizer()
-        img = vis._render_grid(grid_arr, tile_size=TILE_PIXELS, agent_dir_idx=state.agent_dir_idx)
+    if args.show and layouts:
+        mpl_show(layouts[0][0], "Random kitchen")
 
-        out_dir = Path(__file__).parent.parent.parent.parent / "assets" / "screenshots" / "generated"
+    if args.oc and layouts:
+        oc_show(layouts[0][1])
+
+    if args.save and layouts:
+        # Determine the base output directory
+        base_dir = Path(__file__).parent.parent.parent.parent / "assets" / "screenshots"
+
+        # Create difficulty-specific directory if difficulty is specified
+        if args.difficulty:
+            out_dir = base_dir / args.difficulty
+        else:
+            out_dir = base_dir / "generated"
+
         out_dir.mkdir(parents=True, exist_ok=True)
-        file_name = f"gen_{args.seed or 'rand'}.png"
-        Image.fromarray(img).save(out_dir / file_name)
-        print("Saved generated layout to", out_dir / file_name)
+
+        # Find the highest existing index for gen_X files
+        existing_files = list(out_dir.glob("gen_*.png"))
+        highest_index = 0
+
+        for file in existing_files:
+            filename = file.name
+            if filename.startswith("gen_") and filename.endswith(".png"):
+                try:
+                    index = int(filename[4:-4])  # Extract number between "gen_" and ".png"
+                    highest_index = max(highest_index, index)
+                except ValueError:
+                    # If the filename doesn't follow the pattern, ignore it
+                    pass
+
+        # Save each generated environment
+        for i, (_, layout, env_seed) in enumerate(layouts):
+            env = Overcooked(layout=layout, layout_name="generated", random_reset=False)
+            _, state = env.reset(jax.random.PRNGKey(env_seed or 0))
+            grid_arr = np.asarray(_crop_to_grid(state, env.agent_view_size))
+            vis = OvercookedVisualizer()
+            img = vis._render_grid(grid_arr, tile_size=TILE_PIXELS, agent_dir_idx=state.agent_dir_idx)
+
+            # Create filename with auto-incrementing index
+            file_index = highest_index + i + 1
+            file_name = f"gen_{file_index}.png"
+
+            Image.fromarray(img).save(out_dir / file_name)
+            print(f"Saved generated layout {i+1}/{len(layouts)} to {out_dir / file_name}")
 
 
 if __name__ == "__main__":

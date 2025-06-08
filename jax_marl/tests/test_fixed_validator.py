@@ -20,8 +20,8 @@ spec = importlib.util.spec_from_file_location(
 validator_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(validator_module)
 
-from jax_marl.environments.overcooked_environment.env_validator import evaluate_grid as original_evaluate
-from jax_marl.environments.overcooked_environment.env_validator import WALL, FLOOR, AGENT, GOAL, ONION_PILE, PLATE_PILE, POT
+from jax_marl.environments.overcooked_environment.env_validator_old import evaluate_grid as original_evaluate
+from jax_marl.environments.overcooked_environment.env_validator_old import WALL, FLOOR, AGENT, GOAL, ONION_PILE, PLATE_PILE, POT
 
 # Use the fixed evaluate function from our monkey-patched module
 fixed_evaluate = validator_module.evaluate_grid

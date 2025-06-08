@@ -44,7 +44,9 @@ def collect_plasticity_runs(
     """
 
     task_runs: list[list[np.ndarray]] = [[] for _ in range(seq_len)]
-    folder = f"{strat}_{seq_len * repeats}"
+    folder = f"{strat}_{seq_len}"
+    if repeats > 1:
+        folder += f"_rep_{repeats}"
 
     for seed in seeds:
         run_dir = base / algo / method / "plasticity" / folder / f"seed_{seed}"
@@ -108,8 +110,8 @@ def setup_plasticity_grid(seq_len: int, figsize_scale: Tuple[int, int] = (4, 3))
         n_cols = int(np.ceil(seq_len / n_rows))
 
     fig, axes = plt.subplots(
-        n_rows, n_cols, 
-        figsize=(figsize_scale[0] * n_cols, figsize_scale[1] * n_rows), 
+        n_rows, n_cols,
+        figsize=(figsize_scale[0] * n_cols, figsize_scale[1] * n_rows),
         squeeze=False
     )
     return fig, axes.flatten()

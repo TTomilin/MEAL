@@ -73,6 +73,8 @@ def store_array(arr: List[float], path: Path, fmt: str) -> None:
 def experiment_suffix(cfg: dict) -> str:
     """Return folder name encoding ablation settings."""
     suffixes = []
+    if not cfg.get("evaluation", True):
+        return "plasticity"
     if not cfg.get("use_multihead", True):
         suffixes.append("no_multihead")
     if not cfg.get("use_task_id", True):
@@ -122,16 +124,18 @@ def main() -> None:
             print(f"[warn] {run.name} has no Scaled_returns/ keys")
             continue
 
+        exp_path = f"{strategy}_{seq_len}"
+
         # Handle repeat_sequence parameter
-        effective_seq_len = seq_len
         if args.repeat_sequence is not None:
-            run_repeat_sequence = cfg.get("repeat_sequence")
-            if run_repeat_sequence is not None:
-                effective_seq_len = seq_len * args.repeat_sequence
-                print(f"[info] {run.name} using repeat_sequence={args.repeat_sequence}, effective seq_len={effective_seq_len}")
+            repeat_sequence = cfg.get("repeat_sequence")
+            if repeat_sequence is not None:
+                exp_path += f"_rep_{repeat_sequence}"
+                # effective_seq_len = seq_len * args.repeat_sequence
+                print(f"[info] {run.name} using repeat_sequence={args.repeat_sequence}, seq_len={seq_len}")
 
         out_base = (base_workspace / args.output / algo / cl_method /
-                    experiment / f"{strategy}_{effective_seq_len}" / f"seed_{seed}")
+                    experiment / exp_path / f"seed_{seed}")
 
         # iterate keys, skipping existing files unless overwrite
         for key in discover_eval_keys(run):

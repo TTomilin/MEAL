@@ -36,62 +36,32 @@ which emits a CSV to *metrics.csv* and a bar‑plot *metrics.png* under
 
 from __future__ import annotations
 
-import argparse
 import csv
 from pathlib import Path
-from typing import List
 
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.ndimage import gaussian_filter1d
+from scipy.ndimage import gaussian_filter1d  # Still needed for plotting
 
-from results.plotting.plasticity import _load
+# Import utilities from the plotting package
+from results.plotting.utils import (
+    CRIT, METHOD_COLORS, load_series, smooth_and_ci,
+    collect_plasticity_runs, create_plasticity_parser
+)
 
 
 # ───────────────────────── helpers ──────────────────────────
 
-def _collect_concat(
-        base: Path,
-        algo: str,
-        method: str,
-        strat: str,
-        seq_len: int,
-        repeats: int,
-        seeds: List[int],
-) -> list[np.ndarray]:
-    """Return list[task] → list[seed curves] (concatenated raw traces)."""
-    buckets: list[list[np.ndarray]] = [[] for _ in range(seq_len)]
-    folder = f"{strat}_{seq_len * repeats}"
-    for seed in seeds:
-        run_dir = base / algo / method / "plasticity" / folder / f"seed_{seed}"
-        for fp in run_dir.glob("*_soup.*"):
-            trace = _load(fp)
-            seg_len = len(trace) // (seq_len * repeats)
-            for t in range(seq_len):
-                segs = [
-                    trace[(r * seq_len + t) * seg_len:(r * seq_len + t + 1) * seg_len]
-                    for r in range(repeats)
-                ]
-                buckets[t].append(np.concatenate(segs))
-    return buckets
-
-
 def _cumavg(x: np.ndarray) -> np.ndarray:
+    """Calculate cumulative average of an array."""
     return np.cumsum(x) / (np.arange(1, len(x) + 1))
 
 # ────────────────────────── main ─────────────────────────
 
 def main():
-    ap = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter, description="Compute plasticity‑loss metrics.")
-    ap.add_argument("--data_root", required=True)
-    ap.add_argument("--algo", required=True)
-    ap.add_argument("--strategy", required=True)
-    ap.add_argument("--methods", nargs="+", required=True)
-    ap.add_argument("--seq_len", type=int, required=True)
-    ap.add_argument("--repeat_sequence", type=int, default=1)
-    ap.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5], help="Seeds to include in the analysis.")
+    # Use the plasticity parser from the plotting utilities
+    ap = create_plasticity_parser(description="Compute plasticity‑loss metrics.")
     ap.add_argument("--threshold", type=float, default=0.9, help="τ for time‑to‑τ metric (0<τ<1)")
-    ap.add_argument("--sigma", type=float, default=1.0, help="Gaussian σ before metric computation")
     args = ap.parse_args()
 
     base = Path(__file__).resolve().parent.parent
@@ -103,16 +73,16 @@ def main():
     csv_rows = [("method", "task", "time_to_τ", "time_norm", "aupc_loss", "aupc_norm")]
 
     for method in args.methods:
-        task_traces = _collect_concat(base, args.algo, method, args.strategy, args.seq_len, args.repeat_sequence, args.seeds)
+        task_traces = collect_plasticity_runs(data_dir, args.algo, method, args.strategy, args.seq_len, args.repeat_sequence, args.seeds)
 
         time_to_tau, aupc_loss = [], []
         for trace in task_traces:
-            if not trace:
+            if trace.size == 0:
                 time_to_tau.append(np.nan)
                 aupc_loss.append(np.nan)
                 continue
             # smooth → cumavg → normalise
-            smoothed = gaussian_filter1d(np.mean(trace, axis=0), args.sigma)
+            smoothed, _ = smooth_and_ci(trace, args.sigma, 0.95)  # We only need the mean, not the CI
             ca = _cumavg(smoothed)
             ca /= ca[-1] if ca[-1] > 0 else 1.0
             # τ metric
@@ -125,9 +95,8 @@ def main():
             auc = np.trapz(ca) / len(ca)
             aupc_loss.append(1 - auc)
 
-        # normalise by task‑0 (first task)
-        norm_time = np.array(time_to_tau) / time_to_tau[0]
-        norm_aupc = np.array(aupc_loss) / aupc_loss[0] if aupc_loss[0] else np.nan
+        norm_time = np.array(time_to_tau, dtype=float)
+        norm_aupc = np.array(aupc_loss,  dtype=float) / aupc_loss[0]
 
         # save rows
         for t in range(args.seq_len):
@@ -135,16 +104,47 @@ def main():
 
         # plot ---------------------------------------------------------------
         x = np.arange(1, args.seq_len + 1)
-        fig, ax = plt.subplots(figsize=(8, 3))
-        ax.plot(x, norm_time, marker="o", label=f"Time‑to‑{args.threshold}")
-        ax.plot(x, norm_aupc, marker="s", label="AUPC loss", linestyle="--")
-        ax.set_xlabel("Task index")
-        ax.set_ylabel("Normalised metric (≧1 => plasticity↓)")
-        ax.set_title(f"Plasticity degradation – {method}")
-        ax.legend()
+        # fig, ax = plt.subplots(figsize=(8, 3))
+
+        # Check if we have valid data to plot
+        has_time_data = not np.all(np.isnan(norm_time))
+        has_aupc_data = not np.all(np.isnan(norm_aupc))
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 3), sharex=True)
+
+        ax1.plot(x, norm_time, 'o-')
+        ax1.set_title(f'Time-to-{args.threshold}')
+        ax1.set_ylabel('× slower than task 1')
+
+        ax2.plot(x, norm_aupc, 's--')
+        ax2.set_title('AUPC loss')
+        ax2.set_ylabel('× higher than task 1')
+
+        for ax in (ax1, ax2):
+            ax.set_xlabel('Task index')
+            ax.grid(True)
+        fig.tight_layout()
+
+
+        # Add a note to the title if data is missing
+        title = f"Plasticity degradation – {method}"
+        if not has_time_data and not has_aupc_data:
+            title += " (No data available)"
+        elif not has_time_data:
+            title += f" (No Time‑to‑{args.threshold} data)"
+        elif not has_aupc_data:
+            title += " (No AUPC loss data)"
+
+        ax.set_title(title)
+
+        # Only add a legend if there's at least one valid metric to plot
+        if has_time_data or has_aupc_data:
+            ax.legend()
+
         ax.grid(True)
         fig.tight_layout()
         fig.savefig(out_dir / f"{method}_plasticity_metrics.png", dpi=300)
+        fig.show()
 
     # write CSV --------------------------------------------------------------
     with open(out_dir / "metrics.csv", "w", newline="") as f:
