@@ -228,22 +228,9 @@ def main():
                 @param indices: the indices to adjust
                 returns the adjusted indices
                 '''
-                adjusted_indices = []
-
-                for idx in indices:
-                    # Compute the row and column of the index
-                    row = idx // width
-                    col = idx % width
-
-                    # Shift the row and column by the padding
-                    new_row = row + top
-                    new_col = col + left
-
-                    # Compute the new index
-                    new_idx = new_row * (width + left + right) + new_col
-                    adjusted_indices.append(new_idx)
-
-                return jnp.array(adjusted_indices)
+                indices = jnp.asarray(indices)
+                rows, cols = jnp.divmod(indices, width)
+                return (rows + top) * (width + left + right) + (cols + left)
 
             # adjust the indices of the observation space to account for the new walls
             env["wall_idx"] = adjust_indices(env["wall_idx"])
