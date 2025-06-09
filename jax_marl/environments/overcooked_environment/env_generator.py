@@ -116,6 +116,99 @@ def _place_tiles(
     return True
 
 
+def _remove_unreachable_items(grid: List[List[str]]) -> bool:
+    """Remove interactive tiles that are not reachable by any agent and replace unreachable floor tiles with walls.
+
+    Returns True if any items were removed or floor tiles were replaced, False otherwise.
+    """
+    # Convert grid to string representation
+    grid_str = "\n".join("".join(row) for row in grid)
+
+    # Find agent positions
+    agents = [(i, j) for i, row in enumerate(grid) for j, ch in enumerate(row) if ch == AGENT]
+    if len(agents) < 1:
+        return False  # No agents to check reachability
+
+    # Import the get_reachable_positions function from env_validator
+    from jax_marl.environments.overcooked_environment.env_validator import evaluate_grid
+
+    # Get reachable positions for each agent
+    height, width = len(grid), len(grid[0])
+
+    # Create a temporary function to get reachable positions
+    def get_reachable_positions(start_i: int, start_j: int):
+        # Initialize tracking structures
+        visited = [[False for _ in range(width)] for _ in range(height)]
+        reachable_positions = set()
+
+        def dfs(i: int, j: int):
+            # Check bounds and if already visited
+            if (i < 0 or i >= height or j < 0 or j >= width or visited[i][j]):
+                return
+
+            # Check if we can occupy this cell
+            if grid[i][j] not in (FLOOR, AGENT):
+                # Mark as visited to prevent revisiting
+                visited[i][j] = True
+                return
+
+            visited[i][j] = True
+            reachable_positions.add((i, j))
+
+            # Continue DFS in all directions
+            directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+            for di, dj in directions:
+                dfs(i + di, j + dj)
+
+        # Start DFS from agent position
+        dfs(start_i, start_j)
+        return reachable_positions
+
+    # Get reachable positions for each agent
+    all_reachable = set()
+    for agent_i, agent_j in agents:
+        agent_reachable = get_reachable_positions(agent_i, agent_j)
+        all_reachable.update(agent_reachable)
+
+    # Find interactive tiles
+    interactive_tiles = []
+    for i, row in enumerate(grid):
+        for j, ch in enumerate(row):
+            if ch in INTERACTIVE_TILES:
+                interactive_tiles.append((i, j, ch))
+
+    # Check if each interactive tile is reachable by at least one agent
+    items_removed = False
+    for i, j, tile_type in interactive_tiles:
+        # Check if any adjacent position is reachable
+        is_reachable = False
+        for di, dj in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+            ni, nj = i + di, j + dj
+            if (0 <= ni < height and 0 <= nj < width and 
+                (ni, nj) in all_reachable):
+                is_reachable = True
+                break
+
+        # If not reachable, replace with FLOOR
+        if not is_reachable:
+            grid[i][j] = FLOOR
+            items_removed = True
+
+    # Replace unreachable floor tiles with walls
+    for i in range(height):
+        for j in range(width):
+            # Skip border cells and non-floor cells
+            if (i == 0 or i == height - 1 or j == 0 or j == width - 1 or grid[i][j] != FLOOR):
+                continue
+
+            # If this floor tile is not reachable, replace it with a wall
+            if (i, j) not in all_reachable:
+                grid[i][j] = WALL
+                items_removed = True
+
+    return items_removed
+
+
 def generate_random_layout(
         *,
         num_agents: int = 2,
@@ -136,6 +229,7 @@ def generate_random_layout(
        fraction of unpassable internal cells equals ``wall_density``.
     5. Place those walls.
     6. Finally place the agents.
+    7. Remove any interactive tiles that are not reachable by any agent.
 
     The process is retried up to ``max_attempts`` times if any stage runs
     out of empty cells or the resulting grid fails the solvability check.
@@ -182,6 +276,11 @@ def generate_random_layout(
             if not _place_tiles(grid, AGENT, num_agents, rng):
                 print(f"[Attempt {attempt}] Not enough space for agents. Retrying…")
                 continue
+
+            # 4. Remove unreachable items --------------------------------------
+            items_removed = _remove_unreachable_items(grid)
+            if items_removed:
+                print(f"[Attempt {attempt}] Removed unreachable interactive tiles and replaced unreachable floor tiles with walls.")
 
             # Convert to string and validate -----------------------------------
             grid_str = "\n".join("".join(row) for row in grid)
