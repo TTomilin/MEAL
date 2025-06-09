@@ -212,7 +212,7 @@ def plot():
     finalize_plot(
         ax,
         xlabel="Environment Steps",
-        ylabel="Cumulative Average Score",
+        ylabel="Average Normalized Score",
         xlim=(0, total_steps),
         ylim=(0, None),
         legend_loc="lower center",
