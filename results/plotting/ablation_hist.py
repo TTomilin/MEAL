@@ -137,7 +137,7 @@ def main() -> None:
         base_colors.extend(base_colors)  # recycle if too many
     palette = {ver: col for ver, col in zip(versions, base_colors)}
 
-    fig, ax = plt.subplots(figsize=(max(6, len(args.methods) * 1.5), 4))
+    fig, ax = plt.subplots(figsize=(max(6, len(args.methods) * 1.25), 3))
 
     for i, ver in enumerate(versions):
         offsets = x - (n_ver - 1) * bar_w / 2 + i * bar_w
@@ -148,12 +148,12 @@ def main() -> None:
     # Axis & legend tweaks --------------------------------------
     ax.set_xticks(x)
     ax.set_xticklabels(args.methods)
-    ax.set_ylabel("Normalized Score")
+    ax.set_ylabel("Average Normalized Score", fontsize=10)
     ax.set_ylim(bottom=0)  # bars start from bottom
 
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=n_ver // 2, frameon=False)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=n_ver // 2, frameon=False, fontsize=10)
 
-    plt.tight_layout()
+    plt.tight_layout(rect=[0, -0.05, 1, 1])
     out_dir = root / "plots"
     out_dir.mkdir(exist_ok=True)
     stem = args.plot_name or "ablation"
