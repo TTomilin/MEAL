@@ -86,7 +86,7 @@ def plot():
         # Set axis limits and labels
         ax.set_xlim(0, total_steps)
         ax.set_ylim(0, 1)
-        ax.set_ylabel(f"Normalized {args.metric.capitalize()}")
+        ax.set_ylabel(f"Normalized Score")
         ax.set_title(method, fontsize=11)
 
         # Set up secondary x-axis with task labels
@@ -107,7 +107,7 @@ def plot():
     # Finalize and save the plot
     plt.tight_layout()
     out_dir = Path(__file__).resolve().parent.parent / 'plots'
-    name = args.plot_name or f"per_task_norm_{args.metric}"
+    name = args.plot_name or f"per_task_norm_score"
     save_plot(fig, out_dir, name)
 
     # Display the plot
