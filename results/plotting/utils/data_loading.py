@@ -17,7 +17,7 @@ def collect_runs(base: Path, algo: str, method: str, strat: str, seq_len: int, s
     np.ndarray, List[str]]:
     """
     Collect run data for training plots.
-    
+
     Args:
         base: Base directory for data
         algo: Algorithm name
@@ -26,7 +26,7 @@ def collect_runs(base: Path, algo: str, method: str, strat: str, seq_len: int, s
         seq_len: Sequence length
         seeds: List of seeds to collect
         metric: Metric to collect ('reward', 'soup', etc.)
-        
+
     Returns:
         Tuple of (data_array, environment_names)
     """
@@ -67,7 +67,7 @@ def collect_env_curves(base: Path, algo: str, method: str, strat: str,
                        seq_len: int, seeds: List[int], metric: str = "reward") -> Tuple[List[str], List[np.ndarray]]:
     """
     Collect per-environment curves for per-task evaluation plots.
-    
+
     Args:
         base: Base directory for data
         algo: Algorithm name
@@ -76,7 +76,7 @@ def collect_env_curves(base: Path, algo: str, method: str, strat: str,
         seq_len: Sequence length
         seeds: List of seeds to collect
         metric: Metric to collect (default: 'reward')
-        
+
     Returns:
         Tuple of (environment_names, curves_per_environment)
     """
@@ -129,7 +129,7 @@ def collect_cumulative_runs(base: Path, algo: str, method: str, experiment: str,
                             metric: str, seq_len: int, seeds: List[int]) -> np.ndarray:
     """
     Collect run data for cumulative evaluation plots.
-    
+
     Args:
         base: Base directory for data
         algo: Algorithm name
@@ -138,7 +138,7 @@ def collect_cumulative_runs(base: Path, algo: str, method: str, experiment: str,
         metric: Metric to collect
         seq_len: Sequence length
         seeds: List of seeds to collect
-        
+
     Returns:
         Array of shape (n_seeds, L) containing the cumulative-average-so-far curve for every seed
     """
@@ -159,11 +159,24 @@ def collect_cumulative_runs(base: Path, algo: str, method: str, experiment: str,
 
         env_mat = np.vstack(padded)  # shape (n_envs, L)
 
+        env_mat = np.nan_to_num(
+            env_mat,
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+        )
+
         # turn NaNs into 0 so they count as "no performance yet"
         env_mat = np.nan_to_num(env_mat, nan=0.0)
 
-        # cumulative-average-so-far curve
-        cum_avg = env_mat.mean(axis=0)  # fixed denominator = n_envs
+        # Check if env_mat is all zeros (poor performance)
+        if np.all(env_mat == 0):
+            # Still calculate the average, but this will be all zeros
+            cum_avg = env_mat.mean(axis=0)
+        else:
+            # cumulative-average-so-far curve
+            cum_avg = env_mat.mean(axis=0)  # fixed denominator = n_envs
+
         per_seed.append(cum_avg)
 
     if not per_seed:
