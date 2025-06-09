@@ -161,46 +161,39 @@ def plot():
     total_steps = args.seq_len * args.steps_per_task
     fig, ax = setup_figure(width=10, height=4)
 
-    if args.compare_by == "method":
-        # Original behaviour.
-        for method in args.methods:
-            _collect_and_plot(
-                ax,
-                label=method,
-                data_root=data_root,
-                algo=args.algo,
-                method=method,
-                experiment="main",
-                strategy=args.strategy,
-                metric=args.metric,
-                seq_len=args.seq_len,
-                seeds=args.seeds,
-                steps_per_task=args.steps_per_task,
-                sigma=args.sigma,
-                confidence=args.confidence,
-                compare_by=args.compare_by,
-            )
-    else:
-        # Level comparison – use args.method as the CL algo and iterate over levels.
-        for level in args.levels:
-            level_str = f"level_{level}"
+    # Unified approach for both method and level comparison
+    items_to_plot = args.methods if args.compare_by == "method" else args.levels
+
+    for item in items_to_plot:
+        if args.compare_by == "method":
+            # Method comparison
+            method_name = item
+            label = method_name
+            experiment = "main"
+        else:
+            # Level comparison
+            level_num = item
+            level_str = f"level_{level_num}"
             label = level_str.replace('_', ' ').title()  # e.g., "Level 1"
-            _collect_and_plot(
-                ax,
-                label=label,
-                data_root=data_root,
-                algo=args.algo,
-                method=args.method,
-                experiment=level_str,
-                strategy=args.strategy,
-                metric=args.metric,
-                seq_len=args.seq_len,
-                seeds=args.seeds,
-                steps_per_task=args.steps_per_task,
-                sigma=args.sigma,
-                confidence=args.confidence,
-                compare_by=args.compare_by,
-            )
+            method_name = args.method
+            experiment = level_str
+
+        _collect_and_plot(
+            ax,
+            label=label,
+            data_root=data_root,
+            algo=args.algo,
+            method=method_name,
+            experiment=experiment,
+            strategy=args.strategy,
+            metric=args.metric,
+            seq_len=args.seq_len,
+            seeds=args.seeds,
+            steps_per_task=args.steps_per_task,
+            sigma=args.sigma,
+            confidence=args.confidence,
+            compare_by=args.compare_by,
+        )
 
     # Add task boundaries and nice axes.
     boundaries = [i * args.steps_per_task for i in range(args.seq_len + 1)]
