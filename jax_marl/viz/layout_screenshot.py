@@ -42,10 +42,9 @@ def save_start_states(grouped_layouts, base_dir: str = "../../assets/screenshots
 
             grid = np.asarray(crop_to_minimal(state, env.agent_view_size))
 
-            img = vis._render_grid(
+            img = vis.render_grid(
                 grid,
                 tile_size=TILE_PIXELS,
-                highlight_mask=None,
                 agent_dir_idx=state.agent_dir_idx,
                 agent_inv=state.agent_inv
             )

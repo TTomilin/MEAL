@@ -50,11 +50,6 @@ def parse_args():
     # Add the metric argument with different choices
     add_metric_arg(p, choices=['success', 'reward'], default='success')
 
-    # Add script-specific arguments
-    p.add_argument('--baseline_file',
-                   default='practical_reward_baseline_results.yaml',
-                   help='Only used for --metric success')
-
     return p.parse_args()
 
 
@@ -150,9 +145,6 @@ def main():
     total_steps = args.seq_len * args.steps_per_task
 
     baselines = {}
-    if args.metric == 'success':
-        with open(Path(__file__).resolve().parent.parent.parent / args.baseline_file) as f:
-            baselines = yaml.safe_load(f)
 
     means, cis = [], []
 

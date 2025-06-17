@@ -385,14 +385,6 @@ def main():
 
     apply_net = jax.jit(apply_net, static_argnames=("train_flag",))
 
-
-    # Load the practical baseline yaml file as a dictionary
-    # repo_root = "/home/luka/repo/JAXOvercooked"
-    repo_root = Path(__file__).resolve().parent.parent
-    yaml_loc = os.path.join(repo_root, "practical_reward_baseline.yaml")
-    with open(yaml_loc, "r") as f:
-        practical_baselines = OmegaConf.load(f)
-
     @partial(jax.jit, static_argnums=(2))
     def train_on_environment(rng, train_state, env, env_counter):
         '''
@@ -759,7 +751,6 @@ def main():
                         evaluations = evaluate_model(train_state_eval, eval_rng)
                         metric = add_eval_metrics(evaluations,
                                                   config.layout_name,
-                                                  practical_baselines,
                                                   metric)
                     
                     # params = jax.tree_util.tree_map(lambda x: x, train_state_eval.params)  # ["params"])
@@ -771,7 +762,6 @@ def main():
                         real_step = (int(env_counter)-1) * config.num_updates + int(update_step)
 
                         metric = normalize_soup(config.layout_name,
-                                                practical_baselines,
                                                 metric,
                                                 env_counter)
                         for key, value in metric.items():

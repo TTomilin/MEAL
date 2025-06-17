@@ -97,7 +97,7 @@ def _random_empty_cell(grid: List[List[str]], rng: random.Random) -> Optional[Tu
     return rng.choice(empties)
 
 
-def _place_tiles(
+def place_tiles(
         grid: List[List[str]],
         tile_symbol: str,
         count: int,
@@ -116,7 +116,7 @@ def _place_tiles(
     return True
 
 
-def _remove_unreachable_items(grid: List[List[str]]) -> bool:
+def remove_unreachable_items(grid: List[List[str]]) -> bool:
     """Remove interactive tiles that are not reachable by any agent and replace unreachable floor tiles with walls.
 
     Returns True if any items were removed or floor tiles were replaced, False otherwise.
@@ -252,8 +252,8 @@ def generate_random_layout(
         # 1. Interactive tiles -------------------------------------------------
         # Up to two of each interactive type
         for symbol in (GOAL, POT, ONION_PILE, PLATE_PILE):
-            copies = rng.randint(1, 2)
-            if not _place_tiles(grid, symbol, copies, rng):
+            copies = 2 if symbol == POT else rng.randint(1, 2)
+            if not place_tiles(grid, symbol, copies, rng):
                 print(f"[Attempt {attempt}] Not enough space for {symbol}. Retrying…")
                 break  # go to next attempt
         else:  # executed if the loop *didn't* break: all good so far
@@ -268,17 +268,17 @@ def generate_random_layout(
             target_unpassable = int(round(wall_density * internal_cells))
             additional_walls_needed = max(0, target_unpassable - current_unpassable)
 
-            if not _place_tiles(grid, WALL, additional_walls_needed, rng):
+            if not place_tiles(grid, WALL, additional_walls_needed, rng):
                 print(f"[Attempt {attempt}] Could not reach desired wall density. Retrying…")
                 continue  # next attempt
 
             # 3. Agents --------------------------------------------------------
-            if not _place_tiles(grid, AGENT, num_agents, rng):
+            if not place_tiles(grid, AGENT, num_agents, rng):
                 print(f"[Attempt {attempt}] Not enough space for agents. Retrying…")
                 continue
 
             # 4. Remove unreachable items --------------------------------------
-            items_removed = _remove_unreachable_items(grid)
+            items_removed = remove_unreachable_items(grid)
             if items_removed:
                 print(f"[Attempt {attempt}] Removed unreachable interactive tiles and replaced unreachable floor tiles with walls.")
 
