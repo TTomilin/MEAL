@@ -15,7 +15,7 @@ import numpy as np
 from .common import METHOD_COLORS, smooth_and_ci
 
 
-def setup_figure(width: int = 10, height: int = 4) -> Tuple[plt.Figure, plt.Axes]:
+def setup_figure(width: float = 10, height: float = 4) -> Tuple[plt.Figure, plt.Axes]:
     """
     Set up a figure with the given dimensions.
     
