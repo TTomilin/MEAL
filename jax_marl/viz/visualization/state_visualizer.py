@@ -44,7 +44,7 @@ class StateVisualizer:
         os.path.join(GRAPHICS_DIR, "interact.png")
     )
     STAY_IMG = pygame.image.load(os.path.join(GRAPHICS_DIR, "stay.png"))
-    UNSCALED_TILE_SIZE = 60  # Increased from 15 to match the sprite size
+    UNSCALED_TILE_SIZE = 240  # Increased from 120 to make game elements fit properly within a single tile
     DEFAULT_VALUES = {
         "height": None,  # if None use grid_width - NOTE: can chop down hud if hud is wider than grid
         "width": None,  # if None use (hud_height+grid_height)

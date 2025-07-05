@@ -2,882 +2,882 @@
     "frames": {
         "EAST.png": {
             "frame": {
-                "x": 4,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 16,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "EAST-bluehat.png": {
             "frame": {
-                "x": 72,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 288,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "EAST-dish.png": {
             "frame": {
-                "x": 140,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 560,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "EAST-greenhat.png": {
             "frame": {
-                "x": 208,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 832,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "EAST-onion.png": {
             "frame": {
-                "x": 276,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 1104,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "EAST-orangehat.png": {
             "frame": {
-                "x": 344,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 1376,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "EAST-purplehat.png": {
             "frame": {
-                "x": 4,
-                "y": 72,
-                "w": 60,
-                "h": 60
+                "x": 16,
+                "y": 288,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "EAST-redhat.png": {
             "frame": {
-                "x": 72,
-                "y": 72,
-                "w": 60,
-                "h": 60
+                "x": 288,
+                "y": 288,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "EAST-soup-onion.png": {
             "frame": {
-                "x": 140,
-                "y": 72,
-                "w": 60,
-                "h": 60
+                "x": 560,
+                "y": 288,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "EAST-soup-tomato.png": {
             "frame": {
-                "x": 208,
-                "y": 72,
-                "w": 60,
-                "h": 60
+                "x": 832,
+                "y": 288,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "EAST-tomato.png": {
             "frame": {
-                "x": 276,
-                "y": 72,
-                "w": 60,
-                "h": 60
+                "x": 1104,
+                "y": 288,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "NORTH.png": {
             "frame": {
-                "x": 344,
-                "y": 72,
-                "w": 60,
-                "h": 60
+                "x": 1376,
+                "y": 288,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "NORTH-bluehat.png": {
             "frame": {
-                "x": 4,
-                "y": 140,
-                "w": 60,
-                "h": 60
+                "x": 16,
+                "y": 560,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "NORTH-dish.png": {
             "frame": {
-                "x": 72,
-                "y": 140,
-                "w": 60,
-                "h": 60
+                "x": 288,
+                "y": 560,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "NORTH-greenhat.png": {
             "frame": {
-                "x": 140,
-                "y": 140,
-                "w": 60,
-                "h": 60
+                "x": 560,
+                "y": 560,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "NORTH-onion.png": {
             "frame": {
-                "x": 208,
-                "y": 140,
-                "w": 60,
-                "h": 60
+                "x": 832,
+                "y": 560,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "NORTH-orangehat.png": {
             "frame": {
-                "x": 276,
-                "y": 140,
-                "w": 60,
-                "h": 60
+                "x": 1104,
+                "y": 560,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "NORTH-purplehat.png": {
             "frame": {
-                "x": 344,
-                "y": 140,
-                "w": 60,
-                "h": 60
+                "x": 1376,
+                "y": 560,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "NORTH-redhat.png": {
             "frame": {
-                "x": 4,
-                "y": 208,
-                "w": 60,
-                "h": 60
+                "x": 16,
+                "y": 832,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "NORTH-soup-onion.png": {
             "frame": {
-                "x": 72,
-                "y": 208,
-                "w": 60,
-                "h": 60
+                "x": 288,
+                "y": 832,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "NORTH-soup-tomato.png": {
             "frame": {
-                "x": 140,
-                "y": 208,
-                "w": 60,
-                "h": 60
+                "x": 560,
+                "y": 832,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "NORTH-tomato.png": {
             "frame": {
-                "x": 208,
-                "y": 208,
-                "w": 60,
-                "h": 60
+                "x": 832,
+                "y": 832,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "SOUTH.png": {
             "frame": {
-                "x": 276,
-                "y": 208,
-                "w": 60,
-                "h": 60
+                "x": 1104,
+                "y": 832,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "SOUTH-bluehat.png": {
             "frame": {
-                "x": 344,
-                "y": 208,
-                "w": 60,
-                "h": 60
+                "x": 1376,
+                "y": 832,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "SOUTH-dish.png": {
             "frame": {
-                "x": 4,
-                "y": 276,
-                "w": 60,
-                "h": 60
+                "x": 16,
+                "y": 1104,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "SOUTH-greenhat.png": {
             "frame": {
-                "x": 72,
-                "y": 276,
-                "w": 60,
-                "h": 60
+                "x": 288,
+                "y": 1104,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "SOUTH-onion.png": {
             "frame": {
-                "x": 140,
-                "y": 276,
-                "w": 60,
-                "h": 60
+                "x": 560,
+                "y": 1104,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "SOUTH-orangehat.png": {
             "frame": {
-                "x": 208,
-                "y": 276,
-                "w": 60,
-                "h": 60
+                "x": 832,
+                "y": 1104,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "SOUTH-purplehat.png": {
             "frame": {
-                "x": 276,
-                "y": 276,
-                "w": 60,
-                "h": 60
+                "x": 1104,
+                "y": 1104,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "SOUTH-redhat.png": {
             "frame": {
-                "x": 344,
-                "y": 276,
-                "w": 60,
-                "h": 60
+                "x": 1376,
+                "y": 1104,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "SOUTH-soup-onion.png": {
             "frame": {
-                "x": 4,
-                "y": 344,
-                "w": 60,
-                "h": 60
+                "x": 16,
+                "y": 1376,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "SOUTH-soup-tomato.png": {
             "frame": {
-                "x": 72,
-                "y": 344,
-                "w": 60,
-                "h": 60
+                "x": 288,
+                "y": 1376,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "SOUTH-tomato.png": {
             "frame": {
-                "x": 140,
-                "y": 344,
-                "w": 60,
-                "h": 60
+                "x": 560,
+                "y": 1376,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "WEST.png": {
             "frame": {
-                "x": 208,
-                "y": 344,
-                "w": 60,
-                "h": 60
+                "x": 832,
+                "y": 1376,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "WEST-bluehat.png": {
             "frame": {
-                "x": 276,
-                "y": 344,
-                "w": 60,
-                "h": 60
+                "x": 1104,
+                "y": 1376,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "WEST-dish.png": {
             "frame": {
-                "x": 344,
-                "y": 344,
-                "w": 60,
-                "h": 60
+                "x": 1376,
+                "y": 1376,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "WEST-greenhat.png": {
             "frame": {
-                "x": 412,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 1648,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "WEST-onion.png": {
             "frame": {
-                "x": 412,
-                "y": 72,
-                "w": 60,
-                "h": 60
+                "x": 1648,
+                "y": 288,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "WEST-orangehat.png": {
             "frame": {
-                "x": 412,
-                "y": 140,
-                "w": 60,
-                "h": 60
+                "x": 1648,
+                "y": 560,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "WEST-purplehat.png": {
             "frame": {
-                "x": 412,
-                "y": 208,
-                "w": 60,
-                "h": 60
+                "x": 1648,
+                "y": 832,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "WEST-redhat.png": {
             "frame": {
-                "x": 412,
-                "y": 276,
-                "w": 60,
-                "h": 60
+                "x": 1648,
+                "y": 1104,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "WEST-soup-onion.png": {
             "frame": {
-                "x": 412,
-                "y": 344,
-                "w": 60,
-                "h": 60
+                "x": 1648,
+                "y": 1376,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "WEST-soup-tomato.png": {
             "frame": {
-                "x": 4,
-                "y": 412,
-                "w": 60,
-                "h": 60
+                "x": 16,
+                "y": 1648,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "WEST-tomato.png": {
             "frame": {
-                "x": 72,
-                "y": 412,
-                "w": 60,
-                "h": 60
+                "x": 288,
+                "y": 1648,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         }
     },
@@ -887,9 +887,9 @@
         "image": "spritesheet.png",
         "format": "RGBA8888",
         "size": {
-            "w": 476,
-            "h": 476
+            "w": 1904,
+            "h": 1904
         },
-        "scale": "4.0"
+        "scale": "16.0"
     }
 }

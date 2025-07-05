@@ -2,302 +2,302 @@
     "frames": {
         "dish.png": {
             "frame": {
-                "x": 4,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 16,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "onion.png": {
             "frame": {
-                "x": 72,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 288,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "pot-explosion.png": {
             "frame": {
-                "x": 140,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 560,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "soup-onion-1-cooking.png": {
             "frame": {
-                "x": 208,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 832,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "soup-onion-2-cooking.png": {
             "frame": {
-                "x": 276,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 1104,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "soup-onion-3-cooking.png": {
             "frame": {
-                "x": 344,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 1376,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "soup-onion-cooked.png": {
             "frame": {
-                "x": 412,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 1648,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "soup-onion-dish.png": {
             "frame": {
-                "x": 480,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 1920,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "soup-tomato-1-cooking.png": {
             "frame": {
-                "x": 548,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 2192,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "soup-tomato-2-cooking.png": {
             "frame": {
-                "x": 616,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 2464,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "soup-tomato-3-0.png": {
             "frame": {
-                "x": 684,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 2736,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "soup-tomato-3-cooking.png": {
             "frame": {
-                "x": 752,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 3008,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "soup-tomato-cooked.png": {
             "frame": {
-                "x": 820,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 3280,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "soup-tomato-dish.png": {
             "frame": {
-                "x": 888,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 3552,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         },
         "tomato.png": {
             "frame": {
-                "x": 956,
-                "y": 4,
-                "w": 60,
-                "h": 60
+                "x": 3824,
+                "y": 16,
+                "w": 240,
+                "h": 240
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             },
             "sourceSize": {
-                "w": 60,
-                "h": 60
+                "w": 240,
+                "h": 240
             }
         }
     },
@@ -307,9 +307,9 @@
         "image": "spritesheet.png",
         "format": "RGBA8888",
         "size": {
-            "w": 1020,
-            "h": 68
+            "w": 4080,
+            "h": 272
         },
-        "scale": "4.0"
+        "scale": "16.0"
     }
 }
