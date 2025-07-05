@@ -33,7 +33,7 @@ from tensorboardX import SummaryWriter
 
 @dataclass
 class Config:
-    reg_coef: float = 1e7
+    reg_coef: float = None
     lr: float = 3e-4
     num_envs: int = 16
     num_steps: int = 128
@@ -56,8 +56,8 @@ class Config:
     alg_name: str = "ippo"
     cl_method: str = None
     use_cnn: bool = False
-    use_task_id: bool = False
-    use_multihead: bool = False
+    use_task_id: bool = True
+    use_multihead: bool = True
     shared_backbone: bool = False
     normalize_importance: bool = False
     regularize_critic: bool = False
@@ -70,7 +70,7 @@ class Config:
     importance_steps: int = 500
 
     # EWC specific
-    ewc_mode: str = "online"  # "online", "last" or "multi"
+    ewc_mode: str = "multi"  # "online", "last" or "multi"
     ewc_decay: float = 0.9  # Only for online EWC
 
     # AGEM specific
@@ -90,6 +90,7 @@ class Config:
     eval_num_steps: int = 1000
     eval_num_episodes: int = 5
     gif_len: int = 300
+    difficulty: str = None
 
     # ─── random‐layout generator knobs ───────────────────────────────────────
     height_min: int = 6  # minimum layout height
@@ -130,6 +131,30 @@ def main():
 
     if config.cl_method is None:
         raise ValueError("cl_method is required. Please specify a continual learning method (e.g., ewc, mas, l2, ft, agem).")
+
+    # Set height_min, height_max, width_min, width_max, and wall_density based on difficulty
+    if config.difficulty:
+        if config.difficulty.lower() == "easy":
+            config.height_min = config.width_min = 6
+            config.height_max = config.width_max = 7
+            config.wall_density = 0.15
+        elif config.difficulty.lower() == "medium" or config.difficulty.lower() == "med":
+            config.height_min = config.width_min = 8
+            config.height_max = config.width_max = 9
+            config.wall_density = 0.25
+        elif config.difficulty.lower() == "hard":
+            config.height_min = config.width_min = 10
+            config.height_max = config.width_max = 11
+            config.wall_density = 0.35
+
+    # Set default regularization coefficient based on the CL method if not specified
+    if config.reg_coef is None:
+        if config.cl_method.lower() == "ewc":
+            config.reg_coef = 1e11
+        elif config.cl_method.lower() == "mas":
+            config.reg_coef = 1e9
+        elif config.cl_method.lower() == "l2":
+            config.reg_coef = 1e7
 
     method_map = dict(ewc=EWC(mode=config.ewc_mode, decay=config.ewc_decay),
                       mas=MAS(),

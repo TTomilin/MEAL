@@ -357,7 +357,7 @@ def main(argv=None):
     parser.add_argument("--width-min", type=int, default=10, help="minimum layout width")
     parser.add_argument("--width-max", type=int, default=11, help="maximum layout width")
     parser.add_argument("--wall-density", type=float, default=0.35, help="fraction of unpassable internal cells")
-    parser.add_argument("--difficulty", type=str, choices=["easy", "med", "hard"], 
+    parser.add_argument("--difficulty", type=str, choices=["easy", "med", "medium", "hard"], 
                         help="difficulty level (overrides height, width, and wall density)")
     parser.add_argument("--num-envs", type=int, default=1, help="number of environments to generate")
     parser.add_argument("--show", action="store_true", help="preview with matplotlib")
@@ -371,7 +371,7 @@ def main(argv=None):
             args.height_min = args.width_min = 6
             args.height_max = args.width_max = 7
             args.wall_density = 0.15
-        elif args.difficulty == "med":
+        elif args.difficulty == "med" or args.difficulty == "medium":
             args.height_min = args.width_min = 8
             args.height_max = args.width_max = 9
             args.wall_density = 0.25
