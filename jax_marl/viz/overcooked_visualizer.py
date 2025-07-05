@@ -1,16 +1,19 @@
 import math
+import os
 
 import numpy as np
 import wandb
+import pygame
 
 import jax_marl.viz.grid_rendering as rendering
 from jax_marl.environments.overcooked_environment.common import OBJECT_TO_INDEX, COLOR_TO_INDEX, COLORS
 from jax_marl.viz.window import Window
+from jax_marl.viz.visualization.state_visualizer import StateVisualizer
 
 # INDEX_TO_COLOR = [k for k,v in COLOR_TO_INDEX.items()]
 INDEX_TO_COLOR = [k for k, _ in sorted(COLOR_TO_INDEX.items(), key=lambda p: p[1])]
 
-TILE_PIXELS = 32
+TILE_PIXELS = 64  # Increased from 32 to 64 for higher resolution
 
 
 def _colour_to_agent_index(col_idx: int) -> int:
@@ -30,12 +33,23 @@ class OvercookedVisualizer:
     num_agents : int
         How many inventories / headings you’ll pass in `agent_inv`
         and `agent_dir_idx`.
+    use_old_rendering : bool
+        If True, use the old rendering logic. If False (default), use the new rendering logic
+        from the overcooked_ai repository.
     """
     tile_cache: dict[tuple, np.ndarray] = {}
 
-    def __init__(self, num_agents: int = 2):
+    def __init__(self, num_agents: int = 2, use_old_rendering: bool = False):
         self.window: Window | None = None
         self._num_agents = num_agents
+        self.use_old_rendering = use_old_rendering
+
+        # Initialize the new state visualizer if using new rendering
+        if not self.use_old_rendering:
+            self.state_visualizer = StateVisualizer(
+                player_colors=["red", "blue", "green", "purple"][:num_agents],
+                tile_size=TILE_PIXELS
+            )
 
     # --------------------------------------------------------------------- #
     # Window helpers
@@ -45,13 +59,100 @@ class OvercookedVisualizer:
         if self.window is None:
             self.window = Window('Overcooked-viz')
 
+    def _convert_grid_to_str(self, grid):
+        """
+        Convert the grid from the format used in the old rendering logic to the format expected by the StateVisualizer.
+
+        StateVisualizer expects a grid of strings where each cell is one of:
+        " " (empty), "X" (counter), "O" (onion dispenser), "T" (tomato dispenser), 
+        "P" (pot), "D" (dish dispenser), or "S" (serving location).
+        """
+        height, width = grid.shape[:2]
+        grid_str = []
+
+        for y in range(height):
+            row = []
+            for x in range(width):
+                obj = grid[y, x, :]
+                obj_type = obj[0]
+
+                if obj_type == OBJECT_TO_INDEX['empty']:
+                    row.append(" ")  # Empty
+                elif obj_type == OBJECT_TO_INDEX['wall']:
+                    row.append("X")  # Counter
+                elif obj_type == OBJECT_TO_INDEX['onion_pile']:
+                    row.append("O")  # Onion dispenser
+                elif obj_type == OBJECT_TO_INDEX['plate_pile']:
+                    row.append("D")  # Dish dispenser
+                elif obj_type == OBJECT_TO_INDEX['pot']:
+                    row.append("P")  # Pot
+                elif obj_type == OBJECT_TO_INDEX['goal']:
+                    row.append("S")  # Serving location
+                elif obj_type == OBJECT_TO_INDEX['agent']:
+                    row.append(" ")  # Empty tile under agent
+                else:
+                    row.append("X")  # Default to counter for other objects
+
+            grid_str.append(row)
+
+        return grid_str
+
     def show(self, block=False):
         self._lazy_init_window()
         self.window.show(block=block)
 
     def render(self, agent_view_size, state, highlight=True, tile_size=TILE_PIXELS):
         """Method for rendering the state in a window. Esp. useful for interactive mode."""
-        return self._render_state(agent_view_size, state, highlight, tile_size)
+        if self.use_old_rendering:
+            return self._render_state(agent_view_size, state, highlight, tile_size)
+        else:
+            self._lazy_init_window()
+            # Extract grid from state
+            padding = agent_view_size - 2
+            grid = np.asarray(state.maze_map[padding:-padding, padding:-padding, :])
+
+            # Convert grid to format expected by StateVisualizer
+            grid_str = self._convert_grid_to_str(grid)
+
+            # Create a minimal state object for rendering
+            from collections import namedtuple
+            from jax_marl.viz.visualization.actions import Direction
+
+            # Create a mapping from environment direction indices to visualization direction tuples
+            ENV_DIR_IDX_TO_VIZ_DIR = {
+                0: Direction.NORTH,  # (0, -1)
+                1: Direction.SOUTH,  # (0, 1)
+                2: Direction.EAST,   # (1, 0)
+                3: Direction.WEST    # (-1, 0)
+            }
+
+            # Create mock players based on agent positions and directions
+            MockPlayer = namedtuple('MockPlayer', ['position', 'orientation', 'held_object'])
+            players = []
+
+            # Find agent positions in the grid
+            agent_positions = []
+            for y in range(grid.shape[0]):
+                for x in range(grid.shape[1]):
+                    if grid[y, x, 0] == OBJECT_TO_INDEX['agent']:
+                        agent_positions.append((x, y))
+
+            # Create players for each agent position
+            for i, pos in enumerate(agent_positions):
+                # Convert environment direction index to visualization direction tuple
+                orientation = ENV_DIR_IDX_TO_VIZ_DIR[state.agent_dir_idx[i]]
+
+                # Create a player with no held object
+                players.append(MockPlayer(position=pos, orientation=orientation, held_object=None))
+
+            # Create a mock state
+            MockState = namedtuple('MockState', ['players', 'objects'])
+            mock_state = MockState(players=players, objects={})
+
+            # Render using StateVisualizer
+            surface = self.state_visualizer.render_state(mock_state, grid_str)
+            self.window.show_img(pygame.surfarray.array3d(surface).transpose(1, 0, 2))
+            return surface
 
     def animate(self, state_seq, agent_view_size, task_idx, task_name, exp_dir, tile_size: int = TILE_PIXELS):
         """
@@ -61,22 +162,75 @@ class OvercookedVisualizer:
         expose a `.maze_map`, `.agent_dir_idx`, `.agent_inv`, etc.
         """
         import imageio.v3 as iio
+        import os
 
         padding = agent_view_size - 2  # show
 
-        def get_frame(state):
-            grid = np.asarray(state.maze_map[padding:-padding, padding:-padding, :])
-            # Render the state
-            frame = self._render_grid(
-                grid,
-                tile_size=tile_size,
-                highlight_mask=None,
-                agent_dir_idx=np.atleast_1d(state.agent_dir_idx),
-                agent_inv=np.atleast_1d(state.agent_inv),
-            )
-            return frame
+        if self.use_old_rendering:
+            def get_frame(state):
+                grid = np.asarray(state.maze_map[padding:-padding, padding:-padding, :])
+                # Render the state
+                frame = self._render_grid(
+                    grid,
+                    tile_size=tile_size,
+                    highlight_mask=None,
+                    agent_dir_idx=np.atleast_1d(state.agent_dir_idx),
+                    agent_inv=np.atleast_1d(state.agent_inv),
+                )
+                return frame
 
-        frames = [get_frame(state.env_state) for state in state_seq]
+            frames = [get_frame(state.env_state) for state in state_seq]
+        else:
+            # Use the new rendering logic
+            frames = []
+            from collections import namedtuple
+            from jax_marl.viz.visualization.actions import Direction
+
+            # Create a mapping from environment direction indices to visualization direction tuples
+            ENV_DIR_IDX_TO_VIZ_DIR = {
+                0: Direction.NORTH,  # (0, -1)
+                1: Direction.SOUTH,  # (0, 1)
+                2: Direction.EAST,   # (1, 0)
+                3: Direction.WEST    # (-1, 0)
+            }
+
+            for state in state_seq:
+                grid = np.asarray(state.env_state.maze_map[padding:-padding, padding:-padding, :])
+                grid_str = self._convert_grid_to_str(grid)
+
+                # Create mock players based on agent positions and directions
+                MockPlayer = namedtuple('MockPlayer', ['position', 'orientation', 'held_object'])
+                players = []
+
+                # Find agent positions in the grid
+                agent_positions = []
+                for y in range(grid.shape[0]):
+                    for x in range(grid.shape[1]):
+                        if grid[y, x, 0] == OBJECT_TO_INDEX['agent']:
+                            agent_positions.append((x, y))
+
+                # Create players for each agent position
+                for i, pos in enumerate(agent_positions):
+                    # Convert environment direction index to visualization direction tuple
+                    orientation = ENV_DIR_IDX_TO_VIZ_DIR[state.env_state.agent_dir_idx[i]]
+
+                    # Create a player with no held object
+                    players.append(MockPlayer(position=pos, orientation=orientation, held_object=None))
+
+                # Create a mock state
+                MockState = namedtuple('MockState', ['players', 'objects'])
+                mock_state = MockState(players=players, objects={})
+
+                # Render using StateVisualizer
+                surface = self.state_visualizer.render_state(mock_state, grid_str)
+
+                # Convert pygame surface to numpy array
+                frame = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
+                frames.append(frame)
+
+        # Create directory if it doesn't exist
+        os.makedirs(exp_dir, exist_ok=True)
+
         file_name = f"task_{task_idx}_{task_name}"
         file_path = f"{exp_dir}/{file_name}.gif"
 
@@ -84,19 +238,70 @@ class OvercookedVisualizer:
         if wandb.run is not None:
             wandb.log({file_name: wandb.Video(file_path, format="gif")})
 
-    def render_grid(self, grid, tile_size=TILE_PIXELS, k_rot90=0, agent_dir_idx=None, agent_inv=None, title = None):
+    def render_grid(self, grid, tile_size=TILE_PIXELS, k_rot90=0, agent_dir_idx=None, agent_inv=None, title=None):
         self._lazy_init_window()
 
-        img = self._render_grid(
-            grid,
-            tile_size,
-            highlight_mask=None,
-            agent_dir_idx=agent_dir_idx,
-            agent_inv=agent_inv,
-        )
-        # img = np.transpose(img, axes=(1,0,2))
-        if k_rot90 > 0:
-            img = np.rot90(img, k=k_rot90)
+        if self.use_old_rendering:
+            img = self._render_grid(
+                grid,
+                tile_size,
+                highlight_mask=None,
+                agent_dir_idx=agent_dir_idx,
+                agent_inv=agent_inv,
+            )
+            # img = np.transpose(img, axes=(1,0,2))
+            if k_rot90 > 0:
+                img = np.rot90(img, k=k_rot90)
+        else:
+            # Convert grid to format expected by StateVisualizer
+            grid_str = self._convert_grid_to_str(grid)
+
+            # Create a minimal state object for rendering
+            from collections import namedtuple
+            from jax_marl.viz.visualization.actions import Direction
+
+            # Create a mapping from environment direction indices to visualization direction tuples
+            ENV_DIR_IDX_TO_VIZ_DIR = {
+                0: Direction.NORTH,  # (0, -1)
+                1: Direction.SOUTH,  # (0, 1)
+                2: Direction.EAST,   # (1, 0)
+                3: Direction.WEST    # (-1, 0)
+            }
+
+            # Create mock players based on agent_dir_idx and agent_inv
+            MockPlayer = namedtuple('MockPlayer', ['position', 'orientation', 'held_object'])
+            players = []
+
+            # Find agent positions in the grid
+            agent_positions = []
+            for y in range(grid.shape[0]):
+                for x in range(grid.shape[1]):
+                    if grid[y, x, 0] == OBJECT_TO_INDEX['agent']:
+                        agent_positions.append((x, y))
+
+            # Create players for each agent position
+            for i, pos in enumerate(agent_positions):
+                if agent_dir_idx is not None and i < len(agent_dir_idx):
+                    # Convert environment direction index to visualization direction tuple
+                    orientation = ENV_DIR_IDX_TO_VIZ_DIR[agent_dir_idx[i]]
+                else:
+                    orientation = Direction.SOUTH  # Default orientation (facing downwards)
+
+                # Create a player with no held object
+                players.append(MockPlayer(position=pos, orientation=orientation, held_object=None))
+
+            # Create a mock state
+            MockState = namedtuple('MockState', ['players', 'objects'])
+            mock_state = MockState(players=players, objects={})
+
+            # Render using StateVisualizer
+            surface = self.state_visualizer.render_state(mock_state, grid_str)
+
+            # Convert pygame surface to numpy array
+            img = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
+
+            if k_rot90 > 0:
+                img = np.rot90(img, k=k_rot90)
 
         if title is not None and hasattr(self, "window"):
             self.window.set_caption(title)  # one-liner caption

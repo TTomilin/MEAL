@@ -112,9 +112,9 @@ def main():
     diff.add_argument("--difficulty", choices=["easy", "medium", "hard"], default="hard")
 
     # manual overrides
-    p.add_argument("--h-min", type=int);
+    p.add_argument("--h-min", type=int)
     p.add_argument("--h-max", type=int)
-    p.add_argument("--w-min", type=int);
+    p.add_argument("--w-min", type=int)
     p.add_argument("--w-max", type=int)
     p.add_argument("--density", type=float)
 

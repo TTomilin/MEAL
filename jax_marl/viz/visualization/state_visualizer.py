@@ -44,15 +44,15 @@ class StateVisualizer:
         os.path.join(GRAPHICS_DIR, "interact.png")
     )
     STAY_IMG = pygame.image.load(os.path.join(GRAPHICS_DIR, "stay.png"))
-    UNSCALED_TILE_SIZE = 15
+    UNSCALED_TILE_SIZE = 60  # Increased from 15 to match the sprite size
     DEFAULT_VALUES = {
         "height": None,  # if None use grid_width - NOTE: can chop down hud if hud is wider than grid
         "width": None,  # if None use (hud_height+grid_height)
-        "tile_size": 75,
+        "tile_size": 150,  # Increased from 75 to 150 for higher resolution
         "window_fps": 30,
         "player_colors": ["blue", "green"],
         "is_rendering_hud": True,
-        "hud_font_size": 10,
+        "hud_font_size": 20,  # Increased from 10 to 20 for higher resolution
         "hud_font_path": roboto_path,
         "hud_system_font_name": None,  # if set to None use hud_font_path
         "hud_font_color": (255, 255, 255),  # white
@@ -63,21 +63,22 @@ class StateVisualizer:
             "score",
             "potential",
         ],
-        "hud_interline_size": 10,
-        "hud_margin_bottom": 10,
-        "hud_margin_top": 10,
-        "hud_margin_left": 10,
-        "hud_distance_between_orders": 5,
-        "hud_order_size": 15,
+        "hud_interline_size": 20,  # Increased from 10 to 20 for higher resolution
+        "hud_margin_bottom": 20,  # Increased from 10 to 20 for higher resolution
+        "hud_margin_top": 20,  # Increased from 10 to 20 for higher resolution
+        "hud_margin_left": 20,  # Increased from 10 to 20 for higher resolution
+        "hud_distance_between_orders": 10,  # Increased from 5 to 10 for higher resolution
+        "hud_order_size": 30,  # Increased from 15 to 30 for higher resolution
         "is_rendering_cooking_timer": True,
         "show_timer_when_cooked": True,
-        "cooking_timer_font_size": 20,  # # if set to None use cooking_timer_font_path
+        "cooking_timer_font_size": 40,  # Increased from 20 to 40 for higher resolution
         "cooking_timer_font_path": roboto_path,
         "cooking_timer_system_font_name": None,
         "cooking_timer_font_color": (255, 0, 0),  # red
         "grid": None,
         "background_color": (155, 101, 0),  # color of empty counter
         "is_rendering_action_probs": True,
+        "is_rendering_borders": True,  # whether to render borders around wall tiles
         # whatever represent visually on the grid what actions some given agent would make
     }
     TILE_TO_FRAME_NAME = {
@@ -353,11 +354,37 @@ class StateVisualizer:
     def _render_grid(self, surface, grid):
         for y_tile, row in enumerate(grid):
             for x_tile, tile in enumerate(row):
+                # Render the base tile
                 self.TERRAINS_IMG.blit_on_surface(
                     surface,
                     self._position_in_unscaled_pixels((x_tile, y_tile)),
                     StateVisualizer.TILE_TO_FRAME_NAME[tile],
                 )
+
+                # Add borders around wall, onion, plate, pot, and goal tiles if enabled
+                if (tile in [COUNTER, ONION_DISPENSER, DISH_DISPENSER, POT, SERVING_LOC]) and self.is_rendering_borders:
+                    # Get the position and size of the tile
+                    pos = self._position_in_unscaled_pixels((x_tile, y_tile))
+                    border_width = 1  # Smallest possible integer value for border width
+                    border_color = (60, 60, 60)  # Gray
+
+                    # Draw the border
+                    pygame.draw.rect(
+                        surface,
+                        border_color,
+                        (pos[0], pos[1], self.UNSCALED_TILE_SIZE, self.UNSCALED_TILE_SIZE),
+                        border_width
+                    )
+
+                # Make delivery tiles more visible with a darker/more intense color
+                if tile == SERVING_LOC:
+                    # Get the position and size of the tile
+                    pos = self._position_in_unscaled_pixels((x_tile, y_tile))
+
+                    # Draw a semi-transparent overlay to make the color more intense
+                    overlay = pygame.Surface((self.UNSCALED_TILE_SIZE, self.UNSCALED_TILE_SIZE), pygame.SRCALPHA)
+                    overlay.fill((0, 100, 0, 128))  # Semi-transparent dark green
+                    surface.blit(overlay, pos)
 
     def _position_in_unscaled_pixels(self, position):
         """

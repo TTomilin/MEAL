@@ -99,12 +99,13 @@ class MultiFramePygameImage:
         if (
                 "textures" in frames_json.keys()
         ):  # check if its format of soups.json
-            assert (
-                    frames_json["textures"][0]["scale"] == 1
-            )  # not implemented support for scale here
+            # Get the scale value (default to 1 if not present)
+            scale = float(frames_json["textures"][0].get("scale", "1.0"))
             frames = frames_json["textures"][0]["frames"]
 
         else:  # assume its format of objects.json, terrain.json and chefs.json
+            # Get the scale value (default to 1 if not present)
+            scale = float(frames_json.get("meta", {}).get("scale", "1.0"))
             frames = []
             for filename, frame_dict in frames_json["frames"].items():
                 frame_dict["filename"] = filename
