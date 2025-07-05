@@ -128,6 +128,9 @@ def main():
 
     config = tyro.cli(Config)
 
+    if config.cl_method is None:
+        raise ValueError("cl_method is required. Please specify a continual learning method (e.g., ewc, mas, l2, ft, agem).")
+
     method_map = dict(ewc=EWC(mode=config.ewc_mode, decay=config.ewc_decay),
                       mas=MAS(),
                       l2=L2(),
