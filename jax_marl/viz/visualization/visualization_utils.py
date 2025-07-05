@@ -21,7 +21,7 @@ def ipython_images_slider(image_pathes_list, slider_label="", first_arg=0):
 
 
 def show_ipython_images_slider(
-    image_pathes_list, slider_label="", first_arg=0
+        image_pathes_list, slider_label="", first_arg=0
 ):
     def display_f(**kwargs):
         display(Image(image_pathes_list[kwargs[slider_label]]))

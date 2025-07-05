@@ -4,35 +4,22 @@ import os
 
 import pygame
 
-from overcooked_ai_py.mdp.actions import Action, Direction
-from overcooked_ai_py.mdp.layout_generator import (
-    COUNTER,
-    DISH_DISPENSER,
-    EMPTY,
-    ONION_DISPENSER,
-    POT,
-    SERVING_LOC,
-    TOMATO_DISPENSER,
-)
-from overcooked_ai_py.static import FONTS_DIR, GRAPHICS_DIR
-from overcooked_ai_py.utils import (
-    classproperty,
-    cumulative_rewards_from_rew_list,
-    generate_temporary_file_path,
-)
-from overcooked_ai_py.visualization.pygame_utils import (
-    MultiFramePygameImage,
-    blit_on_new_surface_of_size,
-    run_static_resizeable_window,
-    scale_surface_by_factor,
-    vstack_surfaces,
-)
-from overcooked_ai_py.visualization.visualization_utils import (
-    show_image_in_ipython,
-    show_ipython_images_slider,
-)
+from jax_marl.viz.visualization.actions import Direction, Action
+from jax_marl.viz.visualization.pygame_utils import MultiFramePygameImage, run_static_resizeable_window, \
+    scale_surface_by_factor, blit_on_new_surface_of_size
+from jax_marl.viz.visualization.static import GRAPHICS_DIR, FONTS_DIR
+from jax_marl.viz.visualization.utils import cumulative_rewards_from_rew_list, generate_temporary_file_path
+from jax_marl.viz.visualization.visualization_utils import show_ipython_images_slider, show_image_in_ipython
 
 roboto_path = os.path.join(FONTS_DIR, "Roboto-Regular.ttf")
+
+EMPTY = " "
+COUNTER = "X"
+ONION_DISPENSER = "O"
+TOMATO_DISPENSER = "T"
+POT = "P"
+DISH_DISPENSER = "D"
+SERVING_LOC = "S"
 
 
 class StateVisualizer:
@@ -90,7 +77,8 @@ class StateVisualizer:
         "cooking_timer_font_color": (255, 0, 0),  # red
         "grid": None,
         "background_color": (155, 101, 0),  # color of empty counter
-        "is_rendering_action_probs": True,  # whatever represent visually on the grid what actions some given agent would make
+        "is_rendering_action_probs": True,
+        # whatever represent visually on the grid what actions some given agent would make
     }
     TILE_TO_FRAME_NAME = {
         EMPTY: "floor",
@@ -165,15 +153,15 @@ class StateVisualizer:
         ]
 
     def display_rendered_trajectory(
-        self,
-        trajectories,
-        trajectory_idx=0,
-        hud_data=None,
-        action_probs=None,
-        img_directory_path=None,
-        img_extension=".png",
-        img_prefix="",
-        ipython_display=True,
+            self,
+            trajectories,
+            trajectory_idx=0,
+            hud_data=None,
+            action_probs=None,
+            img_directory_path=None,
+            img_extension=".png",
+            img_prefix="",
+            ipython_display=True,
     ):
         """
         saves images of every timestep from trajectory in img_directory_path (or temporary directory if not path is not specified)
@@ -224,14 +212,14 @@ class StateVisualizer:
         return img_directory_path
 
     def display_rendered_state(
-        self,
-        state,
-        hud_data=None,
-        action_probs=None,
-        grid=None,
-        img_path=None,
-        ipython_display=False,
-        window_display=False,
+            self,
+            state,
+            hud_data=None,
+            action_probs=None,
+            grid=None,
+            img_path=None,
+            ipython_display=False,
+            window_display=False,
     ):
         """
         renders state as image
@@ -244,7 +232,7 @@ class StateVisualizer:
         action_probs(list(list(float))): action probs for every player acessed in the way action_probs[player][action]
         """
         assert (
-            window_display or img_path or ipython_display
+                window_display or img_path or ipython_display
         ), "specify at least one of the ways to output result state image: window_display, img_path, or ipython_display"
         surface = self.render_state(
             state, grid, hud_data, action_probs=action_probs
@@ -466,8 +454,8 @@ class StateVisualizer:
             (x_pos, y_pos) = obj.position
             if obj.name == "soup" and grid[y_pos][x_pos] == POT:
                 if obj._cooking_tick != -1 and (
-                    obj._cooking_tick <= obj.cook_time
-                    or self.show_timer_when_cooked
+                        obj._cooking_tick <= obj.cook_time
+                        or self.show_timer_when_cooked
                 ):
                     text_surface = self.cooking_timer_font.render(
                         str(obj._cooking_tick),
@@ -521,8 +509,8 @@ class StateVisualizer:
             scaled_order_size = (order_width, order_width)
             orders_surface_height = order_height
             orders_surface_width = (
-                len(orders_dicts) * order_width
-                + (len(orders_dicts) - 1) * self.hud_distance_between_orders
+                    len(orders_dicts) * order_width
+                    + (len(orders_dicts) - 1) * self.hud_distance_between_orders
             )
             unscaled_order_size = (
                 self.UNSCALED_TILE_SIZE,
@@ -553,12 +541,12 @@ class StateVisualizer:
                     )
                 recipes_surface.blit(scaled_order_surface, (next_surface_x, 0))
                 next_surface_x += (
-                    order_width + self.hud_distance_between_orders
+                        order_width + self.hud_distance_between_orders
                 )
             return recipes_surface
 
         for hud_line_num, (key, value) in enumerate(
-            self._sorted_hud_items(hud_data)
+                self._sorted_hud_items(hud_data)
         ):
             hud_text = self._key_to_hud_text(key)
             if key not in [
@@ -576,39 +564,39 @@ class StateVisualizer:
             surface.blit(text_surface, text_surface_position)
 
             if (
-                key
-                in [
-                    "all_orders",
-                    "bonus_orders",
-                    "start_all_orders",
-                    "start_bonus_orders",
-                ]
-                and value
+                    key
+                    in [
+                "all_orders",
+                "bonus_orders",
+                "start_all_orders",
+                "start_bonus_orders",
+            ]
+                    and value
             ):
                 recipes_surface_position = hud_recipes_position(
                     text_surface, text_surface_position
                 )
                 recipes_surface = get_hud_recipes_surface(value)
                 assert (
-                    recipes_surface.get_width() + text_surface.get_width()
-                    <= surface.get_width()
+                        recipes_surface.get_width() + text_surface.get_width()
+                        <= surface.get_width()
                 ), "surface width is too small to fit recipes in single line"
                 surface.blit(recipes_surface, recipes_surface_position)
 
     def _calculate_hud_height(self, hud_data):
         return (
-            self.hud_margin_top
-            + len(hud_data) * self.hud_line_height
-            + self.hud_margin_bottom
+                self.hud_margin_top
+                + len(hud_data) * self.hud_line_height
+                + self.hud_margin_bottom
         )
 
     def _render_on_tile_position(
-        self,
-        scaled_grid_surface,
-        source_surface,
-        tile_position,
-        horizontal_align="left",
-        vertical_align="top",
+            self,
+            scaled_grid_surface,
+            source_surface,
+            tile_position,
+            horizontal_align="left",
+            vertical_align="top",
     ):
         assert vertical_align in ["top", "center", "bottom"]
         left_x, top_y = self._position_in_scaled_pixels(tile_position)

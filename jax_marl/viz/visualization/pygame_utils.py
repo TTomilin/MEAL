@@ -1,7 +1,7 @@
 import pygame
 from pygame.locals import DOUBLEBUF, HWSURFACE, QUIT, RESIZABLE, VIDEORESIZE
 
-from overcooked_ai_py.utils import load_from_json
+from jax_marl.viz.visualization.utils import load_from_json
 
 
 def run_static_resizeable_window(surface, fps=30):
@@ -83,7 +83,7 @@ class MultiFramePygameImage:
         )
 
     def blit_on_surface(
-        self, surface, top_left_pixel_position, frame_name, **kwargs
+            self, surface, top_left_pixel_position, frame_name, **kwargs
     ):
         surface.blit(
             self.image,
@@ -97,10 +97,10 @@ class MultiFramePygameImage:
         frames_json = load_from_json(json_path)
 
         if (
-            "textures" in frames_json.keys()
+                "textures" in frames_json.keys()
         ):  # check if its format of soups.json
             assert (
-                frames_json["textures"][0]["scale"] == 1
+                    frames_json["textures"][0]["scale"] == 1
             )  # not implemented support for scale here
             frames = frames_json["textures"][0]["frames"]
 
