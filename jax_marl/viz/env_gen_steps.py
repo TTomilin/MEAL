@@ -34,7 +34,7 @@ from jax_marl.viz.overcooked_visualizer import OvercookedVisualizer
 # Configurable output folder
 OUT_DIR = (
         Path(__file__).resolve().parent.parent.parent
-        / "assets" / "screenshots" / "generated"
+        / "assets" / "screenshots" / "env_generation"
 )
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 

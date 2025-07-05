@@ -1,14 +1,13 @@
 import math
-import os
 
 import numpy as np
-import wandb
 import pygame
+import wandb
 
 import jax_marl.viz.grid_rendering as rendering
 from jax_marl.environments.overcooked_environment.common import OBJECT_TO_INDEX, COLOR_TO_INDEX, COLORS
-from jax_marl.viz.window import Window
 from jax_marl.viz.visualization.state_visualizer import StateVisualizer
+from jax_marl.viz.window import Window
 
 # INDEX_TO_COLOR = [k for k,v in COLOR_TO_INDEX.items()]
 INDEX_TO_COLOR = [k for k, _ in sorted(COLOR_TO_INDEX.items(), key=lambda p: p[1])]
@@ -108,7 +107,7 @@ class OvercookedVisualizer:
         else:
             self._lazy_init_window()
             # Extract grid from state
-            padding = agent_view_size - 2
+            padding = agent_view_size - 1  # 5→4 because map has +1 outer wall
             grid = np.asarray(state.maze_map[padding:-padding, padding:-padding, :])
 
             # Convert grid to format expected by StateVisualizer
@@ -122,8 +121,8 @@ class OvercookedVisualizer:
             ENV_DIR_IDX_TO_VIZ_DIR = {
                 0: Direction.NORTH,  # (0, -1)
                 1: Direction.SOUTH,  # (0, 1)
-                2: Direction.EAST,   # (1, 0)
-                3: Direction.WEST    # (-1, 0)
+                2: Direction.EAST,  # (1, 0)
+                3: Direction.WEST  # (-1, 0)
             }
 
             # Create mock players based on agent positions and directions
@@ -140,7 +139,9 @@ class OvercookedVisualizer:
             # Create players for each agent position
             for i, pos in enumerate(agent_positions):
                 # Convert environment direction index to visualization direction tuple
-                orientation = ENV_DIR_IDX_TO_VIZ_DIR[state.agent_dir_idx[i]]
+                # Convert JAX array to int before using as dictionary key
+                dir_idx = int(state.agent_dir_idx[i])
+                orientation = ENV_DIR_IDX_TO_VIZ_DIR[dir_idx]
 
                 # Create a player with no held object
                 players.append(MockPlayer(position=pos, orientation=orientation, held_object=None))
@@ -164,7 +165,7 @@ class OvercookedVisualizer:
         import imageio.v3 as iio
         import os
 
-        padding = agent_view_size - 2  # show
+        padding = agent_view_size - 1  # 5→4 because map has +1 outer wall
 
         if self.use_old_rendering:
             def get_frame(state):
@@ -190,8 +191,8 @@ class OvercookedVisualizer:
             ENV_DIR_IDX_TO_VIZ_DIR = {
                 0: Direction.NORTH,  # (0, -1)
                 1: Direction.SOUTH,  # (0, 1)
-                2: Direction.EAST,   # (1, 0)
-                3: Direction.WEST    # (-1, 0)
+                2: Direction.EAST,  # (1, 0)
+                3: Direction.WEST  # (-1, 0)
             }
 
             for state in state_seq:
@@ -212,7 +213,9 @@ class OvercookedVisualizer:
                 # Create players for each agent position
                 for i, pos in enumerate(agent_positions):
                     # Convert environment direction index to visualization direction tuple
-                    orientation = ENV_DIR_IDX_TO_VIZ_DIR[state.env_state.agent_dir_idx[i]]
+                    # Convert JAX array to int before using as dictionary key
+                    dir_idx = int(state.env_state.agent_dir_idx[i])
+                    orientation = ENV_DIR_IDX_TO_VIZ_DIR[dir_idx]
 
                     # Create a player with no held object
                     players.append(MockPlayer(position=pos, orientation=orientation, held_object=None))
@@ -264,8 +267,8 @@ class OvercookedVisualizer:
             ENV_DIR_IDX_TO_VIZ_DIR = {
                 0: Direction.NORTH,  # (0, -1)
                 1: Direction.SOUTH,  # (0, 1)
-                2: Direction.EAST,   # (1, 0)
-                3: Direction.WEST    # (-1, 0)
+                2: Direction.EAST,  # (1, 0)
+                3: Direction.WEST  # (-1, 0)
             }
 
             # Create mock players based on agent_dir_idx and agent_inv
@@ -283,7 +286,9 @@ class OvercookedVisualizer:
             for i, pos in enumerate(agent_positions):
                 if agent_dir_idx is not None and i < len(agent_dir_idx):
                     # Convert environment direction index to visualization direction tuple
-                    orientation = ENV_DIR_IDX_TO_VIZ_DIR[agent_dir_idx[i]]
+                    # Convert JAX array to int before using as dictionary key
+                    dir_idx = int(agent_dir_idx[i])
+                    orientation = ENV_DIR_IDX_TO_VIZ_DIR[dir_idx]
                 else:
                     orientation = Direction.SOUTH  # Default orientation (facing downwards)
 
@@ -315,7 +320,7 @@ class OvercookedVisualizer:
         """
         self._lazy_init_window()
 
-        padding = agent_view_size - 2  # show
+        padding = agent_view_size - 1  # 5→4 because map has +1 outer wall
         grid = np.asarray(state.maze_map[padding:-padding, padding:-padding, :])
         grid_offset = np.array([1, 1])
         h, w = grid.shape[:2]
@@ -380,7 +385,9 @@ class OvercookedVisualizer:
 
             # A bit hacky, but needed so that actions order matches the one of Overcooked-AI
             direction_reording = [3, 1, 0, 2]
-            direction = direction_reording[agent_dir_idx]
+            # Convert JAX array to int before using as list index
+            dir_idx = int(agent_dir_idx)
+            direction = direction_reording[dir_idx]
             tri_fn = rendering.rotate_fn(tri_fn, cx=0.5, cy=0.5, theta=0.5 * math.pi * direction)
 
             rendering.fill_coords(img, tri_fn, COLORS[color])

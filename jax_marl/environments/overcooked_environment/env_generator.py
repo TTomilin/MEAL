@@ -435,7 +435,7 @@ def main(argv=None):
             _, state = env.reset(jax.random.PRNGKey(env_seed or 0))
             grid_arr = np.asarray(_crop_to_grid(state, env.agent_view_size))
             vis = OvercookedVisualizer()
-            img = vis._render_grid(grid_arr, tile_size=TILE_PIXELS, agent_dir_idx=state.agent_dir_idx)
+            img = vis.render_grid(grid_arr, tile_size=TILE_PIXELS, agent_dir_idx=state.agent_dir_idx)
 
             # Create filename with auto-incrementing index
             file_index = highest_index + i + 1
