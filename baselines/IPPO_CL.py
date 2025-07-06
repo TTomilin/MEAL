@@ -16,7 +16,7 @@ from flax.core.frozen_dict import freeze, unfreeze
 from flax.training.train_state import TrainState
 
 from jax_marl.registration import make
-from jax_marl.viz.overcooked_visualizer import OvercookedVisualizer
+from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
 from jax_marl.wrappers.baselines import LogWrapper
 from jax_marl.environments.overcooked_environment.overcooked_upper_bound import estimate_max_soup
 from architectures.mlp import ActorCritic as MLPActorCritic
@@ -33,7 +33,7 @@ from tensorboardX import SummaryWriter
 
 @dataclass
 class Config:
-    reg_coef: float = None
+    reg_coef: Optional[float] = None
     lr: float = 3e-4
     num_envs: int = 16
     num_steps: int = 128
@@ -54,7 +54,7 @@ class Config:
     activation: str = "relu"
     env_name: str = "overcooked"
     alg_name: str = "ippo"
-    cl_method: str = None
+    cl_method: Optional[str] = None
     use_cnn: bool = False
     use_task_id: bool = True
     use_multihead: bool = True
@@ -90,7 +90,7 @@ class Config:
     eval_num_steps: int = 1000
     eval_num_episodes: int = 5
     gif_len: int = 300
-    difficulty: str = None
+    difficulty: Optional[str] = None
 
     # ─── random‐layout generator knobs ───────────────────────────────────────
     height_min: int = 6  # minimum layout height
@@ -106,7 +106,7 @@ class Config:
     # Wandb settings
     wandb_mode: str = "online"
     entity: Optional[str] = ""
-    project: str = "COOX"
+    project: str = "MEAL"
     tags: List[str] = field(default_factory=list)
 
     # to be computed during runtime

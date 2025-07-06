@@ -23,7 +23,7 @@ from jax_marl.registration import make
 from jax_marl.wrappers.baselines import LogWrapper
 from jax_marl.environments.overcooked_environment import overcooked_layouts
 from jax_marl.environments.env_selection import generate_sequence
-from jax_marl.viz.overcooked_visualizer import OvercookedVisualizer
+from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
 from architectures.decoupled_mlp import Actor, Critic
 from cl_methods.Packnet import Packnet, PacknetState
 from baselines.utils import *

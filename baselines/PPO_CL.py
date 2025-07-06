@@ -16,7 +16,7 @@ from flax.core.frozen_dict import freeze, unfreeze
 from flax.training.train_state import TrainState
 
 from jax_marl.registration import make
-from jax_marl.viz.overcooked_visualizer import OvercookedVisualizer
+from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
 from jax_marl.wrappers.baselines import LogWrapper
 from architectures.mlp import ActorCritic as MLPActorCritic
 from architectures.cnn import ActorCritic as CNNActorCritic

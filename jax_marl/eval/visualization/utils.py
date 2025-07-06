@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from jax_marl.viz.visualization.static import LAYOUTS_DIR
+from jax_marl.eval.visualization.static import LAYOUTS_DIR
 
 
 def save_pickle(data, filename):

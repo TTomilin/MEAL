@@ -28,7 +28,7 @@ from jax_marl.environments.overcooked_environment.env_generator import (
     place_tiles, remove_unreachable_items,
 )
 from jax_marl.environments.overcooked_environment.env_validator import evaluate_grid
-from jax_marl.viz.overcooked_visualizer import OvercookedVisualizer
+from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
 
 # ──────────────────────────────────────────────────────────────────────────
 # Configurable output folder
@@ -81,8 +81,10 @@ def try_generate(rng: random.Random, h_rng, w_rng, density):
     stages = [[row[:] for row in g]]  # deep-copy
 
     # 1. interactive tiles
-    for sym in (GOAL, POT, ONION_PILE, PLATE_PILE):
+    for sym in (GOAL, ONION_PILE, PLATE_PILE):
         place_tiles(g, sym, rng.randint(1, 2), rng)
+    # Always place exactly 2 pots
+    place_tiles(g, POT, 2, rng)
     stages.append([row[:] for row in g])
 
     # 2. walls to reach density
@@ -95,6 +97,14 @@ def try_generate(rng: random.Random, h_rng, w_rng, density):
     # 3. agents + cleanup
     place_tiles(g, AGENT, 2, rng)
     remove_unreachable_items(g)
+
+    # Ensure exactly 2 pots remain after cleanup
+    pot_count = sum(1 for row in g for cell in row if cell == POT)
+    if pot_count < 2:
+        additional_pots_needed = 2 - pot_count
+        if not place_tiles(g, POT, additional_pots_needed, rng):
+            return None  # Retry if we can't place additional pots
+
     stages.append([row[:] for row in g])
 
     # validate

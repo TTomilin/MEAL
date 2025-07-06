@@ -2,142 +2,142 @@
     "frames": {
         "counter.png": {
             "frame": {
-                "x": 16,
-                "y": 16,
-                "w": 240,
-                "h": 240
+                "x": 4,
+                "y": 4,
+                "w": 60,
+                "h": 60
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 240,
-                "h": 240
+                "w": 60,
+                "h": 60
             },
             "sourceSize": {
-                "w": 240,
-                "h": 240
+                "w": 60,
+                "h": 60
             }
         },
         "dishes.png": {
             "frame": {
-                "x": 288,
-                "y": 16,
-                "w": 240,
-                "h": 240
+                "x": 72,
+                "y": 4,
+                "w": 60,
+                "h": 60
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 240,
-                "h": 240
+                "w": 60,
+                "h": 60
             },
             "sourceSize": {
-                "w": 240,
-                "h": 240
+                "w": 60,
+                "h": 60
             }
         },
         "floor.png": {
             "frame": {
-                "x": 560,
-                "y": 16,
-                "w": 240,
-                "h": 240
+                "x": 140,
+                "y": 4,
+                "w": 60,
+                "h": 60
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 240,
-                "h": 240
+                "w": 60,
+                "h": 60
             },
             "sourceSize": {
-                "w": 240,
-                "h": 240
+                "w": 60,
+                "h": 60
             }
         },
         "onions.png": {
             "frame": {
-                "x": 832,
-                "y": 16,
-                "w": 240,
-                "h": 240
+                "x": 208,
+                "y": 4,
+                "w": 60,
+                "h": 60
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 240,
-                "h": 240
+                "w": 60,
+                "h": 60
             },
             "sourceSize": {
-                "w": 240,
-                "h": 240
+                "w": 60,
+                "h": 60
             }
         },
         "pot.png": {
             "frame": {
-                "x": 1104,
-                "y": 16,
-                "w": 240,
-                "h": 240
+                "x": 276,
+                "y": 4,
+                "w": 60,
+                "h": 60
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 240,
-                "h": 240
+                "w": 60,
+                "h": 60
             },
             "sourceSize": {
-                "w": 240,
-                "h": 240
+                "w": 60,
+                "h": 60
             }
         },
         "serve.png": {
             "frame": {
-                "x": 1376,
-                "y": 16,
-                "w": 240,
-                "h": 240
+                "x": 344,
+                "y": 4,
+                "w": 60,
+                "h": 60
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 240,
-                "h": 240
+                "w": 60,
+                "h": 60
             },
             "sourceSize": {
-                "w": 240,
-                "h": 240
+                "w": 60,
+                "h": 60
             }
         },
         "tomatoes.png": {
             "frame": {
-                "x": 1648,
-                "y": 16,
-                "w": 240,
-                "h": 240
+                "x": 412,
+                "y": 4,
+                "w": 60,
+                "h": 60
             },
             "rotated": false,
             "trimmed": false,
             "spriteSourceSize": {
                 "x": 0,
                 "y": 0,
-                "w": 240,
-                "h": 240
+                "w": 60,
+                "h": 60
             },
             "sourceSize": {
-                "w": 240,
-                "h": 240
+                "w": 60,
+                "h": 60
             }
         }
     },
@@ -150,6 +150,6 @@
             "w": 1904,
             "h": 272
         },
-        "scale": "16.0"
+        "scale": "4.0"
     }
 }

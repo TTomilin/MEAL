@@ -45,7 +45,7 @@ from flax.core import FrozenDict
 
 from jax_marl.environments import Overcooked
 from jax_marl.gridworld.grid_viz import TILE_PIXELS
-from jax_marl.viz.overcooked_visualizer import OvercookedVisualizer
+from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
 
 
 # =============================================================================

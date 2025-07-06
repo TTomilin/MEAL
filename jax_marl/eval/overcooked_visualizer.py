@@ -4,10 +4,10 @@ import numpy as np
 import pygame
 import wandb
 
-import jax_marl.viz.grid_rendering as rendering
+import jax_marl.eval.grid_rendering as rendering
 from jax_marl.environments.overcooked_environment.common import OBJECT_TO_INDEX, COLOR_TO_INDEX, COLORS
-from jax_marl.viz.visualization.state_visualizer import StateVisualizer
-from jax_marl.viz.window import Window
+from jax_marl.eval.visualization.state_visualizer import StateVisualizer
+from jax_marl.eval.window import Window
 
 # INDEX_TO_COLOR = [k for k,v in COLOR_TO_INDEX.items()]
 INDEX_TO_COLOR = [k for k, _ in sorted(COLOR_TO_INDEX.items(), key=lambda p: p[1])]
@@ -115,7 +115,7 @@ class OvercookedVisualizer:
 
             # Create a minimal state object for rendering
             from collections import namedtuple
-            from jax_marl.viz.visualization.actions import Direction
+            from jax_marl.eval.visualization.actions import Direction
 
             # Create a mapping from environment direction indices to visualization direction tuples
             ENV_DIR_IDX_TO_VIZ_DIR = {
@@ -185,7 +185,7 @@ class OvercookedVisualizer:
             # Use the new rendering logic
             frames = []
             from collections import namedtuple
-            from jax_marl.viz.visualization.actions import Direction
+            from jax_marl.eval.visualization.actions import Direction
 
             # Create a mapping from environment direction indices to visualization direction tuples
             ENV_DIR_IDX_TO_VIZ_DIR = {
@@ -261,7 +261,7 @@ class OvercookedVisualizer:
 
             # Create a minimal state object for rendering
             from collections import namedtuple
-            from jax_marl.viz.visualization.actions import Direction
+            from jax_marl.eval.visualization.actions import Direction
 
             # Create a mapping from environment direction indices to visualization direction tuples
             ENV_DIR_IDX_TO_VIZ_DIR = {

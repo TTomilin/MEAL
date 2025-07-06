@@ -19,7 +19,7 @@ from jax_marl.environments.overcooked_environment.env_validator_old import (
     evaluate_grid, WALL, FLOOR, AGENT, GOAL, ONION_PILE, POT
 )
 from jax_marl.gridworld.grid_viz import TILE_PIXELS
-from jax_marl.viz.overcooked_visualizer import OvercookedVisualizer
+from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
 
 
 def create_invalid_layout(issue_type, seed=None):

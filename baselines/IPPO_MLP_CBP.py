@@ -22,7 +22,7 @@ from jax_marl.registration import make
 from jax_marl.wrappers.baselines import LogWrapper
 from jax_marl.environments.overcooked_environment import overcooked_layouts
 from jax_marl.environments.env_selection import generate_sequence
-from jax_marl.viz.overcooked_visualizer import OvercookedVisualizer
+from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
 from dotenv import load_dotenv
 from architectures.CBP_actorcritic import ActorCritic
 from cl_methods.CBP import (CBPDense,

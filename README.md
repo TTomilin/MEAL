@@ -8,13 +8,13 @@ learn and adapt to new environments without forgetting previously acquired skill
   <table style="border-collapse: collapse; border: none;">
     <tr style="border: none;">
       <td style="border: none; padding: 5; width: 33%;">
-        <img src="./assets/gifs/gen_med_1.gif" width="100%" />
+        <img src="./assets/gifs_basic/gen_med_1.gif" width="100%" />
       </td>
       <td style="border: none; padding: 5; width: 33%;">
-        <img src="./assets/gifs/gen_med_2.gif" width="100%" />
+        <img src="./assets/gifs_basic/gen_med_2.gif" width="100%" />
       </td>
       <td style="border: none; padding: 5; width: 30%;">
-        <img src="./assets/gifs/gen_med_3.gif" width="100%" />
+        <img src="./assets/gifs_basic/gen_med_3.gif" width="100%" />
       </td>
     </tr>
   </table>
@@ -163,10 +163,10 @@ Example of environment generation steps (generated using `jax_marl.viz.env_gen_s
       <th>Step 4: Place Agents & Clean Up</th>
     </tr>
     <tr>
-      <td><img src="./assets/screenshots/generated/step_1.png" width="100%" /></td>
-      <td><img src="./assets/screenshots/generated/step_2.png" width="100%" /></td>
-      <td><img src="./assets/screenshots/generated/step_3.png" width="100%" /></td>
-      <td><img src="./assets/screenshots/generated/step_4.png" width="100%" /></td>
+      <td><img src="./assets/screenshots/env_generation/step_1.png" width="100%" /></td>
+      <td><img src="./assets/screenshots/env_generation/step_2.png" width="100%" /></td>
+      <td><img src="./assets/screenshots/env_generation/step_3.png" width="100%" /></td>
+      <td><img src="./assets/screenshots/env_generation/step_4.png" width="100%" /></td>
     </tr>
     <tr>
       <td>Create empty grid with border walls</td>

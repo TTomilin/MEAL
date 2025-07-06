@@ -30,7 +30,7 @@ from PIL import Image
 from flax.core.frozen_dict import FrozenDict
 
 from jax_marl.environments import Overcooked
-from jax_marl.viz.overcooked_visualizer import OvercookedVisualizer, TILE_PIXELS
+from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer, TILE_PIXELS
 from jax_marl.environments.overcooked_environment.env_validator import (
     evaluate_grid, UNPASSABLE_TILES, INTERACTIVE_TILES
 )
@@ -281,6 +281,15 @@ def generate_random_layout(
             items_removed = remove_unreachable_items(grid)
             if items_removed:
                 print(f"[Attempt {attempt}] Removed unreachable interactive tiles and replaced unreachable floor tiles with walls.")
+
+            # 5. Ensure exactly 2 pots are in the layout -----------------------------
+            pot_count = sum(1 for row in grid for cell in row if cell == POT)
+            if pot_count < 2:
+                print(f"[Attempt {attempt}] Only {pot_count} pots remain after removing unreachable items. Adding more pots.")
+                additional_pots_needed = 2 - pot_count
+                if not place_tiles(grid, POT, additional_pots_needed, rng):
+                    print(f"[Attempt {attempt}] Could not add more pots. Retrying...")
+                    continue  # next attempt
 
             # Convert to string and validate -----------------------------------
             grid_str = "\n".join("".join(row) for row in grid)

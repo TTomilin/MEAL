@@ -1,7 +1,7 @@
 import pygame
 from pygame.locals import DOUBLEBUF, HWSURFACE, QUIT, RESIZABLE, VIDEORESIZE
 
-from jax_marl.viz.visualization.utils import load_from_json
+from jax_marl.eval.visualization.utils import load_from_json
 
 
 def run_static_resizeable_window(surface, fps=30):
@@ -117,6 +117,12 @@ class MultiFramePygameImage:
             assert not frame_dict.get("trimmed")  # not implemented support yet
             frame_name = frame_dict["filename"].split(".")[0]
             frame = frame_dict["frame"]
-            rect = pygame.Rect(frame["x"], frame["y"], frame["w"], frame["h"])
+            # Apply the scale factor to the frame coordinates
+            rect = pygame.Rect(
+                int(frame["x"] * scale), 
+                int(frame["y"] * scale), 
+                int(frame["w"] * scale), 
+                int(frame["h"] * scale)
+            )
             result[frame_name] = rect
         return result

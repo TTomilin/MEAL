@@ -4,12 +4,12 @@ import os
 
 import pygame
 
-from jax_marl.viz.visualization.actions import Direction, Action
-from jax_marl.viz.visualization.pygame_utils import MultiFramePygameImage, run_static_resizeable_window, \
+from jax_marl.eval.visualization.actions import Direction, Action
+from jax_marl.eval.visualization.pygame_utils import MultiFramePygameImage, run_static_resizeable_window, \
     scale_surface_by_factor, blit_on_new_surface_of_size
-from jax_marl.viz.visualization.static import GRAPHICS_DIR, FONTS_DIR
-from jax_marl.viz.visualization.utils import cumulative_rewards_from_rew_list, generate_temporary_file_path
-from jax_marl.viz.visualization.visualization_utils import show_ipython_images_slider, show_image_in_ipython
+from jax_marl.eval.visualization.static import GRAPHICS_DIR, FONTS_DIR
+from jax_marl.eval.visualization.utils import cumulative_rewards_from_rew_list, generate_temporary_file_path
+from jax_marl.eval.visualization.visualization_utils import show_ipython_images_slider, show_image_in_ipython
 
 roboto_path = os.path.join(FONTS_DIR, "Roboto-Regular.ttf")
 
