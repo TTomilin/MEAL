@@ -1017,6 +1017,20 @@ def main():
 
         # Save configuration and layout information
         if env_kwargs is not None or layout_name is not None or config is not None:
+            # Define a recursive function to convert FrozenDict to regular dict
+            def convert_frozen_dict(obj):
+                if isinstance(obj, flax.core.frozen_dict.FrozenDict):
+                    return {k: convert_frozen_dict(v) for k, v in unfreeze(obj).items()}
+                elif isinstance(obj, dict):
+                    return {k: convert_frozen_dict(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_frozen_dict(item) for item in obj]
+                else:
+                    return obj
+
+            # Convert env_kwargs to regular dict
+            env_kwargs = convert_frozen_dict(env_kwargs)
+
             config_data = {
                 "env_kwargs": env_kwargs,
                 "layout_name": layout_name
@@ -1024,7 +1038,7 @@ def main():
 
             # Add relevant configuration parameters
             if config is not None:
-                config_data.update({
+                config_dict = {
                     "use_cnn": config.use_cnn,
                     "num_tasks": config.seq_length,
                     "use_multihead": config.use_multihead,
@@ -1041,7 +1055,13 @@ def main():
                     "width_min": config.width_min,
                     "width_max": config.width_max,
                     "wall_density": config.wall_density
-                })
+                }
+                # Convert any FrozenDict objects in the config
+                config_dict = convert_frozen_dict(config_dict)
+                config_data.update(config_dict)
+
+            # Apply the conversion to the entire config_data to ensure all nested FrozenDict objects are converted
+            config_data = convert_frozen_dict(config_data)
 
             config_path = f"{path}_config.json"
             with open(config_path, "w") as f:
