@@ -21,7 +21,7 @@ from jax_marl.environments.overcooked_environment import layout_grid_to_dict
 # running the script directly from the repo root
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
-from jax_marl.environments.overcooked_environment.env_validator_old import (
+from jax_marl.environments.overcooked_environment.env_validator import (
     evaluate_grid as original_evaluate,
 )
 
