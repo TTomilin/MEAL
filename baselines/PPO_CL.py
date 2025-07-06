@@ -38,7 +38,7 @@ class Config:
     num_agents: int = 1
     num_envs: int = 16
     num_steps: int = 128
-    total_timesteps: float = 1e7
+    steps_per_task: float = 1e7
     update_epochs: int = 8
     num_minibatches: int = 8
     gamma: float = 0.99
@@ -82,7 +82,7 @@ class Config:
     # Environment
     seq_length: int = 2
     repeat_sequence: int = 1
-    strategy: str = "random"
+    strategy: str = "generate"
     layouts: Optional[Sequence[str]] = field(default_factory=lambda: [])
     env_kwargs: Optional[Sequence[dict]] = None
     layout_name: Optional[Sequence[str]] = None
@@ -101,7 +101,7 @@ class Config:
     width_max: int = 10  # maximum layout width
     wall_density: float = 0.15  # fraction of internal tiles that are walls
 
-    anneal_lr: bool = False
+    anneal_lr: bool = True
     seed: int = 30
     num_seeds: int = 1
 
@@ -413,7 +413,7 @@ def main():
     agents = temp_env.agents
 
     config.num_actors = num_agents * config.num_envs
-    config.num_updates = config.total_timesteps // config.num_steps // config.num_envs
+    config.num_updates = config.steps_per_task // config.num_steps // config.num_envs
     config.minibatch_size = (config.num_actors * config.num_steps) // config.num_minibatches
 
     def linear_schedule(count):
@@ -473,7 +473,7 @@ def main():
         print(f"Training on environment: {config.layout_name[env_idx]}")
 
         # How many steps to explore the environment with random actions
-        exploration_steps = int(config.explore_fraction * config.total_timesteps)
+        exploration_steps = int(config.explore_fraction * config.steps_per_task)
 
         # reset the learning rate and the optimizer
         tx = optax.chain(
@@ -488,7 +488,7 @@ def main():
         reset_rng = jax.random.split(env_rng, config.num_envs)
         obsv, env_state = jax.vmap(env.reset, in_axes=(0,))(reset_rng)
 
-        reward_shaping_horizon = config.total_timesteps / 2
+        reward_shaping_horizon = config.steps_per_task / 2
         rew_shaping_anneal = optax.linear_schedule(
             init_value=1.,
             end_value=0.,

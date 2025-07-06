@@ -37,7 +37,7 @@ class Config:
     lr: float = 3e-4
     num_envs: int = 16
     num_steps: int = 128
-    total_timesteps: float = 1e7
+    steps_per_task: float = 1e7
     update_epochs: int = 8
     num_minibatches: int = 8
     gamma: float = 0.99
@@ -61,7 +61,7 @@ class Config:
     shared_backbone: bool = False
     normalize_importance: bool = False
     regularize_critic: bool = False
-    regularize_heads: bool = True
+    regularize_heads: bool = False
     big_network: bool = False
     use_layer_norm: bool = True
 
@@ -434,7 +434,7 @@ def main():
     # set extra config parameters based on the environment
     temp_env = envs[0]
     config.num_actors = temp_env.num_agents * config.num_envs
-    config.num_updates = config.total_timesteps // config.num_steps // config.num_envs
+    config.num_updates = config.steps_per_task // config.num_steps // config.num_envs
     config.minibatch_size = (config.num_actors * config.num_steps) // config.num_minibatches
 
     def linear_schedule(count):
@@ -500,7 +500,7 @@ def main():
         reset_rng = jax.random.split(env_rng, config.num_envs)
         obsv, env_state = jax.vmap(env.reset, in_axes=(0,))(reset_rng)
 
-        reward_shaping_horizon = config.total_timesteps / 2
+        reward_shaping_horizon = config.steps_per_task / 2
         rew_shaping_anneal = optax.linear_schedule(
             init_value=1.,
             end_value=0.,

@@ -344,7 +344,7 @@ def main():
     # set extra config parameters based on the environment
     temp_env = envs[0]
     config.num_actors = temp_env.num_agents * config.num_envs
-    config.num_updates = config.total_timesteps // config.num_steps // config.num_envs
+    config.num_updates = config.steps_per_task // config.num_steps // config.num_envs
     print(f"num_updates: {config.num_updates}")
     config.finetune_updates = config.finetune_timesteps // config.num_steps // config.num_envs
     print(f"finetune_updates: {config.finetune_updates}")

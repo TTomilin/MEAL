@@ -337,7 +337,7 @@ def main():
     # set extra config parameters based on the environment
     temp_env = envs[0]
     config.num_actors = temp_env.num_agents * config.num_envs
-    config.num_updates = config.total_timesteps // config.num_steps // config.num_envs
+    config.num_updates = config.steps_per_task // config.num_steps // config.num_envs
     config.minibatch_size = (config.num_actors * config.num_steps) // config.num_minibatches
 
     def linear_schedule(count):
