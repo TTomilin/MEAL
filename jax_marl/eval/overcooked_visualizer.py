@@ -106,9 +106,15 @@ class OvercookedVisualizer:
             return self._render_state(agent_view_size, state, highlight, tile_size)
         else:
             self._lazy_init_window()
+            # Check if state is a LogEnvState (has env_state attribute)
+            if hasattr(state, 'env_state'):
+                env_state = state.env_state
+            else:
+                env_state = state
+
             # Extract grid from state
             padding = agent_view_size - 1  # 5→4 because map has +1 outer wall
-            grid = np.asarray(state.maze_map[padding:-padding, padding:-padding, :])
+            grid = np.asarray(env_state.maze_map[padding:-padding, padding:-padding, :])
 
             # Convert grid to format expected by StateVisualizer
             grid_str = self._convert_grid_to_str(grid)
@@ -140,7 +146,7 @@ class OvercookedVisualizer:
             for i, pos in enumerate(agent_positions):
                 # Convert environment direction index to visualization direction tuple
                 # Convert JAX array to int before using as dictionary key
-                dir_idx = int(state.agent_dir_idx[i])
+                dir_idx = int(env_state.agent_dir_idx[i])
                 orientation = ENV_DIR_IDX_TO_VIZ_DIR[dir_idx]
 
                 # Create a player with no held object
@@ -169,6 +175,9 @@ class OvercookedVisualizer:
 
         if self.use_old_rendering:
             def get_frame(state):
+                # Check if state is a LogEnvState (has env_state attribute)
+                if hasattr(state, 'env_state'):
+                    state = state.env_state
                 grid = np.asarray(state.maze_map[padding:-padding, padding:-padding, :])
                 # Render the state
                 frame = self._render_grid(
@@ -196,7 +205,13 @@ class OvercookedVisualizer:
             }
 
             for state in state_seq:
-                grid = np.asarray(state.maze_map[padding:-padding, padding:-padding, :])
+                # Check if state is a LogEnvState (has env_state attribute)
+                if hasattr(state, 'env_state'):
+                    env_state = state.env_state
+                else:
+                    env_state = state
+
+                grid = np.asarray(env_state.maze_map[padding:-padding, padding:-padding, :])
                 grid_str = self._convert_grid_to_str(grid)
 
                 # Create mock players based on agent positions and directions
@@ -214,7 +229,7 @@ class OvercookedVisualizer:
                 for i, pos in enumerate(agent_positions):
                     # Convert environment direction index to visualization direction tuple
                     # Convert JAX array to int before using as dictionary key
-                    dir_idx = int(state.agent_dir_idx[i])
+                    dir_idx = int(env_state.agent_dir_idx[i])
                     orientation = ENV_DIR_IDX_TO_VIZ_DIR[dir_idx]
 
                     # Create a player with no held object
@@ -320,21 +335,27 @@ class OvercookedVisualizer:
         """
         self._lazy_init_window()
 
+        # Check if state is a LogEnvState (has env_state attribute)
+        if hasattr(state, 'env_state'):
+            env_state = state.env_state
+        else:
+            env_state = state
+
         padding = agent_view_size - 1  # 5→4 because map has +1 outer wall
-        grid = np.asarray(state.maze_map[padding:-padding, padding:-padding, :])
+        grid = np.asarray(env_state.maze_map[padding:-padding, padding:-padding, :])
         grid_offset = np.array([1, 1])
         h, w = grid.shape[:2]
         # === Compute highlight mask
         highlight_mask = np.zeros(shape=(h, w), dtype=bool)
 
         if highlight:
-            f_vec = state.agent_dir
+            f_vec = env_state.agent_dir
             r_vec = np.array([-f_vec[1], f_vec[0]])
 
-            fwd_bound1 = state.agent_pos
-            fwd_bound2 = state.agent_pos + state.agent_dir * (agent_view_size - 1)
-            side_bound1 = state.agent_pos - r_vec * (agent_view_size // 2)
-            side_bound2 = state.agent_pos + r_vec * (agent_view_size // 2)
+            fwd_bound1 = env_state.agent_pos
+            fwd_bound2 = env_state.agent_pos + env_state.agent_dir * (agent_view_size - 1)
+            side_bound1 = env_state.agent_pos - r_vec * (agent_view_size // 2)
+            side_bound2 = env_state.agent_pos + r_vec * (agent_view_size // 2)
 
             min_bound = np.min(np.stack([
                 fwd_bound1,
@@ -355,8 +376,8 @@ class OvercookedVisualizer:
             grid,
             tile_size,
             highlight_mask=highlight_mask if highlight else None,
-            agent_dir_idx=np.atleast_1d(state.agent_dir_idx),
-            agent_inv=np.atleast_1d(state.agent_inv),
+            agent_dir_idx=np.atleast_1d(env_state.agent_dir_idx),
+            agent_inv=np.atleast_1d(env_state.agent_inv),
         )
         self.window.show_img(img)
 

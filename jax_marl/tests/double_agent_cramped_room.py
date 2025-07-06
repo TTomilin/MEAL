@@ -5,10 +5,12 @@ import imageio.v3 as iio
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pygame
 from flax.core import FrozenDict
 
 from jax_marl.environments.overcooked_environment.layouts import cramped_room
 from jax_marl.environments.overcooked_environment.overcooked_n_agent import POT_FULL_STATUS, Overcooked, DELIVERY_REWARD
+from jax_marl.environments.overcooked_environment.common import OBJECT_TO_INDEX
 from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
 
 # ---------------------------------------------------------------------
@@ -21,15 +23,56 @@ obs, state = env.reset(rng)
 # convenience shortcuts
 pot_status = lambda st: int(st.maze_map[env.agent_view_size - 2, 2, 2])  # row0-pad, col2, channel 2
 frames = []
-viz = OvercookedVisualizer(num_agents=1)
+viz = OvercookedVisualizer(num_agents=2, use_old_rendering=False)
 
 
 def add_frame(st):
     grid_pad = env.agent_view_size - 2
     grid = np.asarray(st.maze_map[grid_pad:-grid_pad, grid_pad:-grid_pad, :])
-    frame = viz._render_grid(grid,
-                             agent_dir_idx=np.atleast_1d(st.agent_dir_idx),
-                             agent_inv=np.atleast_1d(st.agent_inv))
+
+    # Use the new visualization logic
+    from collections import namedtuple
+    from jax_marl.eval.visualization.actions import Direction
+
+    # Convert grid to format expected by StateVisualizer
+    grid_str = viz._convert_grid_to_str(grid)
+
+    # Create a mapping from environment direction indices to visualization direction tuples
+    ENV_DIR_IDX_TO_VIZ_DIR = {
+        0: Direction.NORTH,  # (0, -1)
+        1: Direction.SOUTH,  # (0, 1)
+        2: Direction.EAST,  # (1, 0)
+        3: Direction.WEST  # (-1, 0)
+    }
+
+    # Create mock players based on agent positions and directions
+    MockPlayer = namedtuple('MockPlayer', ['position', 'orientation', 'held_object'])
+    players = []
+
+    # Find agent positions in the grid
+    agent_positions = []
+    for y in range(grid.shape[0]):
+        for x in range(grid.shape[1]):
+            if grid[y, x, 0] == OBJECT_TO_INDEX['agent']:
+                agent_positions.append((x, y))
+
+    # Create players for each agent position
+    for i, pos in enumerate(agent_positions):
+        # Convert environment direction index to visualization direction tuple
+        # Convert JAX array to int before using as dictionary key
+        dir_idx = int(st.agent_dir_idx[i])
+        orientation = ENV_DIR_IDX_TO_VIZ_DIR[dir_idx]
+
+        # Create a player with no held object
+        players.append(MockPlayer(position=pos, orientation=orientation, held_object=None))
+
+    # Create a mock state
+    MockState = namedtuple('MockState', ['players', 'objects'])
+    mock_state = MockState(players=players, objects={})
+
+    # Render using StateVisualizer
+    surface = viz.state_visualizer.render_state(mock_state, grid_str)
+    frame = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
     frames.append(frame)
 
 
