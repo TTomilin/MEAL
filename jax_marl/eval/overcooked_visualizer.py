@@ -180,7 +180,7 @@ class OvercookedVisualizer:
                 )
                 return frame
 
-            frames = [get_frame(state.env_state) for state in state_seq]
+            frames = [get_frame(state) for state in state_seq]
         else:
             # Use the new rendering logic
             frames = []
@@ -196,7 +196,7 @@ class OvercookedVisualizer:
             }
 
             for state in state_seq:
-                grid = np.asarray(state.env_state.maze_map[padding:-padding, padding:-padding, :])
+                grid = np.asarray(state.maze_map[padding:-padding, padding:-padding, :])
                 grid_str = self._convert_grid_to_str(grid)
 
                 # Create mock players based on agent positions and directions
@@ -214,7 +214,7 @@ class OvercookedVisualizer:
                 for i, pos in enumerate(agent_positions):
                     # Convert environment direction index to visualization direction tuple
                     # Convert JAX array to int before using as dictionary key
-                    dir_idx = int(state.env_state.agent_dir_idx[i])
+                    dir_idx = int(state.agent_dir_idx[i])
                     orientation = ENV_DIR_IDX_TO_VIZ_DIR[dir_idx]
 
                     # Create a player with no held object

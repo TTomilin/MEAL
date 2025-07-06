@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 
 from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
@@ -987,27 +988,65 @@ def main():
             # save the model
             repo_root = Path(__file__).resolve().parent.parent
             path = f"{repo_root}/checkpoints/overcooked/{config.cl_method}/{run_name}/model_env_{i + 1}"
-            save_params(path, train_state)
+            save_params(path, train_state, env_kwargs=env.layout, layout_name=env.layout_name, config=config)
 
             if config.eval_forward_transfer:
                 # calculate the forward transfer and backward transfer
                 show_heatmap_bwt(evaluation_matrix, run_name)
                 show_heatmap_fwt(evaluation_matrix, run_name)
 
-    def save_params(path, train_state):
+    def save_params(path, train_state, env_kwargs=None, layout_name=None, config=None):
         '''
-        Saves the parameters of the network
+        Saves the parameters of the network along with environment configuration
         @param path: the path to save the parameters
         @param train_state: the current state of the training
+        @param env_kwargs: the environment kwargs used to create the environment
+        @param layout_name: the name of the layout
+        @param config: the configuration used for training
         returns None
         '''
         os.makedirs(os.path.dirname(path), exist_ok=True)
+
+        # Save model parameters
         with open(path, "wb") as f:
             f.write(
                 flax.serialization.to_bytes(
                     {"params": train_state.params}
                 )
             )
+
+        # Save configuration and layout information
+        if env_kwargs is not None or layout_name is not None or config is not None:
+            config_data = {
+                "env_kwargs": env_kwargs,
+                "layout_name": layout_name
+            }
+
+            # Add relevant configuration parameters
+            if config is not None:
+                config_data.update({
+                    "use_cnn": config.use_cnn,
+                    "num_tasks": config.seq_length,
+                    "use_multihead": config.use_multihead,
+                    "shared_backbone": config.shared_backbone,
+                    "big_network": config.big_network,
+                    "use_task_id": config.use_task_id,
+                    "regularize_heads": config.regularize_heads,
+                    "use_layer_norm": config.use_layer_norm,
+                    "activation": config.activation,
+                    "strategy": config.strategy,
+                    "seed": config.seed,
+                    "height_min": config.height_min,
+                    "height_max": config.height_max,
+                    "width_min": config.width_min,
+                    "width_max": config.width_max,
+                    "wall_density": config.wall_density
+                })
+
+            config_path = f"{path}_config.json"
+            with open(config_path, "w") as f:
+                json.dump(config_data, f, indent=2)
+
         print('model saved to', path)
 
     # Run the model
