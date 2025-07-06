@@ -1,5 +1,7 @@
 import os
 import json
+import numpy as np
+import jax
 from pathlib import Path
 
 from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
@@ -1025,6 +1027,14 @@ def main():
                     return {k: convert_frozen_dict(v) for k, v in obj.items()}
                 elif isinstance(obj, list):
                     return [convert_frozen_dict(item) for item in obj]
+                elif isinstance(obj, jax.Array):
+                    # Convert JAX arrays to native Python types
+                    array_obj = np.array(obj)
+                    # Handle scalar values
+                    if array_obj.size == 1:
+                        return array_obj.item()
+                    # Handle arrays
+                    return array_obj.tolist()
                 else:
                     return obj
 
