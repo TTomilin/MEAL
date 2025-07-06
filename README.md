@@ -192,9 +192,9 @@ the different layouts:
       <th>Hard Layout</th>
     </tr>
     <tr>
-      <td><img src="./assets/screenshots/easy/gen_1.png" width="100%" /></td>
-      <td><img src="./assets/screenshots/med/gen_1.png" width="100%" /></td>
-      <td><img src="./assets/screenshots/hard/gen_1.png" width="100%" /></td>
+      <td><img src="assets/screenshots/easy/gen_1.png" width="100%" /></td>
+      <td><img src="assets/screenshots/med/gen_1.png" width="100%" /></td>
+      <td><img src="assets/screenshots/hard/gen_1.png" width="100%" /></td>
     </tr>
   </table>
 </div>
