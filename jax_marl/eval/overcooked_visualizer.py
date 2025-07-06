@@ -1,4 +1,5 @@
 import math
+from collections import namedtuple
 
 import numpy as np
 import pygame
@@ -8,6 +9,9 @@ import jax_marl.eval.grid_rendering as rendering
 from jax_marl.environments.overcooked_environment.common import OBJECT_TO_INDEX, COLOR_TO_INDEX, COLORS
 from jax_marl.eval.visualization.state_visualizer import StateVisualizer
 from jax_marl.eval.window import Window
+
+# Define a namedtuple for mock objects to be used in visualization
+MockObject = namedtuple('MockObject', ['name', 'ingredients'])
 
 # INDEX_TO_COLOR = [k for k,v in COLOR_TO_INDEX.items()]
 INDEX_TO_COLOR = [k for k, _ in sorted(COLOR_TO_INDEX.items(), key=lambda p: p[1])]
@@ -49,6 +53,95 @@ class OvercookedVisualizer:
                 player_colors=["red", "blue", "green", "purple"][:num_agents],
                 tile_size=TILE_PIXELS
             )
+
+    def _create_held_object_from_inventory(self, inventory_value):
+        """
+        Create a MockObject based on the agent's inventory value.
+
+        Parameters
+        ----------
+        inventory_value : int
+            The inventory value from the environment state
+
+        Returns
+        -------
+        MockObject or None
+            A MockObject with appropriate name and ingredients, or None if inventory is empty
+        """
+        if inventory_value == OBJECT_TO_INDEX['empty']:
+            return None
+        elif inventory_value == OBJECT_TO_INDEX['onion']:
+            return MockObject(name='onion', ingredients=None)
+        elif inventory_value == OBJECT_TO_INDEX['plate']:
+            return MockObject(name='dish', ingredients=None)  # 'dish' is the visualization name for an empty plate
+        elif inventory_value == OBJECT_TO_INDEX['dish']:
+            # Dish with soup (onion soup)
+            return MockObject(name='soup', ingredients=['onion', 'onion', 'onion'])
+        else:
+            # Default case, should not happen
+            return None
+
+    def _create_mock_objects(self, grid, env_state):
+        """
+        Create mock objects for visualization based on the grid and environment state.
+
+        Parameters
+        ----------
+        grid : numpy.ndarray
+            The grid representation of the environment
+        env_state : State
+            The environment state
+
+        Returns
+        -------
+        dict
+            A dictionary of mock objects for visualization
+        """
+        objects = {}
+
+        # Check if we have pot positions and status information
+        if not hasattr(env_state, 'pot_pos') or not hasattr(env_state, 'maze_map'):
+            return objects
+
+        # Find pots in the grid and create mock soup objects for them
+        height, width = grid.shape[:2]
+        padding = (env_state.maze_map.shape[0] - height) // 2 if hasattr(env_state.maze_map, 'shape') else 0
+
+        for i, pot_pos in enumerate(env_state.pot_pos):
+            # Get pot status from maze_map
+            pot_x, pot_y = pot_pos
+            pot_status = env_state.maze_map[padding + pot_y, padding + pot_x, 2]
+
+            # Only create objects for pots that have ingredients or are cooking/ready
+            if pot_status < 23:  # 23 is empty pot
+                obj_id = f"soup_{pot_x}_{pot_y}"
+
+                # Determine ingredients and status
+                # Convert JAX array to Python integer
+                pot_status_int = int(pot_status)
+                num_onions = min(3, 23 - pot_status_int) if pot_status_int >= 20 else 3
+                ingredients = ['onion'] * num_onions
+
+                # Create a position tuple for the object
+                position = (int(pot_x), int(pot_y))
+
+                # Create a mock soup object
+                is_ready = (pot_status == 0)  # Pot is ready when status is 0
+                is_cooking = (pot_status < 20 and pot_status > 0)  # Pot is cooking when status is between 1-19
+
+                # Create a soup object with appropriate attributes
+                soup_obj = type('MockSoup', (), {
+                    'name': 'soup',
+                    'position': position,
+                    'ingredients': ingredients,
+                    'is_ready': is_ready,
+                    '_cooking_tick': pot_status if is_cooking else -1,
+                    'cook_time': 20
+                })
+
+                objects[obj_id] = soup_obj
+
+        return objects
 
     # --------------------------------------------------------------------- #
     # Window helpers
@@ -149,12 +242,18 @@ class OvercookedVisualizer:
                 dir_idx = int(env_state.agent_dir_idx[i])
                 orientation = ENV_DIR_IDX_TO_VIZ_DIR[dir_idx]
 
-                # Create a player with no held object
-                players.append(MockPlayer(position=pos, orientation=orientation, held_object=None))
+                # Create a player with appropriate held object based on inventory
+                held_object = None
+                if hasattr(env_state, 'agent_inv') and i < len(env_state.agent_inv):
+                    held_object = self._create_held_object_from_inventory(int(env_state.agent_inv[i]))
+                players.append(MockPlayer(position=pos, orientation=orientation, held_object=held_object))
+
+            # Create mock objects for pots
+            objects = self._create_mock_objects(grid, env_state)
 
             # Create a mock state
             MockState = namedtuple('MockState', ['players', 'objects'])
-            mock_state = MockState(players=players, objects={})
+            mock_state = MockState(players=players, objects=objects)
 
             # Render using StateVisualizer
             surface = self.state_visualizer.render_state(mock_state, grid_str)
@@ -232,12 +331,18 @@ class OvercookedVisualizer:
                     dir_idx = int(env_state.agent_dir_idx[i])
                     orientation = ENV_DIR_IDX_TO_VIZ_DIR[dir_idx]
 
-                    # Create a player with no held object
-                    players.append(MockPlayer(position=pos, orientation=orientation, held_object=None))
+                    # Create a player with appropriate held object based on inventory
+                    held_object = None
+                    if hasattr(env_state, 'agent_inv') and i < len(env_state.agent_inv):
+                        held_object = self._create_held_object_from_inventory(int(env_state.agent_inv[i]))
+                    players.append(MockPlayer(position=pos, orientation=orientation, held_object=held_object))
+
+                # Create mock objects for pots
+                objects = self._create_mock_objects(grid, env_state)
 
                 # Create a mock state
                 MockState = namedtuple('MockState', ['players', 'objects'])
-                mock_state = MockState(players=players, objects={})
+                mock_state = MockState(players=players, objects=objects)
 
                 # Render using StateVisualizer
                 surface = self.state_visualizer.render_state(mock_state, grid_str)
@@ -307,12 +412,23 @@ class OvercookedVisualizer:
                 else:
                     orientation = Direction.SOUTH  # Default orientation (facing downwards)
 
-                # Create a player with no held object
-                players.append(MockPlayer(position=pos, orientation=orientation, held_object=None))
+                # Create a player with appropriate held object based on inventory
+                held_object = None
+                if agent_inv is not None and i < len(agent_inv):
+                    held_object = self._create_held_object_from_inventory(int(agent_inv[i]))
+                players.append(MockPlayer(position=pos, orientation=orientation, held_object=held_object))
+
+            # Create mock objects for pots
+            # Since we don't have a full state object here, we'll create a minimal one for the _create_mock_objects method
+            minimal_state = type('MinimalState', (), {
+                'pot_pos': [],  # We don't have pot positions here
+                'maze_map': grid  # Use the grid as a substitute
+            })
+            objects = self._create_mock_objects(grid, minimal_state)
 
             # Create a mock state
             MockState = namedtuple('MockState', ['players', 'objects'])
-            mock_state = MockState(players=players, objects={})
+            mock_state = MockState(players=players, objects=objects)
 
             # Render using StateVisualizer
             surface = self.state_visualizer.render_state(mock_state, grid_str)
