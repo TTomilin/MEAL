@@ -8,13 +8,13 @@ learn and adapt to new environments without forgetting previously acquired skill
   <table style="border-collapse: collapse; border: none;">
     <tr style="border: none;">
       <td style="border: none; padding: 5; width: 33%;">
-        <img src="./assets/gifs_basic/gen_med_1.gif" width="100%" />
+        <img src="./assets/gifs/med_1.gif" width="100%" />
       </td>
       <td style="border: none; padding: 5; width: 33%;">
-        <img src="./assets/gifs_basic/gen_med_2.gif" width="100%" />
+        <img src="./assets/gifs/med_2.gif" width="100%" />
       </td>
-      <td style="border: none; padding: 5; width: 30%;">
-        <img src="./assets/gifs_basic/gen_med_3.gif" width="100%" />
+      <td style="border: none; padding: 5; width: 33%;">
+        <img src="./assets/gifs/med_3.gif" width="100%" />
       </td>
     </tr>
   </table>
