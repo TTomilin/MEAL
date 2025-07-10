@@ -122,7 +122,7 @@ def layout_grid_to_dict(grid):
 
     for key in symbol_to_key.values():
         # Transform lists to arrays
-        layout_dict[key] = jnp.array(layout_dict[key])
+        layout_dict[key] = jnp.array(layout_dict[key], dtype=jnp.int32)
 
     return FrozenDict(layout_dict)
 

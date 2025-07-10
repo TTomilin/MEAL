@@ -76,7 +76,7 @@ def layout_grid_to_dict(grid_str: str) -> FrozenDict:
 
     # Convert to JAX arrays
     for k in keys:
-        layout_dict[k] = jnp.array(layout_dict[k])
+        layout_dict[k] = jnp.array(layout_dict[k], dtype=jnp.int32)
 
     return FrozenDict(layout_dict)
 

@@ -17,7 +17,7 @@ from jax_marl.environments.overcooked_environment.common import (
     OBJECT_INDEX_TO_VEC,
     DIR_TO_VEC,
     make_overcooked_map)
-from jax_marl.environments.overcooked_environment.layouts import overcooked_layouts as layouts
+from jax_marl.environments.overcooked_environment.layouts import overcooked_layouts as layouts, layout_grid_to_dict
 
 BASE_REW_SHAPING_PARAMS = {
     "PLACEMENT_IN_POT_REW": 3,  # reward for putting ingredients
@@ -80,6 +80,12 @@ class Overcooked(MultiAgentEnv):
     ):
         super().__init__(num_agents=num_agents)
 
+        # Convert string layout to dictionary if needed
+        if isinstance(layout, str):
+            layout = layout_grid_to_dict(layout)
+        elif layout is None:
+            layout = FrozenDict(layouts["cramped_room"])
+
         # self.obs_shape = (agent_view_size, agent_view_size, 3)
         # Observations given by 26 channels, most of which are boolean masks
         self.height = layout["height"]
@@ -87,7 +93,7 @@ class Overcooked(MultiAgentEnv):
         self.obs_shape = (self.width, self.height, 26)
 
         self.agent_view_size = 5  # Hard coded. Only affects map padding -- not observations.
-        self.layout = layout if layout is not None else FrozenDict(layouts["cramped_room"])
+        self.layout = layout
         self.layout_name = layout_name
         self.agents = ["agent_0", "agent_1"]
 

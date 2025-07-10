@@ -1,10 +1,80 @@
 import json
 import random
 from typing import List, Dict, Any, Sequence, Tuple
+import ast
+import jax.numpy as jnp
+from flax.core.frozen_dict import FrozenDict
 
 from jax_marl.environments.overcooked_environment import hard_layouts, medium_layouts, easy_layouts, overcooked_layouts, \
     single_layouts
 from jax_marl.environments.overcooked_environment.env_generator import generate_random_layout
+
+
+def _parse_layout_string(layout_str: str) -> FrozenDict:
+    """Parse a string representation of a FrozenDict layout back to actual FrozenDict."""
+    # Remove the "FrozenDict(" prefix and ")" suffix
+    if layout_str.startswith("FrozenDict("):
+        layout_str = layout_str[11:-1]
+
+    # Parse the dictionary-like string
+    # Replace Array(...) with list representation for parsing
+    import re
+
+    # Extract array contents and convert to lists
+    def array_replacer(match):
+        array_content = match.group(1)
+
+        # Find the array values part (everything between [ and ], before dtype=)
+        # Handle multi-line arrays
+        bracket_match = re.search(r'\[(.*?)\]', array_content, re.DOTALL)
+        if bracket_match:
+            values_str = bracket_match.group(1)
+            # Clean up whitespace and newlines
+            values_str = re.sub(r'\s+', ' ', values_str).strip()
+            # Split by comma and convert to integers
+            try:
+                values = [int(x.strip()) for x in values_str.split(',') if x.strip()]
+                return str(values)
+            except ValueError:
+                # If parsing fails, return empty list
+                return "[]"
+        else:
+            return "[]"
+
+    # Replace Array(...) patterns with lists - use DOTALL flag for multi-line matching
+    layout_str = re.sub(r'Array\(([^)]+(?:\([^)]*\))*[^)]*)\)', array_replacer, layout_str, flags=re.DOTALL)
+
+    # Add quotes around dictionary keys to make it valid Python syntax
+    key_pattern = r'\b(wall_idx|agent_idx|goal_idx|plate_pile_idx|onion_pile_idx|pot_idx|height|width)\b:'
+    layout_str = re.sub(key_pattern, r'"\1":', layout_str)
+
+    # Parse the cleaned string as a dictionary
+    try:
+        layout_dict = ast.literal_eval(layout_str)
+    except (ValueError, SyntaxError) as e:
+        print(f"Failed to parse layout string: {e}")
+        print(f"Cleaned string: {layout_str[:200]}...")
+        # If parsing fails, create a minimal valid layout
+        layout_dict = {
+            "height": 6,
+            "width": 7,
+            "wall_idx": [],
+            "agent_idx": [],
+            "goal_idx": [],
+            "plate_pile_idx": [],
+            "onion_pile_idx": [],
+            "pot_idx": []
+        }
+
+    # Convert lists to JAX arrays with correct dtypes
+    array_keys = ["wall_idx", "agent_idx", "goal_idx", "plate_pile_idx", "onion_pile_idx", "pot_idx"]
+    for key in array_keys:
+        if key in layout_dict:
+            layout_dict[key] = jnp.array(layout_dict[key], dtype=jnp.int32)
+        else:
+            layout_dict[key] = jnp.array([], dtype=jnp.int32)
+
+    return FrozenDict(layout_dict)
 
 
 def _resolve_pool(names: Sequence[str] | None) -> List[str]:
@@ -65,7 +135,24 @@ def generate_sequence(
     # ---- shortcut: load pre-baked layouts -----------------------------
     if layout_file is not None:
         with open(layout_file) as f:
-            env_kwargs = json.load(f)
+            raw_data = json.load(f)
+
+        # Convert string representations to actual FrozenDict objects
+        env_kwargs = []
+        for item in raw_data:
+            if isinstance(item, dict) and "layout" in item:
+                # Parse the layout string to FrozenDict
+                layout_str = item["layout"]
+                if isinstance(layout_str, str):
+                    parsed_layout = _parse_layout_string(layout_str)
+                    env_kwargs.append({"layout": parsed_layout})
+                else:
+                    # Already a proper layout object
+                    env_kwargs.append(item)
+            else:
+                # Fallback for unexpected format
+                env_kwargs.append(item)
+
         names = [f"file_{i}" for i in range(len(env_kwargs))]
         return env_kwargs, names
     # -------------------------------------------------------------------
