@@ -22,8 +22,8 @@ CRIT = {0.9: 1.833, 0.95: 1.96, 0.99: 2.576}
 
 # Standard colors for different methods
 METHOD_COLORS = {
-    'EWC': '#12939A', 'MAS': '#FF6E54', 'AGEM': '#FFA600',
-    'L2': '#003F5C', 'PackNet': '#BC5090', 'ReDo': '#58508D', 'CBP': '#2F4B7C'
+    'EWC': '#12939A', 'MAS': '#2CA02C', 'AGEM': '#BC5090', 'Online_EWC': '#FF6E54', 'FT': '#FFA600',
+    'L2': '#003F5C', 'PackNet': '#2F4B7C', 'ReDo': '#D62728', 'CBP': '#58508D'
 }
 
 LEVEL_COLORS = {

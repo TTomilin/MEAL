@@ -49,7 +49,11 @@ def collect_plasticity_runs(
         folder += f"_rep_{repeats}"
 
     for seed in seeds:
-        run_dir = base / algo / method / "plasticity" / folder / f"seed_{seed}"
+        # Use different directory structure for single baseline vs CL methods
+        if method == "single":
+            run_dir = base / algo / method / "plasticity" / folder / f"seed_{seed}"
+        else:
+            run_dir = base / algo / method / "main" / folder / f"seed_{seed}"
         if not run_dir.exists():
             print(f"Warning: no directory {run_dir}")
             continue
@@ -92,18 +96,23 @@ def collect_plasticity_runs(
     return processed
 
 
-def setup_plasticity_grid(seq_len: int, figsize_scale: Tuple[int, int] = (4, 3)) -> Tuple[plt.Figure, np.ndarray]:
+def setup_plasticity_grid(seq_len: int, figsize_scale: Tuple[int, int] = (4, 3), n_rows: int = None) -> Tuple[plt.Figure, np.ndarray]:
     """
     Set up a grid of subplots for plasticity visualization.
 
     Args:
         seq_len: Number of tasks in the sequence
         figsize_scale: Tuple of (width, height) scale factors per subplot
+        n_rows: Optional number of rows. If provided, columns will be seq_len.
+                If not provided, will auto-calculate based on seq_len.
 
     Returns:
         Tuple of (figure, flattened axes array)
     """
-    if seq_len == 10:
+    if n_rows is not None:
+        # For forward transfer plots: n_rows = number of methods, n_cols = seq_len
+        n_cols = seq_len
+    elif seq_len == 10:
         n_rows, n_cols = 2, 5
     else:
         n_rows = int(np.ceil(np.sqrt(seq_len)))
@@ -145,23 +154,55 @@ def collect_training_data(
     runs = []
 
     for seed in seeds:
-        run_dir = base / algo / method / "plasticity" / folder / f"seed_{seed}"
+        # Use different directory structure for single baseline vs CL methods
+        if method == "single":
+            run_dir = base / algo / method / "plasticity" / folder / f"seed_{seed}"
+        else:
+            run_dir = base / algo / method / "main" / folder / f"seed_{seed}"
         if not run_dir.exists():
             print(f"Warning: no directory {run_dir}")
             continue
 
-        # Look for training_soup.json or training_soup.npz
+        # Look for training_soup files - try single file first, then numbered files
+        training_data = None
+
+        # First try single training_soup file (for CL methods)
         for ext in [".json", ".npz"]:
             fp = run_dir / f"training_soup{ext}"
             if fp.exists():
                 try:
-                    data = load_series(fp)
-                    runs.append(data)
+                    training_data = load_series(fp)
                     break
                 except Exception as e:
                     print(f"Error loading {fp}: {e}")
+
+        # If no single file found, try numbered training_soup files (for baseline methods)
+        if training_data is None:
+            training_files = []
+            for ext in [".json", ".npz"]:
+                pattern = f"*_training_soup{ext}"
+                files = sorted(run_dir.glob(pattern))
+                if files:
+                    training_files = files
+                    break
+
+            if training_files:
+                try:
+                    # Load and concatenate all training files in order
+                    segments = []
+                    for fp in training_files:
+                        data = load_series(fp)
+                        segments.append(data)
+
+                    # Concatenate all segments to form one continuous training curve
+                    training_data = np.concatenate(segments)
+                except Exception as e:
+                    print(f"Error loading training files in {run_dir}: {e}")
+
+        if training_data is not None:
+            runs.append(training_data)
         else:
-            print(f"Warning: no training_soup file found in {run_dir}")
+            print(f"Warning: no training_soup files found in {run_dir}")
 
     if not runs:
         raise RuntimeError(f"No training data found for method {method}")

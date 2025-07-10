@@ -51,8 +51,32 @@ def compute_metrics(
 ) -> pd.DataFrame:
     rows: list[dict[str, float]] = []
 
+    # Load baseline data once for forward transfer calculation
+    baseline_data = {}
+    baseline_folder = (
+        Path(__file__).resolve().parent.parent
+        / data_root
+        / algo
+        / "single"
+        / "plasticity"
+        / f"{strategy}_{seq_len}"
+    )
+
+    for seed in seeds:
+        baseline_seed_dir = baseline_folder / f"seed_{seed}"
+        if baseline_seed_dir.exists():
+            # Load baseline training data for each task
+            baseline_training_files = []
+            for i in range(seq_len):
+                baseline_file = baseline_seed_dir / f"{i}_training_soup.json"
+                if baseline_file.exists():
+                    baseline_training_files.append(load_series(baseline_file))
+                else:
+                    baseline_training_files.append(None)
+            baseline_data[seed] = baseline_training_files
+
     for method in methods:
-        AP_seeds, F_seeds, PL_seeds = [], [], []
+        AP_seeds, F_seeds, FT_seeds = [], [], []
 
         base_folder = (
                 Path(__file__).resolve().parent.parent
@@ -96,13 +120,49 @@ def compute_metrics(
             # Average Performance (AP) – last eval of mean curve
             AP_seeds.append(env_mat.mean(axis=0)[-1])
 
-            # Plasticity (PL) – mean of last *end_window_evals* of each chunk
-            pl_vals = []
+            # Forward Transfer (FT) – normalized area between CL and baseline curves
+            if seed not in baseline_data:
+                print(f"[warn] missing baseline data for seed {seed}")
+                FT_seeds.append(np.nan)
+                continue
+
+            ft_vals = []
             for i in range(seq_len):
-                end_idx = (i + 1) * chunk - 1
-                start_idx = max(0, end_idx - end_window_evals + 1)
-                pl_vals.append(np.nanmean(training[start_idx : end_idx + 1]))
-            PL_seeds.append(float(np.nanmean(pl_vals)))
+                # Calculate AUC for CL method (task i)
+                start_idx = i * chunk
+                end_idx = (i + 1) * chunk
+                cl_task_curve = training[start_idx:end_idx]
+
+                # AUCi = (1/τ) * ∫ pi(t) dt, where τ is the task duration
+                # Using trapezoidal rule for numerical integration
+                if len(cl_task_curve) > 1:
+                    auc_cl = np.trapz(cl_task_curve) / len(cl_task_curve)
+                else:
+                    auc_cl = cl_task_curve[0] if len(cl_task_curve) == 1 else 0.0
+
+                # Calculate AUC for baseline method (task i)
+                baseline_task_curve = baseline_data[seed][i]
+                if baseline_task_curve is not None:
+                    if len(baseline_task_curve) > 1:
+                        auc_baseline = np.trapz(baseline_task_curve) / len(baseline_task_curve)
+                    else:
+                        auc_baseline = baseline_task_curve[0] if len(baseline_task_curve) == 1 else 0.0
+
+                    # Calculate Forward Transfer: FTi = (AUCi - AUCb_i) / (1 - AUCb_i)
+                    denominator = 1.0 - auc_baseline
+                    if abs(denominator) > 1e-8:  # Avoid division by zero
+                        ft_i = (auc_cl - auc_baseline) / denominator
+                        ft_vals.append(ft_i)
+                    else:
+                        # If baseline AUC is 1.0, forward transfer is undefined
+                        print(f"[warn] baseline AUC = 1.0 for task {i}, seed {seed}, method {method}")
+                else:
+                    print(f"[warn] missing baseline data for task {i}, seed {seed}")
+
+            if ft_vals:
+                FT_seeds.append(float(np.nanmean(ft_vals)))
+            else:
+                FT_seeds.append(np.nan)
 
             # Forgetting (F) – drop from best‑ever to final performance
             f_vals = []
@@ -117,7 +177,7 @@ def compute_metrics(
         # Aggregate across seeds
         A_mean, A_ci = _mean_ci(AP_seeds)
         F_mean, F_ci = _mean_ci(F_seeds)
-        P_mean, P_ci = _mean_ci(PL_seeds)
+        FT_mean, FT_ci = _mean_ci(FT_seeds)
 
         rows.append(
             {
@@ -126,8 +186,8 @@ def compute_metrics(
                 "AveragePerformance_CI": A_ci,
                 "Forgetting": F_mean,
                 "Forgetting_CI": F_ci,
-                "Plasticity": P_mean,
-                "Plasticity_CI": P_ci,
+                "ForwardTransfer": FT_mean,
+                "ForwardTransfer_CI": FT_ci,
             }
         )
 
@@ -162,7 +222,7 @@ if __name__ == "__main__":
         "--end_window_evals",
         type=int,
         default=10,
-        help="How many final eval points to average for PL and F",
+        help="How many final eval points to average for F (Forgetting)",
     )
     args = p.parse_args()
 
@@ -183,7 +243,7 @@ if __name__ == "__main__":
     # Identify best means (ignoring CI)
     best_A = df["AveragePerformance"].max()
     best_F = df["Forgetting"].min()
-    best_P = df["Plasticity"].max()
+    best_FT = df["ForwardTransfer"].max()
 
     # Build human‑readable strings with CI
     df_out = pd.DataFrame()
@@ -196,8 +256,8 @@ if __name__ == "__main__":
         lambda r: _fmt(r.Forgetting, r.Forgetting_CI, r.Forgetting == best_F, "min"),
         axis=1,
     )
-    df_out["Plasticity"] = df.apply(
-        lambda r: _fmt(r.Plasticity, r.Plasticity_CI, r.Plasticity == best_P, "max"),
+    df_out["ForwardTransfer"] = df.apply(
+        lambda r: _fmt(r.ForwardTransfer, r.ForwardTransfer_CI, r.ForwardTransfer == best_FT, "max"),
         axis=1,
     )
 
@@ -206,7 +266,7 @@ if __name__ == "__main__":
         "Method",
         r"$\mathcal{A}\!\uparrow$",
         r"$\mathcal{F}\!\downarrow$",
-        r"$\mathcal{P}\!\uparrow$",
+        r"$\mathcal{FT}\!\uparrow$",
     ]
 
     latex_table = df_out.to_latex(

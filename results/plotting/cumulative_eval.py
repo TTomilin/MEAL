@@ -49,7 +49,6 @@ from typing import List
 
 import matplotlib.pyplot as plt
 import numpy as np
-from cycler import cycler
 
 from results.plotting.utils import (
     collect_cumulative_runs,
@@ -63,6 +62,7 @@ from results.plotting.utils import (
     LEVEL_COLORS,
     create_eval_parser,
 )
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # ARGUMENT PARSING
@@ -96,9 +96,10 @@ def _parse_args() -> argparse.Namespace:
     )
 
     # Fine‑tuning of the legend
-    p.add_argument("--legend_anchor", type=float, default=0.87)
+    p.add_argument("--legend_anchor", type=float, default=0.79)
 
     return p.parse_args()
+
 
 # ────────────────────────────────────────────────────────────────────────────
 # MAIN PLOTTING LOGIC
@@ -159,7 +160,7 @@ def plot():
     data_root = Path(__file__).resolve().parent.parent / args.data_root
 
     total_steps = args.seq_len * args.steps_per_task
-    fig, ax = setup_figure(width=10, height=4)
+    fig, ax = setup_figure(width=10, height=3)
 
     # Unified approach for both method and level comparison
     items_to_plot = args.methods if args.compare_by == "method" else args.levels
