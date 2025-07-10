@@ -1,3 +1,4 @@
+import json
 import random
 from typing import List, Dict, Any, Sequence, Tuple
 
@@ -46,6 +47,7 @@ def generate_sequence(
         height_rng: Tuple[int, int] = (5, 10),
         width_rng: Tuple[int, int] = (5, 10),
         wall_density: float = 0.15,
+        layout_file: str | None = None,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """
     Return a list of `env_kwargs` (what you feed to Overcooked) and
@@ -59,6 +61,14 @@ def generate_sequence(
     """
     if seed is not None:
         random.seed(seed)
+
+    # ---- shortcut: load pre-baked layouts -----------------------------
+    if layout_file is not None:
+        with open(layout_file) as f:
+            env_kwargs = json.load(f)
+        names = [f"file_{i}" for i in range(len(env_kwargs))]
+        return env_kwargs, names
+    # -------------------------------------------------------------------
 
     pool = _resolve_pool(layout_names)
     if sequence_length is None:

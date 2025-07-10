@@ -21,7 +21,7 @@ import numpy as np
 import wandb
 from wandb.apis.public import Run
 
-from results.download.common import cli, want
+from results.download.common import cli, want, experiment_suffix
 
 # ---------------------------------------------------------------------------
 # CONSTANTS
@@ -68,32 +68,6 @@ def store_array(arr: List[float], path: Path, fmt: str) -> None:
             json.dump(arr, f)
     else:
         np.savez_compressed(path.with_suffix('.npz'), data=np.asarray(arr, dtype=np.float32))
-
-
-def experiment_suffix(cfg: dict) -> str:
-    """Return folder name encoding ablation settings."""
-    suffixes = []
-    if not cfg.get("evaluation", True):
-        return "plasticity"
-
-    ##### ----- Temporary hardcoded levels for wall density ----- #####
-    if cfg.get("wall_density") == 0.25:
-        return "level_2"
-    if cfg.get("wall_density") == 0.35:
-        return "level_3"
-    ##### ----- Temporary hardcoded levels for wall density ----- #####
-
-    if not cfg.get("use_multihead", True):
-        suffixes.append("no_multihead")
-    if not cfg.get("use_task_id", True):
-        suffixes.append("no_task_id")
-    if cfg.get("regularize_critic"):
-        suffixes.append("reg_critic")
-    if not cfg.get("use_layer_norm", True):
-        suffixes.append("no_layer_norm")
-    if cfg.get("use_cnn"):
-        suffixes.append("cnn")
-    return "-".join(suffixes) if suffixes else "main"
 
 
 # ---------------------------------------------------------------------------

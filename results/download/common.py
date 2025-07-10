@@ -15,7 +15,7 @@ def cli() -> argparse.Namespace:
     p.add_argument("--project", required=True)
     p.add_argument("--output", default="data", help="Base folder for output")
     p.add_argument("--format", choices=["json", "npz"], default="json", help="Output file format")
-    p.add_argument("--seq_length", type=int, nargs="+", default=[])
+    p.add_argument("--seq_length", type=int, default=[])
     p.add_argument("--repeat_sequence", type=int, default=None, help="Repeat sequence value to multiply with seq_length")
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--wall_density", type=float, default=0.15, help="Wall density for the environment")
@@ -38,7 +38,7 @@ def want(run: Run, args: argparse.Namespace) -> bool:
     if args.seeds and cfg.get("seed") not in args.seeds: return False
     if args.algos and cfg.get("alg_name") not in args.algos: return False
     if args.cl_methods and cfg.get("cl_method") not in args.cl_methods: return False
-    if args.seq_length and cfg.get("seq_length") not in args.seq_length: return False
+    if args.seq_length and cfg.get("seq_length") != args.seq_length: return False
     if args.strategy and cfg.get("strategy") != args.strategy: return False
     if args.wall_density and cfg.get("wall_density") != args.wall_density: return False
     if 'tags' in cfg:
@@ -48,3 +48,29 @@ def want(run: Run, args: argparse.Namespace) -> bool:
         if tags.intersection(FORBIDDEN_TAGS) and not tags.intersection(args.wandb_tags):
             return False
     return True
+
+
+def experiment_suffix(cfg: dict) -> str:
+    """Return folder name encoding ablation settings."""
+    suffixes = []
+    if not cfg.get("evaluation", True):
+        return "plasticity"
+
+    ##### ----- Temporary hardcoded levels for wall density ----- #####
+    if cfg.get("wall_density") == 0.25:
+        return "level_2"
+    if cfg.get("wall_density") == 0.35:
+        return "level_3"
+    ##### ----- Temporary hardcoded levels for wall density ----- #####
+
+    if not cfg.get("use_multihead", True):
+        suffixes.append("no_multihead")
+    if not cfg.get("use_task_id", True):
+        suffixes.append("no_task_id")
+    if cfg.get("regularize_critic"):
+        suffixes.append("reg_critic")
+    if not cfg.get("use_layer_norm", True):
+        suffixes.append("no_layer_norm")
+    if cfg.get("use_cnn"):
+        suffixes.append("cnn")
+    return "-".join(suffixes) if suffixes else "main"

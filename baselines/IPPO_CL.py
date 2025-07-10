@@ -1,7 +1,5 @@
-import os
 import json
-import numpy as np
-import jax
+import os
 from pathlib import Path
 
 from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
@@ -36,8 +34,12 @@ from tensorboardX import SummaryWriter
 
 @dataclass
 class Config:
-    reg_coef: Optional[float] = None
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TRAINING / PPO PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
+    alg_name: str = "ippo"
     lr: float = 3e-4
+    anneal_lr: bool = False
     num_envs: int = 16
     num_steps: int = 128
     steps_per_task: float = 1e7
@@ -50,69 +52,90 @@ class Config:
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
 
-    # reward shaping
+    # Reward shaping
     reward_shaping: bool = True
     reward_shaping_horizon: float = 2.5e6
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # NETWORK ARCHITECTURE PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
     activation: str = "relu"
-    env_name: str = "overcooked"
-    alg_name: str = "ippo"
-    cl_method: Optional[str] = None
     use_cnn: bool = False
+    use_layer_norm: bool = True
+    big_network: bool = False
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # CONTINUAL LEARNING PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
+    cl_method: Optional[str] = None
+    reg_coef: Optional[float] = None
     use_task_id: bool = True
     use_multihead: bool = True
     shared_backbone: bool = False
     normalize_importance: bool = False
     regularize_critic: bool = False
     regularize_heads: bool = False
-    big_network: bool = False
-    use_layer_norm: bool = True
 
-    # Reg method specific
+    # Regularization method specific parameters
     importance_episodes: int = 5
     importance_steps: int = 500
 
-    # EWC specific
+    # EWC specific parameters
     ewc_mode: str = "multi"  # "online", "last" or "multi"
     ewc_decay: float = 0.9  # Only for online EWC
 
-    # AGEM specific
+    # AGEM specific parameters
     agem_memory_size: int = 50000
     agem_sample_size: int = 128
 
-    # Environment
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ENVIRONMENT PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
+    env_name: str = "overcooked"
     seq_length: int = 10
     repeat_sequence: int = 1
     strategy: str = "generate"
     layouts: Optional[Sequence[str]] = field(default_factory=lambda: [])
     env_kwargs: Optional[Sequence[dict]] = None
+    difficulty: Optional[str] = None
+    single_task_idx: Optional[int] = None
+    layout_file: Optional[str] = None
+
+    # Random layout generator parameters
+    height_min: int = 6  # minimum layout height
+    height_max: int = 7  # maximum layout height
+    width_min: int = 6  # minimum layout width
+    width_max: int = 7  # maximum layout width
+    wall_density: float = 0.15  # fraction of internal tiles that are untraversable
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # EVALUATION PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
     evaluation: bool = True
     eval_forward_transfer: bool = False
-    record_gif: bool = True
-    log_interval: int = 75
     eval_num_steps: int = 1000
     eval_num_episodes: int = 5
+    record_gif: bool = True
     gif_len: int = 300
-    difficulty: Optional[str] = None
+    log_interval: int = 75
 
-    # ─── random‐layout generator knobs ───────────────────────────────────────
-    height_min: int = 6  # minimum layout height
-    height_max: int = 8  # maximum layout height
-    width_min: int = 6  # minimum layout width
-    width_max: int = 8  # maximum layout width
-    wall_density: float = 0.25  # fraction of internal tiles that are untraversable
-
-    anneal_lr: bool = False
-    seed: int = 30
-    num_seeds: int = 1
-
-    # Wandb settings
+    # ═══════════════════════════════════════════════════════════════════════════
+    # LOGGING PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
     wandb_mode: str = "online"
     entity: Optional[str] = ""
     project: str = "MEAL"
     tags: List[str] = field(default_factory=list)
 
-    # to be computed during runtime
+    # ═══════════════════════════════════════════════════════════════════════════
+    # EXPERIMENT PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
+    seed: int = 30
+    num_seeds: int = 1
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # RUNTIME COMPUTED PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
     num_actors: int = 0
     num_updates: int = 0
     minibatch_size: int = 0
@@ -132,8 +155,11 @@ def main():
 
     config = tyro.cli(Config)
 
+    if config.single_task_idx is not None:  # single-task baseline
+        config.cl_method = "ft"
     if config.cl_method is None:
-        raise ValueError("cl_method is required. Please specify a continual learning method (e.g., ewc, mas, l2, ft, agem).")
+        raise ValueError(
+            "cl_method is required. Please specify a continual learning method (e.g., ewc, mas, l2, ft, agem).")
 
     # Set height_min, height_max, width_min, width_max, and wall_density based on difficulty
     if config.difficulty:
@@ -176,7 +202,15 @@ def main():
         height_rng=(config.height_min, config.height_max),
         width_rng=(config.width_min, config.width_max),
         wall_density=config.wall_density,
+        layout_file=config.layout_file,
     )
+
+    # ── optional single-task baseline ─────────────────────────────────────────
+    if config.single_task_idx is not None:
+        idx = config.single_task_idx
+        config.env_kwargs = [config.env_kwargs[idx]]
+        layout_names = [layout_names[idx]]
+        config.seq_length = 1
 
     # repeat the base sequence `repeat_sequence` times
     config.env_kwargs = config.env_kwargs * config.repeat_sequence
@@ -822,12 +856,12 @@ def main():
                 perm = jax.random.permutation(mem_rng, advantages.shape[0])  # length = traj_len
                 idx = perm[: config.agem_sample_size]
 
-                obs_for_mem  = traj_batch.obs[idx].reshape(-1, traj_batch.obs.shape[-1])
+                obs_for_mem = traj_batch.obs[idx].reshape(-1, traj_batch.obs.shape[-1])
                 acts_for_mem = traj_batch.action[idx].reshape(-1)
                 logp_for_mem = traj_batch.log_prob[idx].reshape(-1)
-                adv_for_mem  = advantages[idx].reshape(-1)
-                tgt_for_mem  = targets[idx].reshape(-1)
-                val_for_mem  = traj_batch.value[idx].reshape(-1)
+                adv_for_mem = advantages[idx].reshape(-1)
+                tgt_for_mem = targets[idx].reshape(-1)
+                val_for_mem = traj_batch.value[idx].reshape(-1)
 
                 cl_state = update_agem_memory(
                     cl_state,
@@ -996,6 +1030,9 @@ def main():
                 # calculate the forward transfer and backward transfer
                 show_heatmap_bwt(evaluation_matrix, run_name)
                 show_heatmap_fwt(evaluation_matrix, run_name)
+
+            if config.single_task_idx is not None:
+                break  # stop after the first env
 
     def save_params(path, train_state, env_kwargs=None, layout_name=None, config=None):
         '''
