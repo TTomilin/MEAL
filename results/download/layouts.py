@@ -56,8 +56,7 @@ def main() -> None:
         if rep != 1:
             exp_folder += f"_rep_{rep}"
 
-        out_dir = (out_root / algo / cl_method /
-                   experiment / exp_folder / f"seed_{seed}")
+        out_dir = (out_root / algo / cl_method / experiment / exp_folder / f"seed_{seed}")
         out_dir.mkdir(parents=True, exist_ok=True)
         out_file = out_dir / f"layouts.{args.format}"
 
