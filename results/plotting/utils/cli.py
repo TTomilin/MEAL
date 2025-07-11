@@ -40,6 +40,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--steps_per_task", type=float, default=1e7, help="Steps per task (x-axis scaling)")
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5], help="Seeds to include")
     parser.add_argument("--sigma", type=float, default=1.5, help="Gaussian smoothing parameter")
+    parser.add_argument("--level", type=int, default=1, help="Difficulty level of the environment")
     parser.add_argument("--confidence", type=float, default=0.95, choices=[0.9, 0.95, 0.99], help="Confidence level")
     parser.add_argument("--plot_name", default=None, help="Custom plot name (default: auto-generated)")
 

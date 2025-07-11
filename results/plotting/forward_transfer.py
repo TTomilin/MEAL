@@ -101,12 +101,12 @@ def main():
         # CL traces
         cl_runs = collect_training_data(
             data_root, args.algo, method,
-            args.strategy, args.seq_len, args.repeat_sequence, args.seeds
+            args.strategy, args.seq_len, args.repeat_sequence, args.seeds, level=args.level
         )
         # Baseline traces
         base_runs = collect_training_data(
             data_root, args.algo, args.baseline_method,
-            args.strategy, args.seq_len, 1, args.seeds
+            args.strategy, args.seq_len, 1, args.seeds, level=args.level
         )
 
         color = METHOD_COLORS.get(method, "tab:gray")
@@ -166,10 +166,6 @@ def main():
         if row == 0:
             legend_handles.append(baseline_line)
             legend_labels.append("IPPO")
-
-        # confidence bands
-        # ax.fill_between(x_cl, mu_cl - ci_cl, mu_cl + ci_cl, color=color, alpha=0.15)
-        # ax.fill_between(x_base, mu_base - ci_bs, mu_base + ci_bs, color="crimson", alpha=0.15)
 
         # shaded transfer - interpolate to common grid for comparison
         if len(mu_cl) > 0 and len(mu_base) > 0:
@@ -233,7 +229,8 @@ def main():
             # Add some padding
             y_range = y_max - y_min
             y_padding = y_range * 0.1 if y_range > 0 else 0.1
-            axes[0].set_ylim(y_min - y_padding, y_max + y_padding)
+            # axes[0].set_ylim(y_min - y_padding, y_max + y_padding)
+            axes[0].set_ylim(y_min, y_max)
 
         # Add legend directly on the plot where there is space
         # Replace underscores with spaces in legend labels
@@ -248,17 +245,15 @@ def main():
                       bbox_to_anchor=(0.5, 0.0), ncol=len(formatted_legend_labels),
                       frameon=True, fontsize=12)
 
-    # global labels
-    fig.text(0.5, 0.04, "Environment steps", ha="center", fontsize=14)
-    # fig.text(0.01, 0.5, "Normalised Score", va="center", rotation="vertical", fontsize=14)
-
-    fig.tight_layout(rect=[0, 0.03, 1, 1])
+    fig.text(0.5, 0.06, "Environment steps", ha="center", fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 1])
 
     # Modify filename for single method case
     if len(args.methods) == 1:
         plot_name = f"{args.plot_name}_{args.methods[0]}"
     else:
         plot_name = args.plot_name
+    plot_name += f"_level_{args.level}"
 
     save_plot(fig, base / "plots", plot_name)
     fig.show()

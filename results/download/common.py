@@ -18,7 +18,8 @@ def cli() -> argparse.Namespace:
     p.add_argument("--seq_length", type=int, default=[])
     p.add_argument("--repeat_sequence", type=int, default=None, help="Repeat sequence value to multiply with seq_length")
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
-    p.add_argument("--wall_density", type=float, default=0.15, help="Wall density for the environment")
+    p.add_argument("--wall_density", type=float, default=None, help="Wall density for the environment")
+    p.add_argument("--difficulty", type=str, default=None, help="Difficulty level for the environment")
     p.add_argument("--strategy", choices=["ordered", "random", "generate"], default=None)
     p.add_argument("--algos", nargs="+", default=[], help="Filter by alg_name")
     p.add_argument("--cl_methods", nargs="+", default=[], help="Filter by cl_method")
@@ -40,6 +41,7 @@ def want(run: Run, args: argparse.Namespace) -> bool:
     if args.cl_methods and cfg.get("cl_method") not in args.cl_methods: return False
     if args.seq_length and cfg.get("seq_length") != args.seq_length: return False
     if args.strategy and cfg.get("strategy") != args.strategy: return False
+    if args.difficulty and cfg.get("difficulty") != args.difficulty: return False
     if args.wall_density and cfg.get("wall_density") != args.wall_density: return False
     if 'tags' in cfg:
         tags = set(cfg['tags'])
@@ -53,13 +55,13 @@ def want(run: Run, args: argparse.Namespace) -> bool:
 def experiment_suffix(cfg: dict) -> str:
     """Return folder name encoding ablation settings."""
     suffixes = []
-    if not cfg.get("evaluation", True):
-        return "plasticity"
 
     ##### ----- Temporary hardcoded levels for wall density ----- #####
-    if cfg.get("wall_density") == 0.25:
+    if cfg.get("difficulty") == 'easy':
+        return "level_1"
+    if cfg.get("difficulty") == 'medium':
         return "level_2"
-    if cfg.get("wall_density") == 0.35:
+    if cfg.get("difficulty") == 'hard':
         return "level_3"
     ##### ----- Temporary hardcoded levels for wall density ----- #####
 

@@ -134,6 +134,7 @@ def collect_training_data(
         seq_len: int,
         repeats: int,
         seeds: List[int],
+        level: int = 1
 ) -> np.ndarray:
     """
     Collect training data from training_soup files.
@@ -154,11 +155,7 @@ def collect_training_data(
     runs = []
 
     for seed in seeds:
-        # Use different directory structure for single baseline vs CL methods
-        if method == "single":
-            run_dir = base / algo / method / "plasticity" / folder / f"seed_{seed}"
-        else:
-            run_dir = base / algo / method / "main" / folder / f"seed_{seed}"
+        run_dir = base / algo / method / f"level_{level}" / folder / f"seed_{seed}"
         if not run_dir.exists():
             print(f"Warning: no directory {run_dir}")
             continue
