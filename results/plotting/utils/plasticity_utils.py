@@ -22,6 +22,7 @@ def collect_plasticity_runs(
         seq_len: int,
         repeats: int,
         seeds: List[int],
+        level: int = 1,
 ) -> list[np.ndarray]:
     """Return a list where item *i* contains all curves for task *i* across seeds.
 
@@ -38,6 +39,7 @@ def collect_plasticity_runs(
         seq_len: Sequence length
         repeats: Number of sequence repetitions
         seeds: List of seeds to collect
+        level: Difficulty level (default: 1)
 
     Returns:
         List of arrays, where each array contains curves for a specific task
@@ -53,7 +55,7 @@ def collect_plasticity_runs(
         if method == "single":
             run_dir = base / algo / method / "plasticity" / folder / f"seed_{seed}"
         else:
-            run_dir = base / algo / method / "main" / folder / f"seed_{seed}"
+            run_dir = base / algo / method / f"level_{level}" / folder / f"seed_{seed}"
         if not run_dir.exists():
             print(f"Warning: no directory {run_dir}")
             continue

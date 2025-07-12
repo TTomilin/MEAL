@@ -174,7 +174,7 @@ def plot():
     for item in items:
         if args.compare_by == "method":
             method = item
-            experiment = "main"
+            experiment = f"level_{args.level}"
         else:
             method = args.method
             experiment = f"level_{item.split()[1]}"
@@ -207,6 +207,9 @@ def plot():
     stem = args.plot_name or (
             "bar_final_" + ("methods" if args.compare_by == "method" else "levels")
     )
+    # Add level suffix if not already present
+    if "_level_" not in stem:
+        stem += f"_level_{args.level}"
     save_plot(fig, out_dir, stem)
     plt.show()
 

@@ -53,6 +53,7 @@ def parse_args():
     p.add_argument("--strategy", required=True, help="Training strategy")
     p.add_argument("--seq_len", type=int, required=True, help="Sequence length")
     p.add_argument("--seeds", nargs="+", type=int, default=[3], help="Seeds to include")
+    p.add_argument("--level", type=int, default=1, help="Difficulty level of the environment")
 
     # Add metric argument
     add_metric_arg(p, choices=["reward", "soup"], default="soup")
@@ -94,7 +95,7 @@ def main():
     rows = []
 
     for method in args.methods:
-        for arch in ("main", "cnn"):
+        for arch in (f"level_{args.level}", "cnn"):
             run_dir = base / method / arch / f"{args.strategy}_{args.seq_len}"
             vals = final_scores(run_dir, args.metric, args.seeds)
             for v in vals:
@@ -118,14 +119,14 @@ def main():
     width = max(6, len(args.methods) * 1.5)
     fig, ax = plt.subplots(figsize=(width, 4))
 
-    palette = {"main": "#4C72B0", "cnn": "#DD8452"}
+    palette = {f"level_{args.level}": "#4C72B0", "cnn": "#DD8452"}
     bar_w = 0.35
     x = np.arange(len(args.methods))
 
-    for i, arch in enumerate(("main", "cnn")):
+    for i, arch in enumerate((f"level_{args.level}", "cnn")):
         sub = agg[agg.arch == arch]
         offsets = x - bar_w / 2 + i * bar_w
-        label = "MLP" if arch == "main" else "CNN"
+        label = "MLP" if arch == f"level_{args.level}" else "CNN"
         ax.bar(offsets, sub["mean"], bar_w,
                yerr=sub["ci95"], capsize=5,
                color=palette[arch], label=label, alpha=0.9)
@@ -139,6 +140,9 @@ def main():
     out = root / 'plots'
     out.mkdir(exist_ok=True)
     stem = "mlp_vs_cnn"
+    # Add level suffix if not already present
+    if "_level_" not in stem:
+        stem += f"_level_{args.level}"
     plt.savefig(out / f"{stem}.png")
     plt.savefig(out / f"{stem}.pdf")
     plt.show()

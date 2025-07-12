@@ -71,10 +71,10 @@ def time_indices(arr_len: int, total_steps: float, start: float, end: float):
 
 def collect_env_series(base: Path, algo: str, method: str, strat: str,
                        seq_len: int, seeds: List[int], metric: str,
-                       baselines: dict | None):
+                       baselines: dict | None, level: int = 1):
     """return list[length=seq_len] of arrays for each env, stacked over seeds"""
 
-    folder = base / algo / method / f"{strat}_{seq_len}"
+    folder = base / algo / method / f"level_{level}" / f"{strat}_{seq_len}"
     env_names, per_seed = [], []
 
     pattern = f"*_reward.*"
@@ -152,7 +152,7 @@ def main():
         env_names, per_seed = collect_env_series(data_root, args.algo, method,
                                                  args.strategy, args.seq_len,
                                                  args.seeds, args.metric,
-                                                 baselines)
+                                                 baselines, args.level)
 
         fvals = [forgetting_per_seed(seed_series, total_steps,
                                      args.steps_per_task)
@@ -179,6 +179,9 @@ def main():
     out = Path(__file__).resolve().parent.parent / 'plots'
     out.mkdir(exist_ok=True)
     stem = args.plot_name or f"forgetting_{args.metric}"
+    # Add level suffix if not already present
+    if "_level_" not in stem:
+        stem += f"_level_{args.level}"
     plt.savefig(out / f"{stem}.png")
     plt.savefig(out / f"{stem}.pdf")
     plt.show()

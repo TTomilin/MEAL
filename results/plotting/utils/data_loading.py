@@ -13,7 +13,7 @@ import numpy as np
 from .common import load_series
 
 
-def collect_runs(base: Path, algo: str, method: str, strat: str, seq_len: int, seeds: List[int], metric: str) -> Tuple[
+def collect_runs(base: Path, algo: str, method: str, strat: str, seq_len: int, seeds: List[int], metric: str, level: int = 1) -> Tuple[
     np.ndarray, List[str]]:
     """
     Collect run data for training plots.
@@ -26,11 +26,12 @@ def collect_runs(base: Path, algo: str, method: str, strat: str, seq_len: int, s
         seq_len: Sequence length
         seeds: List of seeds to collect
         metric: Metric to collect ('reward', 'soup', etc.)
+        level: Difficulty level (default: 1)
 
     Returns:
         Tuple of (data_array, environment_names)
     """
-    folder = base / algo / method / "main" / f"{strat}_{seq_len}"
+    folder = base / algo / method / f"level_{level}" / f"{strat}_{seq_len}"
     env_names, per_seed = [], []
 
     for seed in seeds:
@@ -64,7 +65,7 @@ def collect_runs(base: Path, algo: str, method: str, strat: str, seq_len: int, s
 
 
 def collect_env_curves(base: Path, algo: str, method: str, strat: str,
-                       seq_len: int, seeds: List[int], metric: str = "reward") -> Tuple[List[str], List[np.ndarray]]:
+                       seq_len: int, seeds: List[int], metric: str = "reward", level: int = 1) -> Tuple[List[str], List[np.ndarray]]:
     """
     Collect per-environment curves for per-task evaluation plots.
 
@@ -76,11 +77,12 @@ def collect_env_curves(base: Path, algo: str, method: str, strat: str,
         seq_len: Sequence length
         seeds: List of seeds to collect
         metric: Metric to collect (default: 'reward')
+        level: Difficulty level (default: 1)
 
     Returns:
         Tuple of (environment_names, curves_per_environment)
     """
-    folder = base / algo / method / "main" / f"{strat}_{seq_len}"
+    folder = base / algo / method / f"level_{level}" / f"{strat}_{seq_len}"
     env_names, per_env_seed = [], []
 
     # discover envs

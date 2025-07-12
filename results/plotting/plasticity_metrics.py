@@ -142,6 +142,7 @@ def main() -> None:
             traces_per_task = collect_plasticity_runs(
                 data_dir, args.algo, method, args.strategy,
                 args.seq_len, repeats, args.seeds,
+                args.level,
             )
             colour = colours[idx]
             label = f"{repeats} Repetitions"

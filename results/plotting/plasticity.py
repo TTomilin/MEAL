@@ -66,6 +66,7 @@ def main():
             args.seq_len,
             args.repeat_sequence,
             args.seeds,
+            args.level,
         )
         color = METHOD_COLORS.get(method)
 
@@ -101,7 +102,11 @@ def main():
 
     # Save the plot
     out_dir = base_dir / Path("plots")
-    save_plot(fig, out_dir, args.plot_name)
+    plot_name = args.plot_name
+    # Add level suffix if not already present
+    if "_level_" not in plot_name:
+        plot_name += f"_level_{args.level}"
+    save_plot(fig, out_dir, plot_name)
 
     fig.show()
 

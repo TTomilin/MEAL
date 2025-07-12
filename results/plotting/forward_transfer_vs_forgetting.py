@@ -1,35 +1,36 @@
 #!/usr/bin/env python3
-"""Build a LaTeX table with mean ±95% CI (smaller font) for CL metrics."""
-from __future__ import annotations
+"""
+Plot forward transfer vs forgetting scatter plot for the MARL continual-learning benchmark.
+
+This script creates a scatter plot where:
+- X-axis: Forward Transfer
+- Y-axis: Forgetting
+- Each method is represented as a dot on the graph
+
+The metrics are calculated using the same logic as in results/numerical/results_table.py
+"""
 
 import argparse
 import json
 from pathlib import Path
 from typing import List
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-# -----------------------------------------------------------------------------
-# I/O helpers
-# -----------------------------------------------------------------------------
+from results.plotting.utils import METHOD_COLORS, get_output_path
+
 
 def load_series(fp: Path) -> np.ndarray:
-    """Load a 1‑D float array from *.json or *.npz."""
-    if fp.suffix == ".json":
+    """Load a time series from a JSON file."""
+    if fp.suffix == '.json':
         return np.array(json.loads(fp.read_text()), dtype=float)
-    if fp.suffix == ".npz":
-        return np.load(fp)["data"].astype(float)
-    raise ValueError(f"Unsupported file suffix: {fp.suffix}")
+    raise ValueError(f'Unsupported file suffix: {fp.suffix}')
 
 
-# -----------------------------------------------------------------------------
-# Metric aggregation
-# -----------------------------------------------------------------------------
-
-ConfInt = tuple[float, float]  # (mean, 95% CI)
-
-def _mean_ci(series: List[float]) -> ConfInt:
+def _mean_ci(series: List[float]) -> tuple:
+    """Calculate mean and confidence interval."""
     if not series:
         return np.nan, np.nan
     mean = float(np.mean(series))
@@ -39,10 +40,9 @@ def _mean_ci(series: List[float]) -> ConfInt:
     return mean, float(ci)
 
 
-def compute_metrics(
+def compute_metrics_simplified(
         data_root: Path,
         algo: str,
-        arch: str,
         methods: List[str],
         strategy: str,
         seq_len: int,
@@ -50,6 +50,9 @@ def compute_metrics(
         end_window_evals: int = 10,
         level: int = 1,
 ) -> pd.DataFrame:
+    """
+    Compute metrics exactly like results_table.py with proper forward transfer calculation.
+    """
     rows: list[dict[str, float]] = []
 
     # Load baseline data once for forward transfer calculation
@@ -89,7 +92,6 @@ def compute_metrics(
         for seed in seeds:
             sd = base_folder / f"seed_{seed}"
             if not sd.exists():
-                print(f"[debug] seed directory does not exist: {sd}")
                 continue
 
             # 1) Plasticity training curve
@@ -97,7 +99,6 @@ def compute_metrics(
             if not training_fp.exists():
                 print(f"[warn] missing training_soup.json for {method} seed {seed}")
                 continue
-            print(f"[debug] found training file for {method} seed {seed}: {training_fp}")
             training = load_series(training_fp)
             n_train = len(training)
             chunk = n_train // seq_len
@@ -111,9 +112,6 @@ def compute_metrics(
                     f"[warn] expected {seq_len} env files, found {len(env_files)} "
                     f"for {method} seed {seed}"
                 )
-                print(f"[debug] found files: {[f.name for f in env_files]}")
-                all_soup_files = list(sd.glob("*_soup.*"))
-                print(f"[debug] all *_soup.* files: {[f.name for f in all_soup_files]}")
                 continue
             env_series = [load_series(f) for f in env_files]
             L = max(len(s) for s in env_series)
@@ -198,43 +196,40 @@ def compute_metrics(
     return pd.DataFrame(rows)
 
 
-# -----------------------------------------------------------------------------
-# LaTeX formatting helpers
-# -----------------------------------------------------------------------------
+def parse_args():
+    """Parse command line arguments for the forward transfer vs forgetting scatter plot."""
+    parser = argparse.ArgumentParser(
+        description="Plot forward transfer vs forgetting scatter plot for MARL continual-learning benchmark"
+    )
 
-def _fmt(mean: float, ci: float, best: bool, better: str = "max") -> str:
-    """Return *mean ±CI* formatted for LaTeX, with CI in \scriptsize."""
-    if np.isnan(mean):
-        return "--"
-    main = f"{mean:.3f}"
-    if best:
-        main = rf"\textbf{{{main}}}"
-    ci_part = rf"{{\scriptsize$\pm{ci:.2f}$}}" if not np.isnan(ci) and ci > 0 else ""
-    return main + ci_part
-
-
-if __name__ == "__main__":
-    p = argparse.ArgumentParser()
-    p.add_argument("--data_root", required=True)
-    p.add_argument("--algo", required=True)
-    p.add_argument("--arch", required=True)
-    p.add_argument("--methods", nargs="+", required=True)
-    p.add_argument("--strategy", required=True)
-    p.add_argument("--seq_len", type=int, default=10)
-    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
-    p.add_argument("--level", type=int, default=1, help="Difficulty level of the environment")
-    p.add_argument(
+    parser.add_argument("--data_root", required=True, help="Root directory containing the data")
+    parser.add_argument("--algo", required=True, help="Algorithm name (e.g., 'ippo')")
+    parser.add_argument("--arch", required=True, help="Architecture name (e.g., 'mlp')")
+    parser.add_argument("--methods", nargs="+", required=True, help="List of methods to compare")
+    parser.add_argument("--strategy", required=True, help="Strategy name (e.g., 'generate')")
+    parser.add_argument("--seq_len", type=int, default=10, help="Sequence length")
+    parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5], help="List of seeds")
+    parser.add_argument("--level", type=int, default=1, help="Difficulty level of the benchmark")
+    parser.add_argument(
         "--end_window_evals",
         type=int,
         default=10,
-        help="How many final eval points to average for F (Forgetting)",
+        help="How many final eval points to average for forgetting calculation",
     )
-    args = p.parse_args()
+    parser.add_argument("--plot_name", help="Custom name for the output plot")
+    parser.add_argument("--title", help="Custom title for the plot")
 
-    df = compute_metrics(
+    return parser.parse_args()
+
+
+def main():
+    """Main function to create the scatter plot."""
+    args = parse_args()
+
+    # Compute metrics using simplified logic for available data structure
+    df = compute_metrics_simplified(
         data_root=Path(args.data_root),
         algo=args.algo,
-        arch=args.arch,
         methods=args.methods,
         strategy=args.strategy,
         seq_len=args.seq_len,
@@ -243,43 +238,82 @@ if __name__ == "__main__":
         level=args.level,
     )
 
-    # Pretty‑print method names
+    # Pretty-print method names (same as in results_table.py)
     df["Method"] = df["Method"].replace({"Online_EWC": "Online EWC"})
 
-    # Identify best means (ignoring CI)
-    best_A = df["AveragePerformance"].max()
-    best_F = df["Forgetting"].min()
-    best_FT = df["ForwardTransfer"].max()
+    # Create the scatter plot
+    fig, ax = plt.subplots(figsize=(5.5, 3.25))
 
-    # Build human‑readable strings with CI
-    df_out = pd.DataFrame()
-    df_out["Method"] = df["Method"]
-    df_out["AveragePerformance"] = df.apply(
-        lambda r: _fmt(r.AveragePerformance, r.AveragePerformance_CI, r.AveragePerformance == best_A, "max"),
-        axis=1,
-    )
-    df_out["Forgetting"] = df.apply(
-        lambda r: _fmt(r.Forgetting, r.Forgetting_CI, r.Forgetting == best_F, "min"),
-        axis=1,
-    )
-    df_out["ForwardTransfer"] = df.apply(
-        lambda r: _fmt(r.ForwardTransfer, r.ForwardTransfer_CI, r.ForwardTransfer == best_FT, "max"),
-        axis=1,
-    )
+    # Plot each method as a dot
+    for _, row in df.iterrows():
+        method = row["Method"]
+        ft = row["ForwardTransfer"]
+        forgetting = row["Forgetting"]
 
-    # Rename columns to mathy headers
-    df_out.columns = [
-        "Method",
-        r"$\mathcal{A}\!\uparrow$",
-        r"$\mathcal{F}\!\downarrow$",
-        r"$\mathcal{FT}\!\uparrow$",
-    ]
+        # Skip if either metric is NaN
+        if np.isnan(ft) or np.isnan(forgetting):
+            print(f"Warning: Skipping {method} due to NaN values (FT: {ft}, F: {forgetting})")
+            continue
 
-    latex_table = df_out.to_latex(
-        index=False,
-        escape=False,
-        column_format="lccc",
-        label="tab:cmarl_metrics",
-    )
+        # Get color for the method
+        # Handle special case for Online EWC to match METHOD_COLORS key
+        if method == "Online EWC":
+            color_key = "Online_EWC"
+        else:
+            color_key = method.upper().replace(" ", "_")
+        color = METHOD_COLORS.get(color_key, '#333333')
 
-    print(latex_table)
+        # Plot the point
+        ax.scatter(ft, forgetting, color=color, s=100, alpha=0.8, label=method, edgecolors='black', linewidth=1)
+
+        # Add method name as text annotation
+        ax.annotate(method, (ft, forgetting), xytext=(5, 5), textcoords='offset points', 
+                   fontsize=10, alpha=0.8)
+
+    # Customize the plot
+    ax.set_xlabel('Forward Transfer (↑)', fontsize=12)
+    ax.set_ylabel('Forgetting (↓)', fontsize=12)
+
+    # Add grid for better readability
+    ax.grid(True, alpha=0.3)
+
+    # Add reference lines at zero
+    ax.axhline(y=0, color='black', linestyle='--', alpha=0.5, linewidth=1)
+    ax.axvline(x=0, color='black', linestyle='--', alpha=0.5, linewidth=1)
+
+    # Add legend outside the plot on the right
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='best')
+
+    # Adjust layout to prevent legend cutoff
+    plt.tight_layout()
+
+    # Save the plot
+    out_dir, plot_name = get_output_path(args.plot_name, "forward_transfer_vs_forgetting")
+
+    plt.savefig(out_dir / f"{plot_name}_level{args.level}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(out_dir / f"{plot_name}_level{args.level}.pdf", bbox_inches='tight')
+
+    print(f"Plot saved to {out_dir / plot_name}.png and {out_dir / plot_name}.pdf")
+
+    # Display summary statistics
+    print("\nSummary Statistics:")
+    print("=" * 50)
+    print(f"{'Method':<15} {'Forward Transfer':<18} {'Forgetting':<12}")
+    print("-" * 50)
+    for _, row in df.iterrows():
+        method = row["Method"]
+        ft = row["ForwardTransfer"]
+        ft_ci = row["ForwardTransfer_CI"]
+        forgetting = row["Forgetting"]
+        forgetting_ci = row["Forgetting_CI"]
+
+        ft_str = f"{ft:.3f} ± {ft_ci:.3f}" if not np.isnan(ft) and not np.isnan(ft_ci) else "N/A"
+        f_str = f"{forgetting:.3f} ± {forgetting_ci:.3f}" if not np.isnan(forgetting) and not np.isnan(forgetting_ci) else "N/A"
+
+        print(f"{method:<15} {ft_str:<18} {f_str:<12}")
+
+    plt.show()
+
+
+if __name__ == "__main__":
+    main()

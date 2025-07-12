@@ -66,7 +66,7 @@ def plot():
         # Collect data for this method
         envs, curves = collect_env_curves(
             data_root, args.algo, method, args.strategy,
-            args.seq_len, args.seeds, args.metric
+            args.seq_len, args.seeds, args.metric, args.level
         )
 
         # Add task boundaries
@@ -108,6 +108,9 @@ def plot():
     plt.tight_layout()
     out_dir = Path(__file__).resolve().parent.parent / 'plots'
     name = args.plot_name or f"per_task_norm_score"
+    # Add level suffix if not already present
+    if "_level_" not in name:
+        name += f"_level_{args.level}"
     save_plot(fig, out_dir, name)
 
     # Display the plot

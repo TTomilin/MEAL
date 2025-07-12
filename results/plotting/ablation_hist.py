@@ -96,7 +96,7 @@ def main() -> None:
 
     for method in args.methods:
         # ---------- original (main) ----------
-        main_dir = base / method / "main" / f"{args.strategy}_{args.main_seq_len}"
+        main_dir = base / method / f"level_{args.level}" / f"{args.strategy}_{args.main_seq_len}"
         main_vals = final_scores(main_dir, args.metric, args.seeds, n_tasks=10)
         rows.extend(dict(method=method, version="main", score=v) for v in main_vals)
 
