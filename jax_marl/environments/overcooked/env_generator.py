@@ -129,9 +129,6 @@ def remove_unreachable_items(grid: List[List[str]]) -> bool:
     if len(agents) < 1:
         return False  # No agents to check reachability
 
-    # Import the get_reachable_positions function from env_validator
-    from jax_marl.environments.overcooked.env_validator import evaluate_grid
-
     # Get reachable positions for each agent
     height, width = len(grid), len(grid[0])
 

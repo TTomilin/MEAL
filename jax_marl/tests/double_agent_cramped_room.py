@@ -13,9 +13,8 @@ import numpy as np
 import pygame
 from flax.core import FrozenDict
 
-from jax_marl.environments.overcooked_environment.layouts import cramped_room
-from jax_marl.environments.overcooked_environment.overcooked_n_agent import POT_FULL_STATUS, Overcooked, DELIVERY_REWARD
-from jax_marl.environments.overcooked_environment.common import OBJECT_TO_INDEX
+from jax_marl.environments.overcooked.layouts import cramped_room
+from jax_marl.environments.overcooked.overcooked_n_agent import POT_FULL_STATUS, Overcooked, DELIVERY_REWARD
 from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
 
 # ---------------------------------------------------------------------

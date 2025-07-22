@@ -248,16 +248,34 @@ class Overcooked(MultiAgentEnv):
         same_dest = (proposed[:, None, :] == proposed[None, :, :]).all(-1)
         coll = (same_dest.sum(-1) > 1)  # True if ≥2 agents share a tile
 
-        # swap places (i ↔ j)  ─────────────────────────────────────────
+        # swap places and circular movements ──────────────────────────
         if n == 1:  # no other agents → no swap test
             blocked = coll
         else:
+            # Check for direct pairwise swaps (i ↔ j)
             swap = ((proposed[:, None, :] == current[None, :, :]).all(-1) &
                     (proposed[None, :, :] == current[:, None, :]).all(-1))
-
             # ignore i==j diagonal ─ we only care about pairs (i ≠ j)
             swap = swap & (~jnp.eye(n, dtype=bool))
-            blocked = coll | swap.any(-1)
+
+            # Check for circular movements (A→B→C→A, etc.)
+            # An agent is part of a circular movement if it's moving to another agent's 
+            # current position AND that other agent is also moving
+
+            # Find agents that are actually moving (not staying in place)
+            is_moving = ~(proposed == current).all(-1)
+
+            # Create a matrix where entry (i,j) is True if agent i is moving to agent j's current position
+            moving_to_agent_pos = (proposed[:, None, :] == current[None, :, :]).all(-1)
+            moving_to_agent_pos = moving_to_agent_pos & (~jnp.eye(n, dtype=bool))  # ignore self
+
+            # An agent is blocked if it's moving to another agent's position AND that other agent is also moving
+            # This prevents both simple swaps and circular movements
+            # For each agent, check if it's moving to any other moving agent's current position
+            targets_moving_agents = moving_to_agent_pos & is_moving[None, :]  # broadcast is_moving
+            circular_blocked = targets_moving_agents.any(axis=1)  # True if agent targets any moving agent
+
+            blocked = coll | swap.any(-1) | circular_blocked
 
         return jnp.where(blocked[:, None], current, proposed).astype(jnp.uint32)
 
