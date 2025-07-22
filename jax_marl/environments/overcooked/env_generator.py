@@ -31,10 +31,10 @@ from flax.core.frozen_dict import FrozenDict
 
 from jax_marl.environments import Overcooked
 from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer, TILE_PIXELS
-from jax_marl.environments.overcooked_environment.env_validator import (
+from jax_marl.environments.overcooked.env_validator import (
     evaluate_grid, UNPASSABLE_TILES, INTERACTIVE_TILES
 )
-from jax_marl.environments.overcooked_environment.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
+from jax_marl.environments.overcooked.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
 
 
 ###############################################################################
@@ -130,7 +130,7 @@ def remove_unreachable_items(grid: List[List[str]]) -> bool:
         return False  # No agents to check reachability
 
     # Import the get_reachable_positions function from env_validator
-    from jax_marl.environments.overcooked_environment.env_validator import evaluate_grid
+    from jax_marl.environments.overcooked.env_validator import evaluate_grid
 
     # Get reachable positions for each agent
     height, width = len(grid), len(grid[0])

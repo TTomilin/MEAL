@@ -18,7 +18,7 @@ from flax.training.train_state import TrainState
 from jax_marl.registration import make
 from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
 from jax_marl.wrappers.baselines import LogWrapper
-from jax_marl.environments.overcooked_environment.upper_bound import estimate_max_soup
+from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
 from architectures.mlp import ActorCritic as MLPActorCritic
 from architectures.cnn import ActorCritic as CNNActorCritic
 from baselines.utils import *

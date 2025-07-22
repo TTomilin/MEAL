@@ -11,13 +11,13 @@ from jax import lax
 
 from jax_marl.environments import MultiAgentEnv
 from jax_marl.environments import spaces
-from jax_marl.environments.overcooked_environment.common import (
+from jax_marl.environments.overcooked.common import (
     OBJECT_TO_INDEX,
     COLOR_TO_INDEX,
     OBJECT_INDEX_TO_VEC,
     DIR_TO_VEC,
     make_overcooked_map)
-from jax_marl.environments.overcooked_environment.layouts import overcooked_layouts as layouts, layout_grid_to_dict
+from jax_marl.environments.overcooked.layouts import overcooked_layouts as layouts, layout_grid_to_dict
 
 BASE_REW_SHAPING_PARAMS = {
     "PLACEMENT_IN_POT_REW": 3,  # reward for putting ingredients

@@ -11,12 +11,12 @@ from jax import lax
 
 from jax_marl.environments import MultiAgentEnv
 from jax_marl.environments import spaces
-from jax_marl.environments.overcooked_environment.common import (
+from jax_marl.environments.overcooked.common import (
     OBJECT_TO_INDEX,
     OBJECT_INDEX_TO_VEC,
     DIR_TO_VEC,
     make_overcooked_map)
-from jax_marl.environments.overcooked_environment.layouts import overcooked_layouts as layouts
+from jax_marl.environments.overcooked.layouts import overcooked_layouts as layouts
 
 BASE_REW_SHAPING_PARAMS = {
     "PLACEMENT_IN_POT_REW": 3,  # reward for putting ingredients
@@ -278,7 +278,7 @@ class Overcooked(MultiAgentEnv):
         # interactions – sequential scan to mimic original ordering
         # ---------------------------------------------------------------------
         def body(carry, idx):
-            maze, inv, rew, shaped = carry
+            maze, inv, rew, shaped, soups = carry
             # only process when the agent actually pressed INTERACT
             maze_new, inv_i, r_i, s_i = lax.cond(
                 action[idx] == Actions.interact,
@@ -293,12 +293,16 @@ class Overcooked(MultiAgentEnv):
             inv = inv.at[idx].set(inv_i)
             rew = rew + r_i
             shaped = shaped.at[idx].set(s_i)
-            return (maze_new, inv, rew, shaped), None
+            # Calculate soups delivered by this agent
+            soups_delivered = r_i / DELIVERY_REWARD
+            soups = soups.at[idx].set(soups_delivered)
+            return (maze_new, inv, rew, shaped, soups), None
 
         init_carry = (state.maze_map, state.agent_inv,
-                      jnp.float32(0.), jnp.zeros(self.num_agents, jnp.float32))
+                      jnp.float32(0.), jnp.zeros(self.num_agents, jnp.float32),
+                      jnp.zeros(self.num_agents, jnp.float32))
 
-        (maze_map, agent_inv, reward, shaped_r), _ = lax.scan(body, init_carry, jnp.arange(self.num_agents))
+        (maze_map, agent_inv, reward, shaped_r, soups_delivered), _ = lax.scan(body, init_carry, jnp.arange(self.num_agents))
 
         # ─── tick every pot exactly once per env-step ────────────────────────
         pad = (maze_map.shape[0] - self.height) // 2
@@ -331,7 +335,7 @@ class Overcooked(MultiAgentEnv):
             maze_map=maze_map,
             terminal=False,
         )
-        return new_state, reward, shaped_r
+        return new_state, reward, shaped_r, soups_delivered
 
     def step_env(
             self,
@@ -347,7 +351,7 @@ class Overcooked(MultiAgentEnv):
         else:
             act_arr = actions
 
-        state, reward, shaped_rewards = self.step_agents(key, state, act_arr)
+        state, reward, shaped_rewards, soups_delivered = self.step_agents(key, state, act_arr)
 
         state = state.replace(time=state.time + 1)
 
@@ -365,6 +369,8 @@ class Overcooked(MultiAgentEnv):
 
         # shaped reward is already a length-n vector
         shaped_dict = {a: shaped_rewards[i] for i, a in enumerate(self.agents)}
+        # Add soups dictionary
+        soups_dict = {a: soups_delivered[i] for i, a in enumerate(self.agents)}
         done_dict = {a: done for a in self.agents} | {"__all__": done}
 
         return (
@@ -372,7 +378,7 @@ class Overcooked(MultiAgentEnv):
             lax.stop_gradient(state),
             rew_dict,
             done_dict,
-            {'shaped_reward': shaped_dict},
+            {'shaped_reward': shaped_dict, 'soups': soups_dict},
         )
 
     def reset(

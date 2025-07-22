@@ -6,7 +6,7 @@ import pygame
 import wandb
 
 import jax_marl.eval.grid_rendering as rendering
-from jax_marl.environments.overcooked_environment.common import OBJECT_TO_INDEX, COLOR_TO_INDEX, COLORS
+from jax_marl.environments.overcooked.common import OBJECT_TO_INDEX, COLOR_TO_INDEX, COLORS
 from jax_marl.eval.visualization.state_visualizer import StateVisualizer
 from jax_marl.eval.window import Window
 
