@@ -610,7 +610,7 @@ def main():
                     batchify(done, env.agents, config.num_actors, not config.use_cnn).squeeze(),
                     action,
                     value,
-                    batchify({a: reward[a] for a in env.agents}, env.agents, config.num_actors).squeeze(),
+                    batchify(reward, env.agents, config.num_actors).squeeze(),
                     log_prob,
                     obs_batch
                 )
