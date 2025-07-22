@@ -2,8 +2,7 @@ import json
 import os
 from pathlib import Path
 
-from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
-    update_agem_memory
+from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project
 from cl_methods.FT import FT
 from cl_methods.L2 import L2
 from cl_methods.MAS import MAS
@@ -19,7 +18,7 @@ from flax.training.train_state import TrainState
 from jax_marl.registration import make
 from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
 from jax_marl.wrappers.baselines import LogWrapper
-from jax_marl.environments.overcooked_environment.overcooked_upper_bound import estimate_max_soup
+from jax_marl.environments.overcooked_environment.upper_bound import estimate_max_soup
 from architectures.mlp import ActorCritic as MLPActorCritic
 from architectures.cnn import ActorCritic as CNNActorCritic
 from baselines.utils import *
@@ -91,7 +90,8 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
-    env_name: str = "overcooked"
+    env_name: str = "overcooked_n_agent"
+    num_agents: int = 2  # number of agents in the environment
     seq_length: int = 10
     repeat_sequence: int = 1
     strategy: str = "generate"
@@ -259,7 +259,7 @@ def main():
         envs = []
         for env_args in config.env_kwargs:
             # Create the environment
-            env = make(config.env_name, **env_args)
+            env = make(config.env_name, **env_args, num_agents=config.num_agents)
             envs.append(env)
 
         # find the environment with the largest observation space
@@ -438,7 +438,7 @@ def main():
         envs = pad_observation_space()
 
         for eval_idx, env in enumerate(envs):
-            env = make(config.env_name, layout=env)  # Create the environment
+            env = make(config.env_name, layout=env, num_agents=config.num_agents)  # Create the environment
 
             # Run k episodes
             all_rewards, all_soups = jax.vmap(lambda k: run_episode_while(env, k, config.eval_num_steps))(
@@ -458,7 +458,8 @@ def main():
     env_names = []
     max_soup_dict = {}
     for i, env_layout in enumerate(padded_envs):
-        env = make(config.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i)
+        env = make(config.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i,
+                   num_agents=config.num_agents)
         env = LogWrapper(env, replace_info=False)
         env_name = env.layout_name
         envs.append(env)
@@ -907,7 +908,9 @@ def main():
             # Agent-agnostic reward logging
             for agent in env.agents:
                 metric[f"General/shaped_reward_{agent}"] = metric["shaped_reward"][agent]
-                metric[f"General/shaped_reward_annealed_{agent}"] = metric[f"General/shaped_reward_{agent}"] * rew_shaping_anneal(current_timestep)
+                metric[f"General/shaped_reward_annealed_{agent}"] = metric[
+                                                                        f"General/shaped_reward_{agent}"] * rew_shaping_anneal(
+                    current_timestep)
             metric.pop('shaped_reward', None)
 
             # Advantages and Targets section
