@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -18,12 +19,12 @@ from flax.training.train_state import TrainState
 from jax_marl.registration import make
 from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
 from jax_marl.wrappers.baselines import LogWrapper
+from jax_marl.environments.overcooked_environment.overcooked_upper_bound import estimate_max_soup
 from architectures.mlp import ActorCritic as MLPActorCritic
 from architectures.cnn import ActorCritic as CNNActorCritic
 from baselines.utils import *
 from cl_methods.EWC import EWC
 
-from omegaconf import OmegaConf
 import wandb
 from functools import partial
 from dataclasses import dataclass, field
@@ -33,9 +34,12 @@ from tensorboardX import SummaryWriter
 
 @dataclass
 class Config:
-    reg_coef: float = 1e7
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TRAINING / PPO PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
+    alg_name: str = "ippo"
     lr: float = 3e-4
-    num_agents: int = 1
+    anneal_lr: bool = False
     num_envs: int = 16
     num_steps: int = 128
     steps_per_task: float = 1e7
@@ -48,70 +52,90 @@ class Config:
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
 
-    # reward shaping
+    # Reward shaping
     reward_shaping: bool = True
     reward_shaping_horizon: float = 2.5e6
 
-    explore_fraction: float = 0.0
+    # ═══════════════════════════════════════════════════════════════════════════
+    # NETWORK ARCHITECTURE PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
     activation: str = "relu"
-    env_name: str = "overcooked"
-    alg_name: str = "ippo"
-    cl_method: str = None
     use_cnn: bool = False
-    use_task_id: bool = False
-    use_multihead: bool = False
+    use_layer_norm: bool = True
+    big_network: bool = False
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # CONTINUAL LEARNING PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
+    cl_method: Optional[str] = None
+    reg_coef: Optional[float] = None
+    use_task_id: bool = True
+    use_multihead: bool = True
     shared_backbone: bool = False
     normalize_importance: bool = False
     regularize_critic: bool = False
-    regularize_heads: bool = True
-    big_network: bool = False
-    use_layer_norm: bool = True
+    regularize_heads: bool = False
 
-    # Reg method specific
+    # Regularization method specific parameters
     importance_episodes: int = 5
     importance_steps: int = 500
 
-    # EWC specific
-    ewc_mode: str = "online"  # "online", "last" or "multi"
+    # EWC specific parameters
+    ewc_mode: str = "multi"  # "online", "last" or "multi"
     ewc_decay: float = 0.9  # Only for online EWC
 
-    # AGEM specific
+    # AGEM specific parameters
     agem_memory_size: int = 50000
     agem_sample_size: int = 128
 
-    # Environment
-    seq_length: int = 2
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ENVIRONMENT PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
+    env_name: str = "overcooked"
+    seq_length: int = 10
     repeat_sequence: int = 1
     strategy: str = "generate"
     layouts: Optional[Sequence[str]] = field(default_factory=lambda: [])
     env_kwargs: Optional[Sequence[dict]] = None
-    layout_name: Optional[Sequence[str]] = None
+    difficulty: Optional[str] = None
+    single_task_idx: Optional[int] = None
+    layout_file: Optional[str] = None
+
+    # Random layout generator parameters
+    height_min: int = 6  # minimum layout height
+    height_max: int = 7  # maximum layout height
+    width_min: int = 6  # minimum layout width
+    width_max: int = 7  # maximum layout width
+    wall_density: float = 0.15  # fraction of internal tiles that are untraversable
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # EVALUATION PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
     evaluation: bool = True
     eval_forward_transfer: bool = False
-    record_gif: bool = True
-    log_interval: int = 75
     eval_num_steps: int = 1000
     eval_num_episodes: int = 5
+    record_gif: bool = True
     gif_len: int = 300
+    log_interval: int = 75
 
-    # ─── random‐layout generator knobs ───────────────────────────────────────
-    height_min: int = 5  # minimum layout height
-    height_max: int = 10  # maximum layout height
-    width_min: int = 5  # minimum layout width
-    width_max: int = 10  # maximum layout width
-    wall_density: float = 0.15  # fraction of internal tiles that are walls
+    # ═══════════════════════════════════════════════════════════════════════════
+    # LOGGING PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
+    wandb_mode: str = "online"
+    entity: Optional[str] = ""
+    project: str = "MEAL"
+    tags: List[str] = field(default_factory=list)
 
-    anneal_lr: bool = True
+    # ═══════════════════════════════════════════════════════════════════════════
+    # EXPERIMENT PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
     seed: int = 30
     num_seeds: int = 1
 
-    # Wandb settings
-    wandb_mode: str = "online"
-    entity: Optional[str] = ""
-    project: str = "COOX"
-    tags: List[str] = field(default_factory=list)
-
-    # to be computed during runtime
+    # ═══════════════════════════════════════════════════════════════════════════
+    # RUNTIME COMPUTED PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
     num_actors: int = 0
     num_updates: int = 0
     minibatch_size: int = 0
@@ -131,6 +155,36 @@ def main():
 
     config = tyro.cli(Config)
 
+    if config.single_task_idx is not None:  # single-task baseline
+        config.cl_method = "ft"
+    if config.cl_method is None:
+        raise ValueError(
+            "cl_method is required. Please specify a continual learning method (e.g., ewc, mas, l2, ft, agem).")
+
+    # Set height_min, height_max, width_min, width_max, and wall_density based on difficulty
+    if config.difficulty:
+        if config.difficulty.lower() == "easy":
+            config.height_min = config.width_min = 6
+            config.height_max = config.width_max = 7
+            config.wall_density = 0.15
+        elif config.difficulty.lower() == "medium" or config.difficulty.lower() == "med":
+            config.height_min = config.width_min = 8
+            config.height_max = config.width_max = 9
+            config.wall_density = 0.25
+        elif config.difficulty.lower() == "hard":
+            config.height_min = config.width_min = 10
+            config.height_max = config.width_max = 11
+            config.wall_density = 0.35
+
+    # Set default regularization coefficient based on the CL method if not specified
+    if config.reg_coef is None:
+        if config.cl_method.lower() == "ewc":
+            config.reg_coef = 1e11
+        elif config.cl_method.lower() == "mas":
+            config.reg_coef = 1e9
+        elif config.cl_method.lower() == "l2":
+            config.reg_coef = 1e7
+
     method_map = dict(ewc=EWC(mode=config.ewc_mode, decay=config.ewc_decay),
                       mas=MAS(),
                       l2=L2(),
@@ -140,8 +194,7 @@ def main():
     cl = method_map[config.cl_method.lower()]
 
     # generate a sequence of tasks
-    config.env_kwargs, config.layout_name = generate_sequence(
-        num_agents=config.num_agents,
+    config.env_kwargs, layout_names = generate_sequence(
         sequence_length=config.seq_length,
         strategy=config.strategy,
         layout_names=config.layouts,
@@ -149,7 +202,20 @@ def main():
         height_rng=(config.height_min, config.height_max),
         width_rng=(config.width_min, config.width_max),
         wall_density=config.wall_density,
+        layout_file=config.layout_file,
     )
+
+    # ── optional single-task baseline ─────────────────────────────────────────
+    if config.single_task_idx is not None:
+        idx = config.single_task_idx
+        config.env_kwargs = [config.env_kwargs[idx]]
+        layout_names = [layout_names[idx]]
+        config.seq_length = 1
+
+    # repeat the base sequence `repeat_sequence` times
+    config.env_kwargs = config.env_kwargs * config.repeat_sequence
+    layout_names = layout_names * config.repeat_sequence
+
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
     network = "cnn" if config.use_cnn else "mlp"
     run_name = f'{config.alg_name}_{config.cl_method}_{network}_seq{config.seq_length}_{config.strategy}_seed_{config.seed}_{timestamp}'
@@ -193,7 +259,7 @@ def main():
         envs = []
         for env_args in config.env_kwargs:
             # Create the environment
-            env = make(config.env_name, **env_args, num_agents=config.num_agents)
+            env = make(config.env_name, **env_args)
             envs.append(env)
 
         # find the environment with the largest observation space
@@ -227,22 +293,9 @@ def main():
                 @param indices: the indices to adjust
                 returns the adjusted indices
                 '''
-                adjusted_indices = []
-
-                for idx in indices:
-                    # Compute the row and column of the index
-                    row = idx // width
-                    col = idx % width
-
-                    # Shift the row and column by the padding
-                    new_row = row + top
-                    new_col = col + left
-
-                    # Compute the new index
-                    new_idx = new_row * (width + left + right) + new_col
-                    adjusted_indices.append(new_idx)
-
-                return jnp.array(adjusted_indices)
+                indices = jnp.asarray(indices)
+                rows, cols = jnp.divmod(indices, width)
+                return (rows + top) * (width + left + right) + (cols + left)
 
             # adjust the indices of the observation space to account for the new walls
             env["wall_idx"] = adjust_indices(env["wall_idx"])
@@ -357,7 +410,7 @@ def main():
                 next_obs, next_state, reward, done_step, info = env.step(key_s, state_env, actions)
                 done = done_step["__all__"]
                 reward = reward["agent_0"]  # Common reward
-                soups_this_step = info["soups"]["agent_0"] + info["soups"]["agent_1"]
+                soups_this_step = sum(info["soups"][agent] for agent in agents)
                 total_reward += reward
                 total_soup += soups_this_step
                 step_count += 1
@@ -385,7 +438,7 @@ def main():
         envs = pad_observation_space()
 
         for eval_idx, env in enumerate(envs):
-            env = make(config.env_name, layout=env, num_agents=config.num_agents)  # Create the environment
+            env = make(config.env_name, layout=env)  # Create the environment
 
             # Run k episodes
             all_rewards, all_soups = jax.vmap(lambda k: run_episode_while(env, k, config.eval_num_steps))(
@@ -400,16 +453,21 @@ def main():
         return all_avg_rewards, all_avg_soups
 
     padded_envs = pad_observation_space()
-    num_agents = config.num_agents
 
     envs = []
-    for env_layout in padded_envs:
-        env = make(config.env_name, layout=env_layout, num_agents=num_agents)
+    env_names = []
+    max_soup_dict = {}
+    for i, env_layout in enumerate(padded_envs):
+        env = make(config.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i)
         env = LogWrapper(env, replace_info=False)
+        env_name = env.layout_name
         envs.append(env)
+        env_names.append(env_name)
+        max_soup_dict[env_name] = estimate_max_soup(env_layout, env.max_steps, n_agents=env.num_agents)
 
     # set extra config parameters based on the environment
     temp_env = envs[0]
+    num_agents = temp_env.num_agents
     agents = temp_env.agents
 
     config.num_actors = num_agents * config.num_envs
@@ -456,12 +514,6 @@ def main():
         tx=tx
     )
 
-    # Load the practical baseline yaml file as a dictionary
-    repo_root = Path(__file__).resolve().parent.parent
-    yaml_loc = os.path.join(repo_root, "practical_reward_baseline.yaml")
-    with open(yaml_loc, "r") as f:
-        practical_baselines = OmegaConf.load(f)
-
     @partial(jax.jit, static_argnums=(2, 4))
     def train_on_environment(rng, train_state, env, cl_state, env_idx):
         '''
@@ -470,10 +522,7 @@ def main():
         returns the runner state and the metrics
         '''
 
-        print(f"Training on environment: {config.layout_name[env_idx]}")
-
-        # How many steps to explore the environment with random actions
-        exploration_steps = int(config.explore_fraction * config.steps_per_task)
+        print(f"Training on environment: {env.task_id} - {env.layout_name}")
 
         # reset the learning rate and the optimizer
         tx = optax.chain(
@@ -523,19 +572,13 @@ def main():
                 # apply the policy network to the observations to get the suggested actions and their values
                 pi, value = network.apply(train_state.params, obs_batch, env_idx=env_idx)
 
-                # Decide whether to explore randomly or use the policy
-                policy_action = pi.sample(seed=_rng)
-                random_action = jax.random.randint(_rng, (config.num_actors,), 0, env.action_space().n)
-                explore = (steps_for_env < exploration_steps)
-
-                # Expand bool to match the shape of action arrays:
-                mask = jnp.repeat(jnp.array([explore]), config.num_actors)
-                action = jnp.where(mask, random_action, policy_action)
+                # Sample and action from the policy
+                action = pi.sample(seed=_rng)
 
                 log_prob = pi.log_prob(action)
 
                 # format the actions to be compatible with the environment
-                env_act = unbatchify(action, agents, config.num_envs, num_agents)
+                env_act = unbatchify(action, env.agents, config.num_envs, env.num_agents)
                 env_act = {k: v.flatten() for k, v in env_act.items()}
 
                 # STEP ENV
@@ -563,17 +606,16 @@ def main():
                                                 )
 
                 transition = Transition(
-                    batchify(done, agents, config.num_actors, not config.use_cnn).squeeze(),
+                    batchify(done, env.agents, config.num_actors, not config.use_cnn).squeeze(),
                     action,
                     value,
-                    batchify({a: reward[a] for a in agents}, agents, config.num_actors).squeeze(),
+                    batchify({a: reward[a] for a in env.agents}, env.agents, config.num_actors).squeeze(),
                     log_prob,
                     obs_batch
                 )
 
                 # Increment steps_for_env by the number of parallel envs
                 steps_for_env = steps_for_env + config.num_envs
-                info["explore"] = jnp.ones((config.num_envs,), dtype=jnp.float32) * jnp.float32(explore)
 
                 runner_state = (train_state, env_state, obsv, update_step, steps_for_env, rng, cl_state)
                 return runner_state, (transition, info)
@@ -590,7 +632,7 @@ def main():
             train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
 
             # create a batch of the observations that is compatible with the network
-            last_obs_batch = batchify(last_obs, agents, config.num_actors, not config.use_cnn)
+            last_obs_batch = batchify(last_obs, env.agents, config.num_actors, not config.use_cnn)
 
             # apply the network to the batch of observations to get the value of the last state
             _, last_val = network.apply(train_state.params, last_obs_batch, env_idx=env_idx)
@@ -746,7 +788,7 @@ def main():
                     # Of course we also need to add the network to the carry here
                     return (train_state, cl_state), loss_information
 
-                train_state, traj_batch, advantages, targets, steps_for_env, rng = update_state
+                train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state = update_state
 
                 # set the batch size and check if it is correct
                 batch_size = config.minibatch_size * config.num_minibatches
@@ -814,10 +856,8 @@ def main():
             # General section
             # Update the step counter
             update_step += 1
-            mean_explore = jnp.mean(info["explore"])
 
             metric["General/env_index"] = env_idx
-            metric["General/explore"] = mean_explore
             metric["General/update_step"] = update_step
             metric["General/steps_for_env"] = steps_for_env
             metric["General/env_step"] = update_step * config.num_steps * config.num_envs
@@ -848,14 +888,27 @@ def main():
                     if v.size > 0:  # Only add if there are values
                         metric[k] = v.mean()
 
+            # Soup section
+            # Agent-agnostic soup counting
+            agent_soups = {}
+            soup_delivered = 0
+            for agent in env.agents:
+                agent_soup = info["soups"][agent].sum()
+                agent_soups[agent] = agent_soup
+                soup_delivered += agent_soup
+                metric[f"Soup/{agent}_soup"] = agent_soup
+
+            episode_frac = config.num_steps / env.max_steps
+            metric["Soup/total"] = soup_delivered
+            metric["Soup/scaled"] = soup_delivered / (max_soup_dict[env_names[env_idx]] * episode_frac)
+            metric.pop('soups', None)
+
             # Rewards section
-            for agent in agents:
+            # Agent-agnostic reward logging
+            for agent in env.agents:
                 metric[f"General/shaped_reward_{agent}"] = metric["shaped_reward"][agent]
-            metric.pop("shaped_reward", None)
-            for agent in agents:
-                metric[f"General/shaped_reward_annealed_{agent}"] = (
-                        metric[f"General/shaped_reward_{agent}"] * rew_shaping_anneal(current_timestep)
-                )
+                metric[f"General/shaped_reward_annealed_{agent}"] = metric[f"General/shaped_reward_{agent}"] * rew_shaping_anneal(current_timestep)
+            metric.pop('shaped_reward', None)
 
             # Advantages and Targets section
             metric["Advantage_Targets/advantages"] = advantages.mean()
@@ -863,65 +916,37 @@ def main():
 
             # Evaluation section
             if config.evaluation:
-                for i in range(len(config.layout_name)):
-                    metric[f"Evaluation/{config.layout_name[i]}"] = jnp.nan
-                    metric[f"Scaled returns/evaluation_{config.layout_name[i]}_scaled"] = jnp.nan
+                for i in range(len(env_names)):
+                    metric[f"Evaluation/{env_names[i]}"] = jnp.nan
+                    metric[f"Scaled returns/evaluation_{env_names[i]}_scaled"] = jnp.nan
 
             def evaluate_and_log(rng, update_step):
                 rng, eval_rng = jax.random.split(rng)
                 train_state_eval = jax.tree_util.tree_map(lambda x: x.copy(), train_state)
 
-                def log_metrics(metric, update_step):
+                def log_metrics(metrics, update_step):
                     if config.evaluation:
-                        evaluations = evaluate_model(train_state_eval, eval_rng)
-                        metric = add_eval_metrics(evaluations,
-                                                  config.layout_name,
-                                                  practical_baselines,
-                                                  metric)
+                        avg_rewards, avg_soups = evaluate_model(train_state_eval, eval_rng)
+                        episode_frac = config.eval_num_steps / env.max_steps
+                        avg_soups = [soup * episode_frac for soup, env_name in zip(avg_soups, env_names)]
+                        metrics = add_eval_metrics(avg_rewards, avg_soups, env_names, max_soup_dict, metrics)
 
                     def callback(args):
-                        metric, update_step, env_counter = args
+                        metrics, update_step, env_counter = args
                         real_step = (int(env_counter) - 1) * config.num_updates + int(update_step)
-
-                        metric = normalize_soup(config.layout_name,
-                                                practical_baselines,
-                                                metric,
-                                                env_counter)
-                        for key, value in metric.items():
+                        for key, value in metrics.items():
                             writer.add_scalar(key, value, real_step)
 
-                    jax.experimental.io_callback(callback, None, (metric, update_step, env_idx + 1))
+                    jax.experimental.io_callback(callback, None, (metrics, update_step, env_idx + 1))
                     return None
 
-                def do_not_log(metric, update_step):
+                def do_not_log(metrics, update_step):
                     return None
 
                 jax.lax.cond((update_step % config.log_interval) == 0, log_metrics, do_not_log, metric, update_step)
 
             # Evaluate the model and log the metrics
             evaluate_and_log(rng=rng, update_step=update_step)
-
-            rng = update_state[-2]  # cl_state is now the last element
-            cl_state = update_state[-1]
-
-            # For AGEM, we need to update the memory if this is the current environment
-            if config.cl_method.lower() == "agem" and cl_state is not None:
-                rng, mem_rng = jax.random.split(rng)
-                perm = jax.random.permutation(mem_rng, advantages.shape[0])  # length = traj_len
-                idx = perm[: config.agem_sample_size]
-
-                obs_for_mem = traj_batch.obs[idx].reshape(-1, traj_batch.obs.shape[-1])
-                acts_for_mem = traj_batch.action[idx].reshape(-1)
-                logp_for_mem = traj_batch.log_prob[idx].reshape(-1)
-                adv_for_mem = advantages[idx].reshape(-1)
-                tgt_for_mem = targets[idx].reshape(-1)
-                val_for_mem = traj_batch.value[idx].reshape(-1)
-
-                cl_state = update_agem_memory(
-                    cl_state,
-                    obs_for_mem, acts_for_mem, logp_for_mem,
-                    adv_for_mem, tgt_for_mem, val_for_mem
-                )
 
             runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state)
 
@@ -954,12 +979,13 @@ def main():
         # split the random number generator for training on the environments
         rng, *env_rngs = jax.random.split(rng, len(envs) + 1)
 
-        visualizer = OvercookedVisualizer(num_agents=num_agents)
-        # Evaluate the model on the first environments before training
-        if config.evaluation:
+        visualizer = OvercookedVisualizer(num_agents=temp_env.num_agents)
+
+        evaluation_matrix = None
+        if config.eval_forward_transfer:
             evaluation_matrix = jnp.zeros(((len(envs) + 1), len(envs)))
             rng, eval_rng = jax.random.split(rng)
-            evaluations = evaluate_model(train_state, eval_rng)
+            evaluations, _ = evaluate_model(train_state, eval_rng)
             evaluation_matrix = evaluation_matrix.at[0, :].set(evaluations)
 
         for i, (rng, env) in enumerate(zip(env_rngs, envs)):
@@ -975,38 +1001,108 @@ def main():
 
             if config.record_gif:
                 # Generate & log a GIF after finishing task i
-                env_name = config.layout_name[i]
-                states = record_gif_of_episode(config, train_state, env, network, agents, i, config.gif_len)
+                env_name = layout_names[i]
+                states = record_gif_of_episode(config, train_state, env, network, i, config.gif_len)
                 visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir)
 
-            if config.evaluation:
+            if config.eval_forward_transfer:
                 # Evaluate at the end of training to get the average performance of the task right after training
-                evaluations = evaluate_model(train_state, rng)
-            evaluation_matrix = evaluation_matrix.at[i, :].set(evaluations)
+                evaluations, _ = evaluate_model(train_state, rng)
+                evaluation_matrix = evaluation_matrix.at[i + 1, :].set(evaluations)
 
             # save the model
+            repo_root = Path(__file__).resolve().parent.parent
             path = f"{repo_root}/checkpoints/overcooked/{config.cl_method}/{run_name}/model_env_{i + 1}"
-            save_params(path, train_state)
+            save_params(path, train_state, env_kwargs=env.layout, layout_name=env.layout_name, config=config)
 
-            if config.evaluation:
+            if config.eval_forward_transfer:
                 # calculate the forward transfer and backward transfer
                 show_heatmap_bwt(evaluation_matrix, run_name)
-            show_heatmap_fwt(evaluation_matrix, run_name)
+                show_heatmap_fwt(evaluation_matrix, run_name)
 
-    def save_params(path, train_state):
+            if config.single_task_idx is not None:
+                break  # stop after the first env
+
+    def save_params(path, train_state, env_kwargs=None, layout_name=None, config=None):
         '''
-        Saves the parameters of the network
+        Saves the parameters of the network along with environment configuration
         @param path: the path to save the parameters
         @param train_state: the current state of the training
+        @param env_kwargs: the environment kwargs used to create the environment
+        @param layout_name: the name of the layout
+        @param config: the configuration used for training
         returns None
         '''
         os.makedirs(os.path.dirname(path), exist_ok=True)
+
+        # Save model parameters
         with open(path, "wb") as f:
             f.write(
                 flax.serialization.to_bytes(
                     {"params": train_state.params}
                 )
             )
+
+        # Save configuration and layout information
+        if env_kwargs is not None or layout_name is not None or config is not None:
+            # Define a recursive function to convert FrozenDict to regular dict
+            def convert_frozen_dict(obj):
+                if isinstance(obj, flax.core.frozen_dict.FrozenDict):
+                    return {k: convert_frozen_dict(v) for k, v in unfreeze(obj).items()}
+                elif isinstance(obj, dict):
+                    return {k: convert_frozen_dict(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_frozen_dict(item) for item in obj]
+                elif isinstance(obj, jax.Array):
+                    # Convert JAX arrays to native Python types
+                    array_obj = np.array(obj)
+                    # Handle scalar values
+                    if array_obj.size == 1:
+                        return array_obj.item()
+                    # Handle arrays
+                    return array_obj.tolist()
+                else:
+                    return obj
+
+            # Convert env_kwargs to regular dict
+            env_kwargs = convert_frozen_dict(env_kwargs)
+
+            config_data = {
+                "env_kwargs": env_kwargs,
+                "layout_name": layout_name
+            }
+
+            # Add relevant configuration parameters
+            if config is not None:
+                config_dict = {
+                    "use_cnn": config.use_cnn,
+                    "num_tasks": config.seq_length,
+                    "use_multihead": config.use_multihead,
+                    "shared_backbone": config.shared_backbone,
+                    "big_network": config.big_network,
+                    "use_task_id": config.use_task_id,
+                    "regularize_heads": config.regularize_heads,
+                    "use_layer_norm": config.use_layer_norm,
+                    "activation": config.activation,
+                    "strategy": config.strategy,
+                    "seed": config.seed,
+                    "height_min": config.height_min,
+                    "height_max": config.height_max,
+                    "width_min": config.width_min,
+                    "width_max": config.width_max,
+                    "wall_density": config.wall_density
+                }
+                # Convert any FrozenDict objects in the config
+                config_dict = convert_frozen_dict(config_dict)
+                config_data.update(config_dict)
+
+            # Apply the conversion to the entire config_data to ensure all nested FrozenDict objects are converted
+            config_data = convert_frozen_dict(config_data)
+
+            config_path = f"{path}_config.json"
+            with open(config_path, "w") as f:
+                json.dump(config_data, f, indent=2)
+
         print('model saved to', path)
 
     # Run the model
@@ -1016,7 +1112,7 @@ def main():
     # Initialize AGEM memory if using AGEM and this is the first environment
     if config.cl_method.lower() == "agem":
         # Get observation dimension
-        obs_dim = temp_env.observation_space().shape
+        obs_dim = envs[0].observation_space().shape
         if not config.use_cnn:
             obs_dim = (np.prod(obs_dim),)
         # Initialize memory buffer
@@ -1026,7 +1122,7 @@ def main():
     loop_over_envs(train_rng, train_state, cl_state, envs)
 
 
-def record_gif_of_episode(config, train_state, env, network, agents, env_idx=0, max_steps=300):
+def record_gif_of_episode(config, train_state, env, network, env_idx=0, max_steps=300):
     rng = jax.random.PRNGKey(0)
     rng, env_rng = jax.random.split(rng)
     obs, state = env.reset(env_rng)
@@ -1050,6 +1146,7 @@ def record_gif_of_episode(config, train_state, env, network, agents, env_idx=0, 
             obs_dict[agent_id] = obs_b
 
         actions = {}
+        agents = list(obs.keys())  # Get agents from observation keys
         act_keys = jax.random.split(rng, len(agents))
         for i, agent_id in enumerate(agents):
             pi, _ = network.apply(train_state.params, obs_dict[agent_id], env_idx=env_idx)
