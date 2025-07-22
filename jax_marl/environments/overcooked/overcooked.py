@@ -398,12 +398,16 @@ class Overcooked(MultiAgentEnv):
             fwd_goal = jax.vmap(goal_collision, in_axes=(None, 0))(fwd_position, goal_pos)
             # fwd_goal = jnp.logical_and(fwd_position[0] == goal_pos[0], fwd_position[1] == goal_pos[1])
             fwd_goal = jnp.any(fwd_goal)
-            return fwd_wall, fwd_goal
+            # Ensure we return scalars
+            return jnp.asarray(fwd_wall), jnp.asarray(fwd_goal)
 
         fwd_pos_has_wall, fwd_pos_has_goal = jax.vmap(_wall_or_goal, in_axes=(0, None, None))(fwd_pos, state.wall_map,
                                                                                               state.goal_pos)
 
-        fwd_pos_blocked = jnp.logical_or(fwd_pos_has_wall, fwd_pos_has_goal).reshape((self.num_agents, 1))
+        fwd_pos_blocked = jnp.logical_or(fwd_pos_has_wall, fwd_pos_has_goal)
+        # Ensure we have the right shape - flatten and take first num_agents elements
+        fwd_pos_blocked = fwd_pos_blocked.flatten()[:self.num_agents]
+        fwd_pos_blocked = fwd_pos_blocked.reshape((self.num_agents, 1))
 
         bounced = jnp.logical_or(fwd_pos_blocked, ~is_move_action_transposed)
 

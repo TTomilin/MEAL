@@ -79,17 +79,19 @@ class Overcooked(MultiAgentEnv):
     ):
         super().__init__(num_agents=num_agents)
 
+        # Set layout first before accessing its properties
+        self.layout = layout if layout is not None else FrozenDict(layouts[layout_name])
+        self.layout_name = layout_name
+
         # self.obs_shape = (agent_view_size, agent_view_size, 3)
         # Observations given by 26 channels, most of which are boolean masks
-        self.height = layout["height"]
-        self.width = layout["width"]
+        self.height = self.layout["height"]
+        self.width = self.layout["width"]
         self.env_layers = 16  # Number of environment layers (static, dynamic, pot, soup, etc.)
         self.obs_channels = 18 + 4 * num_agents  # 26 when n = 2
         self.obs_shape = (self.width, self.height, self.obs_channels)
 
         self.agent_view_size = 5  # Hard coded. Only affects map padding -- not observations.
-        self.layout = layout if layout is not None else FrozenDict(layouts["cramped_room"])
-        self.layout_name = layout_name
         self.agents = [f"agent_{i}" for i in range(num_agents)]
         self.start_idx = None if start_idx is None else jnp.array(start_idx, jnp.uint32)
 
@@ -365,7 +367,7 @@ class Overcooked(MultiAgentEnv):
 
         # convert incoming dict → jnp.array([a0,a1,…])
         if isinstance(actions, dict):
-            act_arr = jnp.array([actions[a] for a in self.agents], dtype=jnp.uint8)
+            act_arr = jnp.array([actions[a].flatten()[0] for a in self.agents], dtype=jnp.uint8)
         else:
             act_arr = actions
 
