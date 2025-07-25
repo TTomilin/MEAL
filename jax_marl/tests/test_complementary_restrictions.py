@@ -9,12 +9,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 import imageio.v3 as iio
 import jax
 import jax.numpy as jnp
-import numpy as np
 import pygame
 from flax.core import FrozenDict
 
 from jax_marl.environments.overcooked.layouts import cramped_room
-from jax_marl.environments.overcooked.overcooked import Overcooked, DELIVERY_REWARD, OBJECT_TO_INDEX
+from jax_marl.environments.overcooked.overcooked import Overcooked, OBJECT_TO_INDEX
 from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
 
 
@@ -40,7 +39,7 @@ def test_complementary_restrictions():
             "description": "Agent 0 cannot pick onions, Agent 1 cannot pick plates"
         },
         {
-            "name": "agent_0_no_plates", 
+            "name": "agent_0_no_plates",
             "restrictions": {
                 "agent_0_cannot_pick_onions": False,
                 "agent_0_cannot_pick_plates": True,
@@ -65,9 +64,9 @@ def test_restriction_scenario(scenario):
 
     # Set up environment with restrictions
     env = Overcooked(
-        layout=FrozenDict(cramped_room), 
-        num_agents=2, 
-        random_reset=False, 
+        layout=FrozenDict(cramped_room),
+        num_agents=2,
+        random_reset=False,
         max_steps=400,
         agent_restrictions=scenario["restrictions"]
     )
@@ -115,17 +114,17 @@ def test_restriction_scenario(scenario):
     # Pattern: move left to onion pile, then interact
     test_actions.extend([
         (A['L'], A['S'], "agent_0_moves_to_onion"),  # Move to onion pile
-        (A['I'], A['S'], "agent_0_tries_onion"),    # Try to pick up onion
+        (A['I'], A['S'], "agent_0_tries_onion"),  # Try to pick up onion
     ])
 
     # Agent 0 tries to pick up plate (may be restricted)
     # Pattern: move to plate pile (down, left, down), then interact  
     test_actions.extend([
         (A['R'], A['S'], "agent_0_moves_back_from_onion"),  # Move back from onion
-        (A['D'], A['S'], "agent_0_moves_down_1"),           # Move down
-        (A['L'], A['S'], "agent_0_moves_left_to_plate"),    # Move left toward plate pile
-        (A['D'], A['S'], "agent_0_moves_down_2"),           # Move down to plate pile
-        (A['I'], A['S'], "agent_0_tries_plate"),            # Try to pick up plate
+        (A['D'], A['S'], "agent_0_moves_down_1"),  # Move down
+        (A['L'], A['S'], "agent_0_moves_left_to_plate"),  # Move left toward plate pile
+        (A['D'], A['S'], "agent_0_moves_down_2"),  # Move down to plate pile
+        (A['I'], A['S'], "agent_0_tries_plate"),  # Try to pick up plate
     ])
 
     # Reset agent 0 position and test agent 1
@@ -138,18 +137,18 @@ def test_restriction_scenario(scenario):
     # Agent 1 tries to pick up onion (may be restricted)
     # Agent 1 starts at (1,3) and closest onion pile is at (1,4)
     test_actions.extend([
-        (A['S'], A['R'], "agent_1_moves_right_to_onion"),   # Agent 1 moves right (3->4)
-        (A['S'], A['I'], "agent_1_tries_onion"),            # Agent 1 tries to pick up onion
+        (A['S'], A['R'], "agent_1_moves_right_to_onion"),  # Agent 1 moves right (3->4)
+        (A['S'], A['I'], "agent_1_tries_onion"),  # Agent 1 tries to pick up onion
     ])
 
     # Agent 1 tries to pick up plate (may be restricted)
     # Agent 1 needs to move from (1,4) to (2,1) to be adjacent to plate pile at (3,1)
     test_actions.extend([
-        (A['S'], A['L'], "agent_1_moves_left_1"),           # Move left (4->3)
-        (A['S'], A['L'], "agent_1_moves_left_2"),           # Move left (3->2)
-        (A['S'], A['L'], "agent_1_moves_left_3"),           # Move left (2->1)
-        (A['S'], A['D'], "agent_1_moves_down_1"),           # Move down (1->2)
-        (A['S'], A['I'], "agent_1_tries_plate"),            # Try to pick up plate (facing down to plate pile)
+        (A['S'], A['L'], "agent_1_moves_left_1"),  # Move left (4->3)
+        (A['S'], A['L'], "agent_1_moves_left_2"),  # Move left (3->2)
+        (A['S'], A['L'], "agent_1_moves_left_3"),  # Move left (2->1)
+        (A['S'], A['D'], "agent_1_moves_down_1"),  # Move down (1->2)
+        (A['S'], A['I'], "agent_1_tries_plate"),  # Try to pick up plate (facing down to plate pile)
     ])
 
     # Execute test actions
@@ -175,7 +174,8 @@ def test_restriction_scenario(scenario):
             print(f"    Debug step {i} ({description}):")
             print(f"      Agent 0 pos: {state.agent_pos[0]}, inv: {curr_agent_0_inv} (prev: {prev_agent_0_inv})")
             print(f"      Agent 1 pos: {state.agent_pos[1]}, inv: {curr_agent_1_inv} (prev: {prev_agent_1_inv})")
-            print(f"      Inventory full? Agent 0: {curr_agent_0_inv != OBJECT_TO_INDEX['empty']}, Agent 1: {curr_agent_1_inv != OBJECT_TO_INDEX['empty']}")
+            print(
+                f"      Inventory full? Agent 0: {curr_agent_0_inv != OBJECT_TO_INDEX['empty']}, Agent 1: {curr_agent_1_inv != OBJECT_TO_INDEX['empty']}")
 
         # Track agent 0 onion attempts/successes
         if "agent_0_tries_onion" in description:

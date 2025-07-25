@@ -1,5 +1,5 @@
 from jax_marl.environments.overcooked.layouts import evaluate_grid
-from jax_marl.environments.overcooked import overcooked_layouts
+
 
 def test_grid_not_enough_elements():
     grid = """
@@ -11,6 +11,7 @@ def test_grid_not_enough_elements():
     WWWWWWW
     """
     assert evaluate_grid(grid) == False
+
 
 def test_grid_unreachable_elements():
     grid = """
@@ -24,6 +25,7 @@ def test_grid_unreachable_elements():
     """
     assert evaluate_grid(grid) == False
 
+
 def test_grid_not_enclosed():
     grid = """
     WWWWWWW
@@ -33,6 +35,7 @@ def test_grid_not_enclosed():
     W  X  W
     """
     assert evaluate_grid(grid) == False
+
 
 def test_grid_enclosed_elements():
     grid = """
@@ -45,6 +48,7 @@ def test_grid_enclosed_elements():
     """
     assert evaluate_grid(grid) == False
 
+
 def test_grid_no_shared_wall():
     grid = """
     WWWWWWWWWWWWWWW
@@ -55,6 +59,7 @@ def test_grid_no_shared_wall():
     WWWWWWWWWWWWWWW
     """
     assert evaluate_grid(grid) == False
+
 
 def test_valid_grid():
     grid = """

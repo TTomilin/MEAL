@@ -56,7 +56,7 @@ def test_scenario_2_shared_onion_contribution():
 
     # Set up GIF recording
     frames = []
-    viz = OvercookedVisualizer(pot_full_status = 5, pot_empty_status = 8)
+    viz = OvercookedVisualizer(pot_full_status=5, pot_empty_status=8)
 
     def add_frame(st):
         # Use the visualizer's render method to get the frame
