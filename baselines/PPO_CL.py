@@ -23,6 +23,7 @@ from architectures.mlp import ActorCritic as MLPActorCritic
 from architectures.cnn import ActorCritic as CNNActorCritic
 from baselines.utils import *
 from cl_methods.EWC import EWC
+from jax_marl.environments.difficulty_config import apply_difficulty_to_config
 
 import wandb
 from functools import partial
@@ -163,18 +164,7 @@ def main():
 
     # Set height_min, height_max, width_min, width_max, and wall_density based on difficulty
     if config.difficulty:
-        if config.difficulty.lower() == "easy":
-            config.height_min = config.width_min = 6
-            config.height_max = config.width_max = 7
-            config.wall_density = 0.15
-        elif config.difficulty.lower() == "medium" or config.difficulty.lower() == "med":
-            config.height_min = config.width_min = 8
-            config.height_max = config.width_max = 9
-            config.wall_density = 0.25
-        elif config.difficulty.lower() == "hard":
-            config.height_min = config.width_min = 10
-            config.height_max = config.width_max = 11
-            config.wall_density = 0.35
+        apply_difficulty_to_config(config, config.difficulty)
 
     # Set default regularization coefficient based on the CL method if not specified
     if config.reg_coef is None:

@@ -8,6 +8,7 @@ from flax.core.frozen_dict import FrozenDict
 from jax_marl.environments.overcooked import hard_layouts, medium_layouts, easy_layouts, overcooked_layouts, \
     single_layouts
 from jax_marl.environments.overcooked.env_generator import generate_random_layout
+from jax_marl.environments.difficulty_config import DIFFICULTY_PARAMS
 
 
 def _parse_layout_string(layout_str: str) -> FrozenDict:
@@ -195,6 +196,7 @@ def generate_sequence(
 
     elif strategy == "curriculum":
         # Split tasks equally across difficulty levels: easy -> medium -> hard
+        # Use procedural generation with difficulty-specific parameters
         tasks_per_difficulty = sequence_length // 3
         remaining_tasks = sequence_length % 3
 
@@ -203,34 +205,34 @@ def generate_sequence(
         medium_count = tasks_per_difficulty + (1 if remaining_tasks > 1 else 0)
         hard_count = tasks_per_difficulty
 
-        # Get layout names for each difficulty
-        easy_names = list(easy_layouts.keys())
-        medium_names = list(medium_layouts.keys())
-        hard_names = list(hard_layouts.keys())
+        # Use centralized difficulty parameters for procedural generation
+        difficulty_params = DIFFICULTY_PARAMS
 
-        # Generate sequence: easy first, then medium, then hard
-        selected_layouts = []
+        base = seed if seed is not None else random.randrange(1 << 30)
+        task_counter = 0
 
-        # Easy tasks
-        for i in range(easy_count):
-            layout_name = easy_names[i % len(easy_names)]
-            selected_layouts.append((layout_name, "easy"))
+        # Helper function to generate tasks for a specific difficulty level
+        def generate_difficulty_tasks(difficulty_name: str, count: int, task_counter: int) -> int:
+            """Generate tasks for a specific difficulty level and return updated task_counter."""
+            params = difficulty_params[difficulty_name]
+            for i in range(count):
+                _, layout = generate_random_layout(
+                    num_agents=num_agents,
+                    height_rng=params["height_rng"],
+                    width_rng=params["width_rng"],
+                    wall_density=params["wall_density"],
+                    seed=base + task_counter
+                )
+                env_kwargs.append({"layout": layout})
+                names.append(f"{difficulty_name}_gen_{i}")
+                print(f"Curriculum task {task_counter}: {difficulty_name} - generated layout {i}")
+                task_counter += 1
+            return task_counter
 
-        # Medium tasks
-        for i in range(medium_count):
-            layout_name = medium_names[i % len(medium_names)]
-            selected_layouts.append((layout_name, "medium"))
-
-        # Hard tasks
-        for i in range(hard_count):
-            layout_name = hard_names[i % len(hard_names)]
-            selected_layouts.append((layout_name, "hard"))
-
-        # Create env_kwargs and names
-        for i, (layout_name, difficulty) in enumerate(selected_layouts):
-            env_kwargs.append({"layout": overcooked_layouts[layout_name]})
-            names.append(f"{difficulty}_{layout_name}")
-            print(f"Curriculum task {i}: {difficulty} - {layout_name}")
+        # Generate tasks for each difficulty level in order
+        task_counter = generate_difficulty_tasks("easy", easy_count, task_counter)
+        task_counter = generate_difficulty_tasks("medium", medium_count, task_counter)
+        task_counter = generate_difficulty_tasks("hard", hard_count, task_counter)
 
     else:
         raise NotImplementedError(f"Unknown strategy '{strategy}'")
