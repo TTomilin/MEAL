@@ -126,9 +126,10 @@ def generate_sequence(
 
     strategies
     ----------
-    random   – sample from fixed layouts (no immediate repeats if len>pool)
-    ordered  – deterministic slice through fixed layouts
-    generate – create brand-new solvable kitchens on the fly
+    random     – sample from fixed layouts (no immediate repeats if len>pool)
+    ordered    – deterministic slice through fixed layouts
+    generate   – create brand-new solvable kitchens on the fly
+    curriculum – split tasks equally across difficulty levels (easy -> medium -> hard)
     """
     if seed is not None:
         random.seed(seed)
@@ -191,6 +192,45 @@ def generate_sequence(
             env_kwargs.append({"layout": layout})  # already a FrozenDict
             names.append(f"gen_{i}")
             print(f"Generated layout {i}: {names[-1]}")
+
+    elif strategy == "curriculum":
+        # Split tasks equally across difficulty levels: easy -> medium -> hard
+        tasks_per_difficulty = sequence_length // 3
+        remaining_tasks = sequence_length % 3
+
+        # Calculate how many tasks for each difficulty
+        easy_count = tasks_per_difficulty + (1 if remaining_tasks > 0 else 0)
+        medium_count = tasks_per_difficulty + (1 if remaining_tasks > 1 else 0)
+        hard_count = tasks_per_difficulty
+
+        # Get layout names for each difficulty
+        easy_names = list(easy_layouts.keys())
+        medium_names = list(medium_layouts.keys())
+        hard_names = list(hard_layouts.keys())
+
+        # Generate sequence: easy first, then medium, then hard
+        selected_layouts = []
+
+        # Easy tasks
+        for i in range(easy_count):
+            layout_name = easy_names[i % len(easy_names)]
+            selected_layouts.append((layout_name, "easy"))
+
+        # Medium tasks
+        for i in range(medium_count):
+            layout_name = medium_names[i % len(medium_names)]
+            selected_layouts.append((layout_name, "medium"))
+
+        # Hard tasks
+        for i in range(hard_count):
+            layout_name = hard_names[i % len(hard_names)]
+            selected_layouts.append((layout_name, "hard"))
+
+        # Create env_kwargs and names
+        for i, (layout_name, difficulty) in enumerate(selected_layouts):
+            env_kwargs.append({"layout": overcooked_layouts[layout_name]})
+            names.append(f"{difficulty}_{layout_name}")
+            print(f"Curriculum task {i}: {difficulty} - {layout_name}")
 
     else:
         raise NotImplementedError(f"Unknown strategy '{strategy}'")
