@@ -113,7 +113,7 @@ class Config:
     wall_density: float = 0.15  # fraction of internal tiles that are untraversable
 
     # Agent restriction parameters
-    complementary_restrictions: bool = False  # Enable complementary restrictions (one agent can't pick onions, other can't pick plates)
+    complementary_restrictions: bool = False  # One agent can't pick up onions, other can't pick up plates
 
     # ═══════════════════════════════════════════════════════════════════════════
     # EVALUATION PARAMETERS
