@@ -1,34 +1,32 @@
+import json
 import os
-import copy
-import jax
+from pathlib import Path
+
+from cl_methods.AGEM import AGEM
+from cl_methods.FT import FT
+from cl_methods.L2 import L2
+from cl_methods.MAS import MAS
+
+os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
 import jax.experimental
-import jax.numpy as jnp
-import numpy as np
 from functools import partial
-from typing import Any, Dict, Optional, Sequence, List
+from typing import Optional, Sequence, List
 from dataclasses import dataclass, field
 import tyro
-from datetime import datetime
-from tensorboardX import SummaryWriter
 
 import flax
-import chex
 import optax
-import flax.linen as nn
-from flax.training.train_state import TrainState
 from flax.core.frozen_dict import freeze, unfreeze
 import flashbax as fbx
-import wandb
-from dotenv import load_dotenv
 
 from jax_marl import make
-from jax_marl.environments.env_selection import generate_sequence
 from jax_marl.wrappers.baselines import (
     LogWrapper,
     CTRolloutManager,
 )
-from jax_marl.environments.overcooked_environment import overcooked_layouts
-from architectures.q_network import QNetwork
+from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
+from architectures.mlp import QNetwork as MLPQNetwork
+from architectures.cnn import QNetwork as CNNQNetwork
 from baselines.utils_vdn import (
     Timestep,
     CustomTrainState,
@@ -37,76 +35,206 @@ from baselines.utils_vdn import (
     eps_greedy_exploration,
     get_greedy_actions
 )
-import uuid
+from baselines.utils import *
+from cl_methods.EWC import EWC
 
 
 @dataclass
 class Config:
-    total_timesteps: float = 5e6
+    # ═══════════════════════════════════════════════════════════════════════════
+    # TRAINING / VDN PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
+    alg_name: str = "vdn"
+    lr: float = 0.00007
+    lr_linear_decay: bool = True
     num_envs: int = 32
     num_steps: int = 1
+    steps_per_task: float = 5e6
     hidden_size: int = 64
     eps_start: float = 1.0
     eps_finish: float = 0.05
     eps_decay: float = 0.1
     max_grad_norm: int = 1
     num_epochs: int = 4
-    lr: float = 0.00007
-    lr_linear_decay: bool = True
-    lambda_: float = 0.5 
     gamma: float = 0.99
     tau: float = 1
     buffer_size: int = 1e5
     buffer_batch_size: int = 128
     learning_starts: int = 1e3
     target_update_interval: int = 10
+    lambda_: float = 0.5
 
-    rew_shaping_horizon: float = 2.5e6
-    test_during_training: bool = True
-    test_interval: float = 0.05 #fraction 
-    test_num_steps: int = 400
-    test_num_envs: int = 256 # number of episodes to average over
-    eval_num_episodes: int = 10
-    seed: int = 30
+    # Reward shaping
+    reward_shaping: bool = True
+    reward_shaping_horizon: float = 2.5e6
 
-    # Sequence settings 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # NETWORK ARCHITECTURE PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
+    activation: str = "relu"
+    use_cnn: bool = True
+    use_layer_norm: bool = True
+    big_network: bool = False
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # CONTINUAL LEARNING PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
+    cl_method: Optional[str] = None
+    reg_coef: Optional[float] = None
+    use_task_id: bool = True
+    use_multihead: bool = True
+    shared_backbone: bool = False
+    normalize_importance: bool = False
+    regularize_critic: bool = False
+    regularize_heads: bool = False
+
+    # Regularization method specific parameters
+    importance_episodes: int = 5
+    importance_steps: int = 500
+
+    # EWC specific parameters
+    ewc_mode: str = "multi"  # "online", "last" or "multi"
+    ewc_decay: float = 0.9  # Only for online EWC
+
+    # AGEM specific parameters
+    agem_memory_size: int = 50000
+    agem_sample_size: int = 128
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # ENVIRONMENT PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
+    env_name: str = "overcooked"
     seq_length: int = 2
+    repeat_sequence: int = 1
     strategy: str = "random"
     layouts: Optional[Sequence[str]] = field(default_factory=lambda: [])
     env_kwargs: Optional[Sequence[dict]] = None
-    layout_name: Optional[Sequence[str]] = None
+    difficulty: Optional[str] = None
+    single_task_idx: Optional[int] = None
+    layout_file: Optional[str] = None
 
-    # Wandb settings
+    # Random layout generator parameters
+    height_min: int = 6  # minimum layout height
+    height_max: int = 7  # maximum layout height
+    width_min: int = 6  # minimum layout width
+    width_max: int = 7  # maximum layout width
+    wall_density: float = 0.15  # fraction of internal tiles that are untraversable
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # EVALUATION PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
+    evaluation: bool = True
+    eval_forward_transfer: bool = False
+    test_during_training: bool = True
+    test_interval: float = 0.05  # fraction
+    test_num_steps: int = 400
+    test_num_envs: int = 256  # number of episodes to average over
+    eval_num_episodes: int = 10
+    record_gif: bool = True
+    gif_len: int = 300
+    log_interval: int = 75
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # LOGGING PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
     wandb_mode: str = "online"
     entity: Optional[str] = ""
-    project: str = "COOX"
+    project: str = "MEAL"
     tags: List[str] = field(default_factory=list)
-    wandb_log_all_seeds: bool = False
-    env_name: str = "overcooked"
-    alg_name: str = "vdn"
-    network_name: str = "cnn"
-    cl_method_name: str = "none"
-    group: str = "none"
 
-    # To be computed during runtime
+    # ═══════════════════════════════════════════════════════════════════════════
+    # EXPERIMENT PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
+    seed: int = 30
+    num_seeds: int = 1
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # RUNTIME COMPUTED PARAMETERS
+    # ═══════════════════════════════════════════════════════════════════════════
+    num_actors: int = 0
     num_updates: int = 0
+    minibatch_size: int = 0
+    layout_name: Optional[Sequence[str]] = None
 
 
 ###################################################
 ############### MAIN FUNCTION #####################
 ###################################################
 
-def main(): 
-    # set the device 
+def main():
+    # set the device to the first available GPU
     jax.config.update("jax_platform_name", "gpu")
-    print("device: ", jax.devices())
 
-    # load the config
+    # print the device that is being used
+    print("Device: ", jax.devices())
+
     config = tyro.cli(Config)
 
-    timestamp = datetime.now().strftime("%m-%d_%H-%M")
-    unique_id = uuid.uuid4()
-    run_name = f'{config.alg_name}_seq{config.seq_length}_{config.strategy}_{timestamp}_{unique_id}'
+    if config.single_task_idx is not None:  # single-task baseline
+        config.cl_method = "ft"
+    if config.cl_method is None:
+        raise ValueError(
+            "cl_method is required. Please specify a continual learning method (e.g., ewc, mas, l2, ft, agem).")
+
+    # Set height_min, height_max, width_min, width_max, and wall_density based on difficulty
+    if config.difficulty:
+        if config.difficulty.lower() == "easy":
+            config.height_min = config.width_min = 6
+            config.height_max = config.width_max = 7
+            config.wall_density = 0.15
+        elif config.difficulty.lower() == "medium" or config.difficulty.lower() == "med":
+            config.height_min = config.width_min = 8
+            config.height_max = config.width_max = 9
+            config.wall_density = 0.25
+        elif config.difficulty.lower() == "hard":
+            config.height_min = config.width_min = 10
+            config.height_max = config.width_max = 11
+            config.wall_density = 0.35
+
+    # Set default regularization coefficient based on the CL method if not specified
+    if config.reg_coef is None:
+        if config.cl_method.lower() == "ewc":
+            config.reg_coef = 1e11
+        elif config.cl_method.lower() == "mas":
+            config.reg_coef = 1e9
+        elif config.cl_method.lower() == "l2":
+            config.reg_coef = 1e7
+
+    method_map = dict(ewc=EWC(mode=config.ewc_mode, decay=config.ewc_decay),
+                      mas=MAS(),
+                      l2=L2(),
+                      ft=FT(),
+                      agem=AGEM(memory_size=config.agem_memory_size, sample_size=config.agem_sample_size))
+
+    cl = method_map[config.cl_method.lower()]
+
+    # generate a sequence of tasks
+    config.env_kwargs, layout_names = generate_sequence(
+        sequence_length=config.seq_length,
+        strategy=config.strategy,
+        layout_names=config.layouts,
+        seed=config.seed,
+        height_rng=(config.height_min, config.height_max),
+        width_rng=(config.width_min, config.width_max),
+        wall_density=config.wall_density,
+        layout_file=config.layout_file,
+    )
+
+    # ── optional single-task baseline ─────────────────────────────────────────
+    if config.single_task_idx is not None:
+        idx = config.single_task_idx
+        config.env_kwargs = [config.env_kwargs[idx]]
+        layout_names = [layout_names[idx]]
+        config.seq_length = 1
+
+    # repeat the base sequence `repeat_sequence` times
+    config.env_kwargs = config.env_kwargs * config.repeat_sequence
+    layout_names = layout_names * config.repeat_sequence
+    config.layout_name = layout_names
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
+    network = "cnn" if config.use_cnn else "mlp"
+    run_name = f'{config.alg_name}_{config.cl_method}_{network}_seq{config.seq_length}_{config.strategy}_seed_{config.seed}_{timestamp}'
     exp_dir = os.path.join("runs", run_name)
 
     # Initialize WandB
@@ -114,17 +242,18 @@ def main():
     wandb_tags = config.tags if config.tags is not None else []
     wandb.login(key=os.environ.get("WANDB_API_KEY"))
     wandb.init(
-        project=config.project, 
+        project=config.project,
         config=config,
         sync_tensorboard=True,
         mode=config.wandb_mode,
-        name=run_name,
         tags=wandb_tags,
+        group=config.cl_method.upper(),
+        name=run_name,
+        id=run_name,
     )
 
     # Set up Tensorboard
     writer = SummaryWriter(exp_dir)
-
     # add the hyperparameters to the tensorboard
     rows = []
     for key, value in vars(config).items():
@@ -144,21 +273,21 @@ def main():
         '''
         envs = []
         for env_args in config.env_kwargs:
-                # Create the environment
-                env = make(config.env_name, **env_args)
-                envs.append(env)
+            # Create the environment
+            env = make(config.env_name, **env_args)
+            envs.append(env)
 
         # find the environment with the largest observation space
         max_width, max_height = 0, 0
         for env in envs:
             max_width = max(max_width, env.layout["width"])
             max_height = max(max_height, env.layout["height"])
-        
+
         # pad the observation space of all environments to be the same size by adding extra walls to the outside
         padded_envs = []
         for env in envs:
             # unfreeze the environment so that we can apply padding
-            env = unfreeze(env.layout)  
+            env = unfreeze(env.layout)
 
             # calculate the padding needed
             width_diff = max_width - env["width"]
@@ -185,17 +314,17 @@ def main():
                     # Compute the row and column of the index
                     row = idx // width
                     col = idx % width
-                    
+
                     # Shift the row and column by the padding
                     new_row = row + top
                     new_col = col + left
-                    
+
                     # Compute the new index
                     new_idx = new_row * (width + left + right) + new_col
                     adjusted_indices.append(new_idx)
-                
+
                 return jnp.array(adjusted_indices)
-            
+
             # adjust the indices of the observation space to account for the new walls
             env["wall_idx"] = adjust_indices(env["wall_idx"])
             env["agent_idx"] = adjust_indices(env["agent_idx"])
@@ -206,7 +335,7 @@ def main():
 
             # pad the observation space with walls
             padded_wall_idx = list(env["wall_idx"])  # Existing walls
-            
+
             # Top and bottom padding
             for y in range(top):
                 for x in range(max_width):
@@ -230,7 +359,7 @@ def main():
             env["height"] = max_height
             env["width"] = max_width
 
-            padded_envs.append(freeze(env)) # Freeze the environment to prevent further modifications
+            padded_envs.append(freeze(env))  # Freeze the environment to prevent further modifications
 
         return padded_envs
 
@@ -242,6 +371,7 @@ def main():
         @param train_state: the current training state
         returns the metrics: the average returns of the evaluated episodes
         '''
+
         def evaluate_on_environment(test_env, rng, train_state):
             '''
             Evaluates the current model on a single environment
@@ -249,6 +379,7 @@ def main():
             @param train_state: the current training state
             returns the metrics: the average returns of the evaluated episodes
             '''
+
             def evaluation_step(step_state, unused):
                 last_obs, env_state, rng = step_state
                 rng, rng_a, rng_s = jax.random.split(rng, 3)
@@ -274,12 +405,12 @@ def main():
                 config.test_num_steps,
             )
             metrics = jnp.nanmean(
-                    jnp.where(
-                        infos["returned_episode"],
-                        infos["returned_episode_returns"],
-                        jnp.nan,
-                    )
+                jnp.where(
+                    infos["returned_episode"],
+                    infos["returned_episode_returns"],
+                    jnp.nan,
                 )
+            )
             return metrics
 
         evaluation_returns = []
@@ -288,7 +419,7 @@ def main():
             all_returns = jax.vmap(lambda k: evaluate_on_environment(env, k, train_state))(
                 jax.random.split(rng, config.eval_num_episodes)
             )
-            
+
             mean_returns = jnp.mean(all_returns)
             evaluation_returns.append(mean_returns)
 
@@ -296,9 +427,9 @@ def main():
 
     # generate the sequence of environments
     config.env_kwargs, config.layout_name = generate_sequence(
-        sequence_length=config.seq_length, 
-        strategy=config.strategy, 
-        layout_names=config.layouts, 
+        sequence_length=config.seq_length,
+        strategy=config.strategy,
+        layout_names=config.layouts,
         seed=config.seed
     )
 
@@ -317,10 +448,9 @@ def main():
         )
         train_envs.append(train_env)
         test_envs.append(test_env)
-    
-        
+
     config.num_updates = (
-        config.total_timesteps // config.num_steps // config.num_envs
+            config.steps_per_task // config.num_steps // config.num_envs
     )
 
     eps_scheduler = optax.linear_schedule(
@@ -336,10 +466,18 @@ def main():
     # Initialize the network
     rng = jax.random.PRNGKey(config.seed)
     init_env = train_envs[0]
-    network = QNetwork(
-        action_dim=init_env.max_action_space,
-        hidden_size=config.hidden_size,
-    )
+
+    # Select network architecture based on config
+    if config.use_cnn:
+        network = CNNQNetwork(
+            action_dim=init_env.max_action_space,
+            hidden_size=config.hidden_size,
+        )
+    else:
+        network = MLPQNetwork(
+            action_dim=init_env.max_action_space,
+            hidden_size=config.hidden_size,
+        )
 
     rng, agent_rng = jax.random.split(rng)
 
@@ -365,6 +503,9 @@ def main():
         target_network_params=init_network_params,
         tx=tx,
     )
+
+    # Initialize continual learning state
+    cl_state = cl.init_state(train_state.params)
 
     # Create the replay buffer
     buffer = fbx.make_flat_buffer(
@@ -449,7 +590,7 @@ def main():
                 # Compute Q-values for all agents
                 q_vals = jax.vmap(network.apply, in_axes=(None, 0))(
                     train_state.params,
-                    batchify(last_obs, env.agents), 
+                    batchify(last_obs, env.agents),
                 )  # (num_agents, num_envs, num_actions)
 
                 # retrieve the valid actions
@@ -498,7 +639,7 @@ def main():
             # update the steps count of the train state
             train_state = train_state.replace(
                 timesteps=train_state.timesteps
-                + config.num_steps * config.num_envs
+                          + config.num_steps * config.num_envs
             )
 
             # prepare the timesteps for the buffer
@@ -514,7 +655,8 @@ def main():
 
                 train_state, rng = carry
                 rng, _rng = jax.random.split(rng)
-                minibatch = buffer.sample(buffer_state, _rng).experience # collects a minibatch of size buffer_batch_size
+                minibatch = buffer.sample(buffer_state,
+                                          _rng).experience  # collects a minibatch of size buffer_batch_size
 
                 q_next_target = jax.vmap(network.apply, in_axes=(None, 0))(
                     train_state.target_network_params, batchify(minibatch.second.obs, env.agents)
@@ -522,7 +664,7 @@ def main():
                 q_next_target = jnp.max(q_next_target, axis=-1)  # (batch_size,)
 
                 vdn_target = minibatch.first.rewards["__all__"] + (
-                    1 - minibatch.first.dones["__all__"]
+                        1 - minibatch.first.dones["__all__"]
                 ) * config.gamma * jnp.sum(
                     q_next_target, axis=0
                 )  # sum over agents
@@ -563,9 +705,9 @@ def main():
             # Define learning and no-op functions
             def perform_learning(train_state, rng):
                 return jax.lax.scan(
-                    f=_learn_phase, 
-                    init=(train_state, rng), 
-                    xs=None, 
+                    f=_learn_phase,
+                    init=(train_state, rng),
+                    xs=None,
                     length=config.num_epochs
                 )
 
@@ -595,7 +737,7 @@ def main():
                 operand=train_state,
 
             )
-            
+
             def compute_action_gap(q_vals):
                 '''
                 Computes the action gap
@@ -629,7 +771,7 @@ def main():
                 returns the metrics
                 '''
                 rng, eval_rng = jax.random.split(rng)
-                
+
                 def log_metrics(metrics, update_steps, env_counter):
                     # evaluate the model
                     test_metrics = evaluate_model(eval_rng, train_state)
@@ -642,17 +784,17 @@ def main():
                         real_step = (int(env_counter) - 1) * config.num_updates + int(update_steps)
                         for k, v in metrics.items():
                             writer.add_scalar(k, v, real_step)
-                    
+
                     jax.experimental.io_callback(callback, None, (metrics, update_steps, env_counter))
                     return None
-                        
+
                 def do_not_log(metrics, update_steps, env_counter):
                     return None
 
                 # conditionally evaluate and log the metrics
-                jax.lax.cond((train_state.n_updates % int(config.num_updates * config.test_interval)) == 0, 
-                             log_metrics, 
-                             do_not_log, 
+                jax.lax.cond((train_state.n_updates % int(config.num_updates * config.test_interval)) == 0,
+                             log_metrics,
+                             do_not_log,
                              metrics, update_steps, env_counter)
 
             # Evaluate the model and log metrics    
@@ -661,8 +803,7 @@ def main():
             runner_state = (train_state, buffer_state, expl_state, test_metrics, rng)
 
             return runner_state, None
-        
-        
+
         rng, eval_rng = jax.random.split(rng)
         test_metrics = evaluate_model(eval_rng, train_state)
 
@@ -675,65 +816,188 @@ def main():
         runner_state = (train_state, buffer_state, expl_state, test_metrics, _rng)
 
         runner_state, metrics = jax.lax.scan(
-            f=_update_step, 
-            init=runner_state, 
-            xs=None, 
+            f=_update_step,
+            init=runner_state,
+            xs=None,
             length=config.num_updates
         )
 
         return runner_state, metrics
-    
-    def loop_over_envs(rng, train_state, train_envs, test_envs, buffer_state):
+
+    def loop_over_envs(rng, train_state, cl_state, envs):
         '''
         Loops over the environments and trains the network
         @param rng: random number generator
         @param train_state: the current state of the training
-        @param train_envs: the training environments
-        @param test_envs: the test environments
+        @param cl_state: the continual learning state
+        @param envs: the environments
         returns the runner state and the metrics
         '''
         # split the random number generator for training on the environments
-        rng, *env_rngs = jax.random.split(rng, len(train_envs)+1)
+        rng, *env_rngs = jax.random.split(rng, len(envs) + 1)
 
-        # counter for the environment 
-        env_counter = 1
+        visualizer = OvercookedVisualizer(num_agents=init_env.num_agents)
 
-        for env_rng, train_env, test_env in zip(env_rngs, train_envs, test_envs):
-            runner_state, metrics = train_on_environment(env_rng, train_state, train_env, env_counter)
+        evaluation_matrix = None
+        if config.eval_forward_transfer:
+            evaluation_matrix = jnp.zeros(((len(envs) + 1), len(envs)))
+            rng, eval_rng = jax.random.split(rng)
+            evaluations = evaluate_model(eval_rng, train_state)
+            evaluation_matrix = evaluation_matrix.at[0, :].set(evaluations)
 
-            # update the train state and buffer state
+        for i, (rng, env) in enumerate(zip(env_rngs, envs)):
+            # --- Train on environment i using the *current* cl_state ---
+            runner_state, metrics = train_on_environment(rng, train_state, env, i + 1)
             train_state = runner_state[0]
 
+            importance = cl.compute_importance(train_state.params, env, network, i, rng, config.use_cnn,
+                                               config.importance_episodes, config.importance_steps,
+                                               config.normalize_importance)
+
+            cl_state = cl.update_state(cl_state, train_state.params, importance)
+
+            if config.record_gif:
+                # Generate & log a GIF after finishing task i
+                env_name = f"{i}__{env.layout_name}"
+                states = record_gif_of_episode(config, train_state, env, network, env_idx=i, max_steps=config.gif_len)
+                visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir)
+
+            if config.eval_forward_transfer:
+                # Evaluate at the end of training to get the average performance of the task right after training
+                evaluations = evaluate_model(train_state, rng)
+                evaluation_matrix = evaluation_matrix.at[i, :].set(evaluations)
+
             # save the model
-            path = f"checkpoints/overcooked/{run_name}/model_env_{env_counter}"
-            save_params(path, train_state)
+            repo_root = Path(__file__).resolve().parent.parent
+            path = f"{repo_root}/checkpoints/overcooked/{config.cl_method}/{run_name}/model_env_{i + 1}"
+            save_params(path, train_state, env_kwargs=env.layout, layout_name=env.layout_name, config=config)
 
-            # update the environment counter
-            env_counter += 1
+            if config.eval_forward_transfer:
+                # calculate the forward transfer and backward transfer
+                show_heatmap_bwt(evaluation_matrix, run_name)
+                show_heatmap_fwt(evaluation_matrix, run_name)
 
-        return runner_state
+            if config.single_task_idx is not None:
+                break  # stop after the first env
 
-    def save_params(path, train_state):
+        return (train_state, cl_state)
+
+    def save_params(path, train_state, env_kwargs=None, layout_name=None, config=None):
         '''
-        Saves the parameters of the network
+        Saves the parameters of the network along with environment configuration
         @param path: the path to save the parameters
         @param train_state: the current state of the training
+        @param env_kwargs: the environment kwargs used to create the environment
+        @param layout_name: the name of the layout
+        @param config: the configuration used for training
         returns None
         '''
         os.makedirs(os.path.dirname(path), exist_ok=True)
+
+        # Save model parameters
         with open(path, "wb") as f:
             f.write(
                 flax.serialization.to_bytes(
                     {"params": train_state.params}
                 )
             )
+
+        # Save configuration and layout information
+        if env_kwargs is not None or layout_name is not None or config is not None:
+            # Define a recursive function to convert FrozenDict to regular dict
+            def convert_frozen_dict(obj):
+                if isinstance(obj, flax.core.frozen_dict.FrozenDict):
+                    return {k: convert_frozen_dict(v) for k, v in unfreeze(obj).items()}
+                elif isinstance(obj, dict):
+                    return {k: convert_frozen_dict(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_frozen_dict(item) for item in obj]
+                elif isinstance(obj, jax.Array):
+                    # Convert JAX arrays to native Python types
+                    array_obj = np.array(obj)
+                    # Handle scalar values
+                    if array_obj.size == 1:
+                        return array_obj.item()
+                    # Handle arrays
+                    return array_obj.tolist()
+                else:
+                    return obj
+
+            # Convert env_kwargs to regular dict
+            env_kwargs = convert_frozen_dict(env_kwargs)
+
+            config_data = {
+                "env_kwargs": env_kwargs,
+                "layout_name": layout_name
+            }
+
+            # Add relevant configuration parameters
+            if config is not None:
+                config_dict = {
+                    "use_cnn": config.use_cnn,
+                    "num_tasks": config.seq_length,
+                    "use_multihead": config.use_multihead,
+                    "cl_method": config.cl_method,
+                    "reg_coef": config.reg_coef,
+                    "seed": config.seed,
+                    "alg_name": config.alg_name,
+                }
+                config_data.update(config_dict)
+
+            # Save configuration as JSON
+            config_path = path + "_config.json"
+            with open(config_path, "w") as f:
+                json.dump(config_data, f, indent=2)
+
         print('model saved to', path)
+
+    def record_gif_of_episode(config, train_state, env, network, env_idx=0, max_steps=300):
+        '''
+        Records a GIF of an episode for VDN
+        @param config: the configuration
+        @param train_state: the training state
+        @param env: the environment
+        @param network: the network
+        @param env_idx: the environment index
+        @param max_steps: the maximum number of steps
+        returns the states
+        '''
+        rng = jax.random.PRNGKey(0)
+        rng, env_rng = jax.random.split(rng)
+        obs, state = env.reset(env_rng)
+        done = False
+        step_count = 0
+        states = [state]
+
+        while not done and step_count < max_steps:
+            # Compute Q-values for all agents
+            q_vals = jax.vmap(network.apply, in_axes=(None, 0))(
+                train_state.params,
+                batchify(obs, env.agents),
+            )  # (num_agents, num_envs, num_actions)
+
+            # Get valid actions
+            avail_actions = env.get_valid_actions(state.env_state)
+
+            # Use greedy action selection (no exploration for GIF recording)
+            actions = get_greedy_actions(q_vals, batchify(avail_actions, env.agents))
+            actions = unbatchify(actions, env.agents)
+
+            rng, key_step = jax.random.split(rng)
+            next_obs, next_state, reward, done_info, info = env.step(key_step, state, actions)
+            done = done_info["__all__"]
+
+            obs, state = next_obs, next_state
+            step_count += 1
+            states.append(state)
+
+        return states
 
     # train the network
     rng, train_rng = jax.random.split(rng)
 
-    runner_state = loop_over_envs(train_rng, train_state, train_envs, test_envs, buffer_state)
-        
+    runner_state = loop_over_envs(train_rng, train_state, cl_state, train_envs)
+
 
 if __name__ == "__main__":
     main()
