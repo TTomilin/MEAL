@@ -1,43 +1,21 @@
-import os
 # os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
-from datetime import datetime
-import copy
-import pickle
-import math
-import flax
+from typing import Tuple
+
 import flax.linen as nn
 import jax
 import jax.experimental
 import jax.numpy as jnp
 import numpy as np
-import optax
-from flax.linen.initializers import constant, orthogonal
 from flax.core.frozen_dict import FrozenDict, freeze, unfreeze
-from typing import Sequence, NamedTuple, Any, Optional, List, Tuple
+from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
-import distrax
-from gymnax.wrappers.purerl import LogWrapper, FlattenObservationWrapper
 
-from jax_marl.registration import make
-from jax_marl.wrappers.baselines import LogWrapper
-from jax_marl.environments.overcooked_environment import overcooked_layouts
-from jax_marl.environments.env_selection import generate_sequence
-from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
-
-from omegaconf import OmegaConf
-import matplotlib.pyplot as plt
-import wandb
-from functools import partial
-from dataclasses import dataclass, field
-import tyro
-from tensorboardX import SummaryWriter
-from pathlib import Path
 
 class CBPDense(nn.Module):
     """Dense layer *plus* CBP bookkeeping (utility, age, counter)."""
     features: int
     name: str
-    eta: float = 0.0   # utility decay, off by default
+    eta: float = 0.0  # utility decay, off by default
     kernel_init: callable = orthogonal(np.sqrt(2))
     bias_init: callable = constant(0.0)
     activation: str = "tanh"
@@ -65,17 +43,20 @@ class CBPDense(nn.Module):
         if train:
             # fetch existing variables
             util = self.get_variable("cbp", f"{self.name}_util")
-            age  = self.get_variable("cbp", f"{self.name}_age")
+            age = self.get_variable("cbp", f"{self.name}_age")
 
             # ------------ CBP utility + age update ------------
-            w_abs_sum = jnp.sum(jnp.abs(next_kernel), axis=1)  # (n_units,)  # Flax weights are saved as (in, out). PyTorch is (out, in).
-            abs_neuron_output = jnp.abs(h)  
-            contrib = jnp.mean(abs_neuron_output, axis=0) * w_abs_sum   # contribution =  |h| * Σ|w_out|  Mean over the batch (dim 0 of h)
+            w_abs_sum = jnp.sum(jnp.abs(next_kernel),
+                                axis=1)  # (n_units,)  # Flax weights are saved as (in, out). PyTorch is (out, in).
+            abs_neuron_output = jnp.abs(h)
+            contrib = jnp.mean(abs_neuron_output,
+                               axis=0) * w_abs_sum  # contribution =  |h| * Σ|w_out|  Mean over the batch (dim 0 of h)
             new_util = util * self.eta + (1 - self.eta) * contrib
 
             self.put_variable("cbp", f"{self.name}_util", new_util)
-            self.put_variable("cbp", f"{self.name}_age",  age + 1)
+            self.put_variable("cbp", f"{self.name}_age", age + 1)
         return h
+
 
 def weight_reinit(key, shape):
     """Should be the same weight initializer used at model start (orthogonal(√2))."""
@@ -88,8 +69,8 @@ def cbp_step(
         *,
         rng: jax.random.PRNGKey,
         maturity: int,
-        rho: float,   # replacement rate (0.0 - 1.0)
-    ) -> Tuple[FrozenDict, FrozenDict, jax.random.PRNGKey]:
+        rho: float,  # replacement rate (0.0 - 1.0)
+) -> Tuple[FrozenDict, FrozenDict, jax.random.PRNGKey]:
     """
     Pure JAX function: one CBP maintenance step.
     * increments replacement counter for every layer

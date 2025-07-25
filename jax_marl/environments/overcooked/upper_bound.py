@@ -117,6 +117,6 @@ def batched_max_reward(layouts: Sequence[Dict], episode_len: int, n_agents: int 
 
 # ─── Quick test ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    from jax_marl.environments.overcooked_environment.layouts import overcooked_layouts
+    from jax_marl.environments.overcooked.layouts import overcooked_layouts
 
     print(estimate_max_soup(overcooked_layouts["cramped_room"], 400))

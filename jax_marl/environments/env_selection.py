@@ -118,6 +118,7 @@ def generate_sequence(
         width_rng: Tuple[int, int] = (5, 10),
         wall_density: float = 0.15,
         layout_file: str | None = None,
+        complementary_restrictions: bool = False,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """
     Return a list of `env_kwargs` (what you feed to Overcooked) and
@@ -193,6 +194,19 @@ def generate_sequence(
 
     else:
         raise NotImplementedError(f"Unknown strategy '{strategy}'")
+
+    # Add agent restrictions if enabled
+    if complementary_restrictions:
+        for i, kwargs in enumerate(env_kwargs):
+            # Randomly assign roles for each task: 0 = agent_0 can't pick onions, 1 = agent_0 can't pick plates
+            role_assignment = random.randint(0, 1)
+            kwargs["agent_restrictions"] = {
+                "agent_0_cannot_pick_onions": role_assignment == 0,
+                "agent_0_cannot_pick_plates": role_assignment == 1,
+                "agent_1_cannot_pick_onions": role_assignment == 1,
+                "agent_1_cannot_pick_plates": role_assignment == 0,
+            }
+            print(f"Task {i}: Agent 0 cannot pick {'onions' if role_assignment == 0 else 'plates'}, Agent 1 cannot pick {'plates' if role_assignment == 0 else 'onions'}")
 
     # prefix with index so logs stay ordered
     ordered_names = [f"{i}__{n}" for i, n in enumerate(names)]

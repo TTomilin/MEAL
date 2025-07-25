@@ -39,13 +39,24 @@ class OvercookedVisualizer:
     use_old_rendering : bool
         If True, use the old rendering logic. If False (default), use the new rendering logic
         from the overcooked_ai repository.
+    pot_full_status : int
+        The pot status value when the pot is full and starts cooking (default: 20).
+        Should match the environment's pot_full_status.
+    pot_empty_status : int
+        The pot status value when the pot is empty (default: 23).
+        Should match the environment's pot_empty_status.
     """
     tile_cache: dict[tuple, np.ndarray] = {}
 
-    def __init__(self, num_agents: int = 2, use_old_rendering: bool = False):
+    def __init__(self, num_agents: int = 2, use_old_rendering: bool = False, 
+                 pot_full_status: int = 20, pot_empty_status: int = 23):
         self.window: Window | None = None
         self._num_agents = num_agents
         self.use_old_rendering = use_old_rendering
+
+        # Store configurable pot status values for rendering
+        self.pot_full_status = pot_full_status
+        self.pot_empty_status = pot_empty_status
 
         # Initialize the new state visualizer if using new rendering
         if not self.use_old_rendering:
@@ -113,13 +124,13 @@ class OvercookedVisualizer:
             pot_status = env_state.maze_map[padding + pot_y, padding + pot_x, 2]
 
             # Only create objects for pots that have ingredients or are cooking/ready
-            if pot_status < 23:  # 23 is empty pot
+            if pot_status < self.pot_empty_status:  # Use configurable empty pot status
                 obj_id = f"soup_{pot_x}_{pot_y}"
 
                 # Determine ingredients and status
                 # Convert JAX array to Python integer
                 pot_status_int = int(pot_status)
-                num_onions = min(3, 23 - pot_status_int) if pot_status_int >= 20 else 3
+                num_onions = min(3, self.pot_empty_status - pot_status_int) if pot_status_int >= self.pot_full_status else 3
                 ingredients = ['onion'] * num_onions
 
                 # Create a position tuple for the object
@@ -127,7 +138,7 @@ class OvercookedVisualizer:
 
                 # Create a mock soup object
                 is_ready = (pot_status == 0)  # Pot is ready when status is 0
-                is_cooking = (pot_status < 20 and pot_status > 0)  # Pot is cooking when status is between 1-19
+                is_cooking = (pot_status < self.pot_full_status and pot_status > 0)  # Use configurable full pot status
 
                 # Create a soup object with appropriate attributes
                 soup_obj = type('MockSoup', (), {
@@ -136,7 +147,7 @@ class OvercookedVisualizer:
                     'ingredients': ingredients,
                     'is_ready': is_ready,
                     '_cooking_tick': pot_status if is_cooking else -1,
-                    'cook_time': 20
+                    'cook_time': self.pot_full_status  # Use configurable cook time
                 })
 
                 objects[obj_id] = soup_obj
@@ -285,6 +296,8 @@ class OvercookedVisualizer:
                     highlight_mask=None,
                     agent_dir_idx=np.atleast_1d(state.agent_dir_idx),
                     agent_inv=np.atleast_1d(state.agent_inv),
+                    pot_full_status=self.pot_full_status,
+                    pot_empty_status=self.pot_empty_status,
                 )
                 return frame
 
@@ -371,6 +384,8 @@ class OvercookedVisualizer:
                 highlight_mask=None,
                 agent_dir_idx=agent_dir_idx,
                 agent_inv=agent_inv,
+                pot_full_status=self.pot_full_status,
+                pot_empty_status=self.pot_empty_status,
             )
             # img = np.transpose(img, axes=(1,0,2))
             if k_rot90 > 0:
@@ -494,6 +509,8 @@ class OvercookedVisualizer:
             highlight_mask=highlight_mask if highlight else None,
             agent_dir_idx=np.atleast_1d(env_state.agent_dir_idx),
             agent_inv=np.atleast_1d(env_state.agent_inv),
+            pot_full_status=self.pot_full_status,
+            pot_empty_status=self.pot_empty_status,
         )
         self.window.show_img(img)
 
@@ -501,7 +518,9 @@ class OvercookedVisualizer:
     def _render_obj(
             cls,
             obj,
-            img):
+            img,
+            pot_full_status=20,
+            pot_empty_status=23):
         # Render each kind of object
         obj_type = obj[0]
         color = INDEX_TO_COLOR[obj[1]]
@@ -555,7 +574,7 @@ class OvercookedVisualizer:
             onion_fn = rendering.point_in_circle(0.5, 0.5, 0.13)
             rendering.fill_coords(img, onion_fn, COLORS["orange"])
         elif obj_type == OBJECT_TO_INDEX['pot']:
-            OvercookedVisualizer._render_pot(obj, img)
+            cls._render_pot(obj, img, pot_full_status, pot_empty_status)
         # rendering.fill_coords(img, rendering.point_in_rect(0, 1, 0, 1), COLORS["grey"])
         # pot_fns = [rendering.point_in_rect(0.1, 0.9, 0.3, 0.9),
         # 		   rendering.point_in_rect(0.1, 0.9, 0.20, 0.23),
@@ -568,10 +587,12 @@ class OvercookedVisualizer:
     def _render_pot(
             cls,
             obj,
-            img):
+            img,
+            pot_full_status=20,
+            pot_empty_status=23):
         pot_status = obj[-1]
-        num_onions = np.max([23 - pot_status, 0])
-        is_cooking = np.array((pot_status < 20) * (pot_status > 0))
+        num_onions = np.max([pot_empty_status - pot_status, 0])
+        is_cooking = np.array((pot_status < pot_full_status) * (pot_status > 0))
         is_done = np.array(pot_status == 0)
 
         pot_fn = rendering.point_in_rect(0.1, 0.9, 0.33, 0.9)
@@ -601,7 +622,7 @@ class OvercookedVisualizer:
 
         # Render progress bar
         if is_cooking:
-            progress_fn = rendering.point_in_rect(0.1, 0.9 - (0.9 - 0.1) / 20 * pot_status, 0.83, 0.88)
+            progress_fn = rendering.point_in_rect(0.1, 0.9 - (0.9 - 0.1) / pot_full_status * pot_status, 0.83, 0.88)
             rendering.fill_coords(img, progress_fn, COLORS["green"])
 
     @classmethod
@@ -635,7 +656,9 @@ class OvercookedVisualizer:
             agent_dir_idx=None,
             agent_inv=None,
             tile_size=TILE_PIXELS,
-            subdivs=3
+            subdivs=3,
+            pot_full_status=20,
+            pot_empty_status=23
     ):
         """
         Render a tile and cache the result
@@ -684,7 +707,7 @@ class OvercookedVisualizer:
         rendering.fill_coords(img, rendering.point_in_rect(0, 1, 0, 0.031), (100, 100, 100))
 
         if not no_object:
-            OvercookedVisualizer._render_obj(obj, img)
+            OvercookedVisualizer._render_obj(obj, img, pot_full_status, pot_empty_status)
             # render inventory
             if sub_inv is not None and obj[0] == OBJECT_TO_INDEX['agent']:
                 OvercookedVisualizer._render_inv(sub_inv, img)
@@ -707,7 +730,9 @@ class OvercookedVisualizer:
             tile_size=TILE_PIXELS,
             highlight_mask=None,
             agent_dir_idx=None,
-            agent_inv=None):
+            agent_inv=None,
+            pot_full_status=20,
+            pot_empty_status=23):
         if highlight_mask is None:
             highlight_mask = np.zeros(shape=grid.shape[:2], dtype=bool)
 
@@ -731,6 +756,8 @@ class OvercookedVisualizer:
                     tile_size=tile_size,
                     agent_dir_idx=agent_dir_idx,
                     agent_inv=agent_inv,
+                    pot_full_status=pot_full_status,
+                    pot_empty_status=pot_empty_status,
                 )
 
                 ymin = y * tile_size

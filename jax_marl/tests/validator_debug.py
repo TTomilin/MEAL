@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 # Import original validator
-from jax_marl.environments.overcooked_environment.env_validator import (
+from jax_marl.environments.overcooked.env_validator import (
     evaluate_grid as original_evaluate
 )
 
@@ -24,7 +24,7 @@ import importlib.util
 
 spec = importlib.util.spec_from_file_location(
     "env_validator_fixed",
-    os.path.join(Path(__file__).parent.parent, "environments/overcooked_environment/env_validator_fixed.py")
+    os.path.join(Path(__file__).parent.parent, "environments/overcooked/env_validator_fixed.py")
 )
 validator_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(validator_module)

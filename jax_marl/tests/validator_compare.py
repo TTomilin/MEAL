@@ -14,14 +14,14 @@ import sys
 from pathlib import Path
 from typing import List, Tuple
 
-from jax_marl.environments.overcooked_environment import layout_grid_to_dict
+from jax_marl.environments.overcooked import layout_grid_to_dict
 
 # ==== project imports ========================================================
 # put project root on import path so the jax‑marl package can be resolved when
 # running the script directly from the repo root
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
-from jax_marl.environments.overcooked_environment.env_validator import (
+from jax_marl.environments.overcooked.env_validator import (
     evaluate_grid as original_evaluate,
 )
 
@@ -30,7 +30,7 @@ import importlib.util
 
 spec = importlib.util.spec_from_file_location(
     "env_validator_fixed",
-    os.path.join(Path(__file__).parent.parent, "environments/overcooked_environment/env_validator_fixed.py"),
+    os.path.join(Path(__file__).parent.parent, "environments/overcooked/env_validator_fixed.py"),
 )
 validator_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(validator_module)  # type: ignore[arg-type]

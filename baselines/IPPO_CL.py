@@ -19,7 +19,7 @@ from flax.training.train_state import TrainState
 from jax_marl.registration import make
 from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
 from jax_marl.wrappers.baselines import LogWrapper
-from jax_marl.environments.overcooked_environment.upper_bound import estimate_max_soup
+from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
 from architectures.mlp import ActorCritic as MLPActorCritic
 from architectures.cnn import ActorCritic as CNNActorCritic
 from baselines.utils import *
@@ -55,6 +55,10 @@ class Config:
     # Reward shaping
     reward_shaping: bool = True
     reward_shaping_horizon: float = 2.5e6
+
+    # Reward distribution settings
+    sparse_rewards: bool = False  # Only shared reward for soup delivery
+    individual_rewards: bool = False  # Only respective agent gets reward for their actions
 
     # ═══════════════════════════════════════════════════════════════════════════
     # NETWORK ARCHITECTURE PARAMETERS
@@ -108,6 +112,9 @@ class Config:
     width_max: int = 7  # maximum layout width
     wall_density: float = 0.15  # fraction of internal tiles that are untraversable
 
+    # Agent restriction parameters
+    complementary_restrictions: bool = False  # Enable complementary restrictions (one agent can't pick onions, other can't pick plates)
+
     # ═══════════════════════════════════════════════════════════════════════════
     # EVALUATION PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
@@ -154,6 +161,13 @@ def main():
     print("Device: ", jax.devices())
 
     config = tyro.cli(Config)
+
+    # Validate reward settings
+    if config.sparse_rewards and config.individual_rewards:
+        raise ValueError(
+            "Cannot enable both sparse_rewards and individual_rewards simultaneously. "
+            "Please choose only one reward setting."
+        )
 
     if config.single_task_idx is not None:  # single-task baseline
         config.cl_method = "ft"
@@ -203,6 +217,7 @@ def main():
         width_rng=(config.width_min, config.width_max),
         wall_density=config.wall_density,
         layout_file=config.layout_file,
+        complementary_restrictions=config.complementary_restrictions,
     )
 
     # ── optional single-task baseline ─────────────────────────────────────────
@@ -593,19 +608,32 @@ def main():
                     rng_step, env_state, env_act
                 )
 
-                # REWARD SHAPING IN NEW VERSION
-
-                # add the reward of one of the agents to the info dictionary
-                info["reward"] = reward["agent_0"]
-
                 current_timestep = update_step * config.num_steps * config.num_envs
 
-                # add the shaped reward to the normal reward
-                reward = jax.tree_util.tree_map(lambda x, y:
-                                                x + y * rew_shaping_anneal(current_timestep),
-                                                reward,
-                                                info["shaped_reward"]
-                                                )
+                # Apply different reward settings based on configuration
+                if config.sparse_rewards:
+                    # Sparse rewards: only delivery rewards (no shaped rewards)
+                    # reward already contains individual delivery rewards from environment
+                    pass  
+                elif config.individual_rewards:
+                    # Individual rewards: delivery rewards + individual shaped rewards
+                    # Environment now provides individual delivery rewards directly
+                    reward = jax.tree_util.tree_map(lambda x, y:
+                                                    x + y * rew_shaping_anneal(current_timestep),
+                                                    reward,
+                                                    info["shaped_reward"]
+                                                    )
+                else:
+                    # Default behavior: shared delivery rewards + individual shaped rewards
+                    # Convert individual delivery rewards to shared rewards (both agents get total)
+                    total_delivery_reward = reward["agent_0"] + reward["agent_1"]
+                    shared_delivery_rewards = {"agent_0": total_delivery_reward, "agent_1": total_delivery_reward}
+
+                    reward = jax.tree_util.tree_map(lambda x, y:
+                                                    x + y * rew_shaping_anneal(current_timestep),
+                                                    shared_delivery_rewards,
+                                                    info["shaped_reward"]
+                                                    )
 
                 transition = Transition(
                     batchify(done, env.agents, config.num_actors, not config.use_cnn).squeeze(),

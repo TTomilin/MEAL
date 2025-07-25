@@ -20,14 +20,14 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from jax_marl.environments.overcooked_environment.common import (
+from jax_marl.environments.overcooked.common import (
     FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT,
     OBJECT_TO_INDEX, COLOR_TO_INDEX,
 )
-from jax_marl.environments.overcooked_environment.env_generator import (
+from jax_marl.environments.overcooked.env_generator import (
     place_tiles, remove_unreachable_items,
 )
-from jax_marl.environments.overcooked_environment.env_validator import evaluate_grid
+from jax_marl.environments.overcooked.env_validator import evaluate_grid
 from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
 
 # ──────────────────────────────────────────────────────────────────────────

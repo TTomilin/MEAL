@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image
 
 from jax_marl.environments import Overcooked
-from jax_marl.environments.overcooked_environment.layouts import (
+from jax_marl.environments.overcooked.layouts import (
     hard_layouts,
     medium_layouts,
     easy_layouts,
