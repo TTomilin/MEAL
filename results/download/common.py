@@ -26,6 +26,17 @@ def cli() -> argparse.Namespace:
     p.add_argument("--wandb_tags", nargs="+", default=[], help="Require at least one tag")
     p.add_argument("--include_runs", nargs="+", default=[], help="Include runs by substring")
     p.add_argument("--overwrite", action="store_true", help="Overwrite existing files")
+
+    # Reward settings arguments
+    p.add_argument("--reward_settings", nargs="+", choices=["default", "sparse", "individual"], 
+                   default=[], help="Filter by reward settings (sparse_rewards, individual_rewards)")
+    p.add_argument("--include_reward_experiments", action="store_true", 
+                   help="Include experiments with reward settings (sparse/individual)")
+
+    # Complementary restrictions arguments
+    p.add_argument("--complementary_restrictions", action="store_true", 
+                   help="Filter by complementary restrictions experiments")
+
     return p.parse_args()
 
 
@@ -43,6 +54,27 @@ def want(run: Run, args: argparse.Namespace) -> bool:
     if args.strategy and cfg.get("strategy") != args.strategy: return False
     if args.difficulty and cfg.get("difficulty") != args.difficulty: return False
     if args.wall_density and cfg.get("wall_density") != args.wall_density: return False
+
+    # Filter by reward settings
+    if args.reward_settings:
+        sparse_rewards = cfg.get("sparse_rewards", False)
+        individual_rewards = cfg.get("individual_rewards", False)
+
+        current_setting = "default"
+        if sparse_rewards:
+            current_setting = "sparse"
+        elif individual_rewards:
+            current_setting = "individual"
+
+        if current_setting not in args.reward_settings:
+            return False
+
+    # Filter by complementary restrictions
+    if args.complementary_restrictions:
+        complementary_restrictions = cfg.get("complementary_restrictions", False)
+        if not complementary_restrictions:
+            return False
+
     if 'tags' in cfg:
         tags = set(cfg['tags'])
         if args.wandb_tags and not tags.intersection(args.wandb_tags):
@@ -53,26 +85,28 @@ def want(run: Run, args: argparse.Namespace) -> bool:
 
 
 def experiment_suffix(cfg: dict) -> str:
-    """Return folder name encoding ablation settings."""
-    suffixes = []
+    """Return folder name encoding ablation settings. Returns a single suffix."""
 
-    ##### ----- Temporary hardcoded levels for wall density ----- #####
+    if cfg.get("complementary_restrictions", False):
+        return "complementary_restrictions"
+    if cfg.get("sparse_rewards", False):
+        return "sparse_rewards"
+    if cfg.get("individual_rewards", False):
+        return "individual_rewards"
+    if not cfg.get("use_multihead", True):
+        return "no_multihead"
+    if not cfg.get("use_task_id", True):
+        return "no_task_id"
+    if cfg.get("regularize_critic"):
+        return "reg_critic"
+    if not cfg.get("use_layer_norm", True):
+        return "no_layer_norm"
+    if cfg.get("use_cnn"):
+        return "cnn"
     if cfg.get("difficulty") == 'easy':
         return "level_1"
     if cfg.get("difficulty") == 'medium':
         return "level_2"
     if cfg.get("difficulty") == 'hard':
         return "level_3"
-    ##### ----- Temporary hardcoded levels for wall density ----- #####
-
-    if not cfg.get("use_multihead", True):
-        suffixes.append("no_multihead")
-    if not cfg.get("use_task_id", True):
-        suffixes.append("no_task_id")
-    if cfg.get("regularize_critic"):
-        suffixes.append("reg_critic")
-    if not cfg.get("use_layer_norm", True):
-        suffixes.append("no_layer_norm")
-    if cfg.get("use_cnn"):
-        suffixes.append("cnn")
-    return "-".join(suffixes) if suffixes else "main"
+    return "main"

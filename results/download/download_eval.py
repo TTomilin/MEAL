@@ -8,14 +8,23 @@ Optimized logic:
 3. Skip keys whose output files already exist (unless `--overwrite`).
 4. Write files in
    `data/<algo>/<cl_method>/<experiment>/<strategy>_<seq_len>/seed_<seed>/`.
+
+Enhanced with reward settings support:
+- Filter by reward settings (sparse_rewards, individual_rewards)
+- Store data in appropriate folders with reward setting prefixes
+- Backward compatible with existing experiments
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
 from typing import List
+
+# Add project root to Python path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import numpy as np
 import wandb
@@ -97,8 +106,21 @@ def main() -> None:
         seq_len = cfg.get("seq_length")
         seed = max(cfg.get("seed", 1), 1)
         experiment = experiment_suffix(cfg)
-        if experiment == 'main':
-            continue
+
+        # Get reward setting info for logging
+        sparse_rewards = cfg.get("sparse_rewards", False)
+        individual_rewards = cfg.get("individual_rewards", False)
+        reward_setting = "default"
+        if sparse_rewards:
+            reward_setting = "sparse_rewards"
+        elif individual_rewards:
+            reward_setting = "individual_rewards"
+
+        # Don't skip 'main' experiments if they have reward settings or if explicitly requested
+        if experiment == 'main' and not args.include_reward_experiments:
+            # Only skip if it's truly a default main experiment (no reward settings)
+            if reward_setting == "default":
+                continue
 
         # find eval keys as W&B actually logged them
         eval_keys = discover_eval_keys(run)
@@ -118,6 +140,9 @@ def main() -> None:
 
         out_base = (base_workspace / args.output / algo / cl_method /
                     experiment / exp_path / f"seed_{seed}")
+
+        print(f"[info] Processing {run.name} with setting: {experiment}")
+        print(f"[info] Output path: {out_base}")
 
         # iterate keys, skipping existing files unless overwrite
         for key in discover_eval_keys(run):
