@@ -659,12 +659,12 @@ class Overcooked(MultiAgentEnv):
 
         # Apply agent restrictions if they exist
         agent_key = f"agent_{player_idx}"
-        can_pick_onions = True
-        can_pick_plates = True
+        can_pick_onions = jnp.array(True)
+        can_pick_plates = jnp.array(True)
 
         if self.agent_restrictions:
-            can_pick_onions = not self.agent_restrictions.get(f"{agent_key}_cannot_pick_onions", False)
-            can_pick_plates = not self.agent_restrictions.get(f"{agent_key}_cannot_pick_plates", False)
+            can_pick_onions = jnp.array(not self.agent_restrictions.get(f"{agent_key}_cannot_pick_onions", False))
+            can_pick_plates = jnp.array(not self.agent_restrictions.get(f"{agent_key}_cannot_pick_plates", False))
 
         # Check if the object being picked up is restricted
         picking_up_onion = jnp.logical_or(object_on_table == OBJECT_TO_INDEX["onion_pile"], 
