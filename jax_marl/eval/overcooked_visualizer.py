@@ -239,25 +239,23 @@ class OvercookedVisualizer:
             MockPlayer = namedtuple('MockPlayer', ['position', 'orientation', 'held_object'])
             players = []
 
-            # Find agent positions in the grid
-            agent_positions = []
-            for y in range(grid.shape[0]):
-                for x in range(grid.shape[1]):
-                    if grid[y, x, 0] == OBJECT_TO_INDEX['agent']:
-                        agent_positions.append((x, y))
+            # Use agent positions directly from state instead of scanning grid
+            # This ensures agents maintain their correct IDs and don't switch positions
+            for i in range(self._num_agents):
+                if i < len(env_state.agent_pos):
+                    # Get agent position directly from state (x, y format)
+                    pos = (int(env_state.agent_pos[i, 0]), int(env_state.agent_pos[i, 1]))
 
-            # Create players for each agent position
-            for i, pos in enumerate(agent_positions):
-                # Convert environment direction index to visualization direction tuple
-                # Convert JAX array to int before using as dictionary key
-                dir_idx = int(env_state.agent_dir_idx[i])
-                orientation = ENV_DIR_IDX_TO_VIZ_DIR[dir_idx]
+                    # Convert environment direction index to visualization direction tuple
+                    # Convert JAX array to int before using as dictionary key
+                    dir_idx = int(env_state.agent_dir_idx[i])
+                    orientation = ENV_DIR_IDX_TO_VIZ_DIR[dir_idx]
 
-                # Create a player with appropriate held object based on inventory
-                held_object = None
-                if hasattr(env_state, 'agent_inv') and i < len(env_state.agent_inv):
-                    held_object = self._create_held_object_from_inventory(int(env_state.agent_inv[i]))
-                players.append(MockPlayer(position=pos, orientation=orientation, held_object=held_object))
+                    # Create a player with appropriate held object based on inventory
+                    held_object = None
+                    if hasattr(env_state, 'agent_inv') and i < len(env_state.agent_inv):
+                        held_object = self._create_held_object_from_inventory(int(env_state.agent_inv[i]))
+                    players.append(MockPlayer(position=pos, orientation=orientation, held_object=held_object))
 
             # Create mock objects for pots
             objects = self._create_mock_objects(grid, env_state)
@@ -330,25 +328,23 @@ class OvercookedVisualizer:
                 MockPlayer = namedtuple('MockPlayer', ['position', 'orientation', 'held_object'])
                 players = []
 
-                # Find agent positions in the grid
-                agent_positions = []
-                for y in range(grid.shape[0]):
-                    for x in range(grid.shape[1]):
-                        if grid[y, x, 0] == OBJECT_TO_INDEX['agent']:
-                            agent_positions.append((x, y))
+                # Use agent positions directly from state instead of scanning grid
+                # This ensures agents maintain their correct IDs and don't switch positions
+                for i in range(self._num_agents):
+                    if i < len(env_state.agent_pos):
+                        # Get agent position directly from state (x, y format)
+                        pos = (int(env_state.agent_pos[i, 0]), int(env_state.agent_pos[i, 1]))
 
-                # Create players for each agent position
-                for i, pos in enumerate(agent_positions):
-                    # Convert environment direction index to visualization direction tuple
-                    # Convert JAX array to int before using as dictionary key
-                    dir_idx = int(env_state.agent_dir_idx[i])
-                    orientation = ENV_DIR_IDX_TO_VIZ_DIR[dir_idx]
+                        # Convert environment direction index to visualization direction tuple
+                        # Convert JAX array to int before using as dictionary key
+                        dir_idx = int(env_state.agent_dir_idx[i])
+                        orientation = ENV_DIR_IDX_TO_VIZ_DIR[dir_idx]
 
-                    # Create a player with appropriate held object based on inventory
-                    held_object = None
-                    if hasattr(env_state, 'agent_inv') and i < len(env_state.agent_inv):
-                        held_object = self._create_held_object_from_inventory(int(env_state.agent_inv[i]))
-                    players.append(MockPlayer(position=pos, orientation=orientation, held_object=held_object))
+                        # Create a player with appropriate held object based on inventory
+                        held_object = None
+                        if hasattr(env_state, 'agent_inv') and i < len(env_state.agent_inv):
+                            held_object = self._create_held_object_from_inventory(int(env_state.agent_inv[i]))
+                        players.append(MockPlayer(position=pos, orientation=orientation, held_object=held_object))
 
                 # Create mock objects for pots
                 objects = self._create_mock_objects(grid, env_state)
