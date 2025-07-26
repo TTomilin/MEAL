@@ -460,7 +460,7 @@ def main():
                        help="Experimental variations to compare (e.g., default, sparse, individual, complementary_restrictions)")
     parser.add_argument("--level", type=int, default=None, 
                        help="Difficulty level (1, 2, 3) for default setting")
-    parser.add_argument("--output", default="variation_comparison_plots", 
+    parser.add_argument("--output", default="plots/variation_comparison",
                        help="Output directory for plots")
     parser.add_argument("--title_suffix", default="", 
                        help="Suffix to add to plot titles")
@@ -468,7 +468,7 @@ def main():
     args = parser.parse_args()
 
     # Create output directory
-    output_path = Path(args.output)
+    output_path = Path(__file__).resolve().parent.parent / Path(args.output)
     output_path.mkdir(parents=True, exist_ok=True)
 
     print(f"Loading data for variations: {args.variations}")
