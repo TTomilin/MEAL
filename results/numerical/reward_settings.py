@@ -118,7 +118,7 @@ def compute_metrics_with_reward_settings(
             baseline_data[seed] = baseline_training_files
 
     for method in methods:
-        AP_seeds, F_seeds, FT_seeds = [], [], []
+        AP_seeds, F_seeds, FT_seeds, AUC_seeds = [], [], [], []
 
         base_folder = (
                 data_root
@@ -214,10 +214,23 @@ def compute_metrics_with_reward_settings(
                 f_vals.append(peak - final)
             F_seeds.append(np.mean(f_vals))
 
+            # Average AUC – average area under curve of evaluation curves across all tasks
+            auc_vals = []
+            for i in range(seq_len):
+                curve = env_mat[i, :]
+                # Calculate AUC using trapezoidal rule, normalized by curve length
+                if len(curve) > 1:
+                    auc_task = np.trapz(curve) / len(curve)
+                else:
+                    auc_task = curve[0] if len(curve) == 1 else 0.0
+                auc_vals.append(auc_task)
+            AUC_seeds.append(np.mean(auc_vals))
+
         # Compute mean ± CI for this method
         AP_mean, AP_ci = _mean_ci(AP_seeds)
         F_mean, F_ci = _mean_ci(F_seeds)
         FT_mean, FT_ci = _mean_ci(FT_seeds)
+        AUC_mean, AUC_ci = _mean_ci(AUC_seeds)
 
         rows.append({
             "Method": method,
@@ -228,6 +241,8 @@ def compute_metrics_with_reward_settings(
             "Forgetting_CI": F_ci,
             "ForwardTransfer": FT_mean,
             "ForwardTransfer_CI": FT_ci,
+            "AverageAUC": AUC_mean,
+            "AverageAUC_CI": AUC_ci,
         })
 
     return pd.DataFrame(rows)
@@ -329,6 +344,7 @@ def generate_reward_comparison_table(
         best_A = setting_df["AveragePerformance"].max()
         best_F = setting_df["Forgetting"].min()
         best_FT = setting_df["ForwardTransfer"].max()
+        best_AUC = setting_df["AverageAUC"].max()
 
         # Build human‑readable strings with CI
         df_out = pd.DataFrame()
@@ -348,6 +364,10 @@ def generate_reward_comparison_table(
             lambda r: _fmt(r.ForwardTransfer, r.ForwardTransfer_CI, r.ForwardTransfer == best_FT, "max"),
             axis=1,
         )
+        df_out["AverageAUC"] = setting_df.apply(
+            lambda r: _fmt(r.AverageAUC, r.AverageAUC_CI, r.AverageAUC == best_AUC, "max"),
+            axis=1,
+        )
 
         results.append(df_out)
 
@@ -361,12 +381,13 @@ def generate_reward_comparison_table(
         r"$\mathcal{A}\!\uparrow$",
         r"$\mathcal{F}\!\downarrow$",
         r"$\mathcal{FT}\!\uparrow$",
+        r"$\mathcal{AUC}\!\uparrow$",
     ]
 
     latex_table = final_df.to_latex(
         index=False,
         escape=False,
-        column_format="llccc",
+        column_format="llcccc",
         label="tab:reward_settings_comparison",
         caption="Comparison of continual learning methods across different reward settings",
     )
@@ -420,6 +441,7 @@ if __name__ == "__main__":
         best_A = df["AveragePerformance"].max()
         best_F = df["Forgetting"].min()
         best_FT = df["ForwardTransfer"].max()
+        best_AUC = df["AverageAUC"].max()
 
         # Build human‑readable strings with CI
         df_out = pd.DataFrame()
@@ -436,6 +458,10 @@ if __name__ == "__main__":
             lambda r: _fmt(r.ForwardTransfer, r.ForwardTransfer_CI, r.ForwardTransfer == best_FT, "max"),
             axis=1,
         )
+        df_out["AverageAUC"] = df.apply(
+            lambda r: _fmt(r.AverageAUC, r.AverageAUC_CI, r.AverageAUC == best_AUC, "max"),
+            axis=1,
+        )
 
         # Rename columns to mathy headers
         df_out.columns = [
@@ -443,12 +469,13 @@ if __name__ == "__main__":
             r"$\mathcal{A}\!\uparrow$",
             r"$\mathcal{F}\!\downarrow$",
             r"$\mathcal{FT}\!\uparrow$",
+            r"$\mathcal{AUC}\!\uparrow$",
         ]
 
         latex_table = df_out.to_latex(
             index=False,
             escape=False,
-            column_format="lccc",
+            column_format="lcccc",
             label=f"tab:cmarl_metrics_{args.reward_setting}",
             caption=f"Continual learning metrics for {args.reward_setting} reward setting",
         )
