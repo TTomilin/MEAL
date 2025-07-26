@@ -152,6 +152,39 @@ class OvercookedVisualizer:
 
                 objects[obj_id] = soup_obj
 
+        # Scan the grid for individual items placed on counters (onions, plates, dishes)
+        for y in range(height):
+            for x in range(width):
+                obj = grid[y, x, :]
+                obj_type = obj[0]
+
+                # Create objects for individual items placed on counters
+                if obj_type == OBJECT_TO_INDEX['onion']:
+                    obj_id = f"onion_{x}_{y}"
+                    onion_obj = type('MockOnion', (), {
+                        'name': 'onion',
+                        'position': (int(x), int(y)),
+                        'ingredients': None
+                    })
+                    objects[obj_id] = onion_obj
+                elif obj_type == OBJECT_TO_INDEX['plate']:
+                    obj_id = f"plate_{x}_{y}"
+                    plate_obj = type('MockPlate', (), {
+                        'name': 'dish',  # 'dish' is the visualization name for an empty plate
+                        'position': (int(x), int(y)),
+                        'ingredients': None
+                    })
+                    objects[obj_id] = plate_obj
+                elif obj_type == OBJECT_TO_INDEX['dish']:
+                    obj_id = f"dish_{x}_{y}"
+                    dish_obj = type('MockDish', (), {
+                        'name': 'soup',  # Dish with soup
+                        'position': (int(x), int(y)),
+                        'ingredients': ['onion', 'onion', 'onion'],
+                        'is_ready': True
+                    })
+                    objects[obj_id] = dish_obj
+
         return objects
 
     # --------------------------------------------------------------------- #
