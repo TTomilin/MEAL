@@ -20,7 +20,7 @@ def cli() -> argparse.Namespace:
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--wall_density", type=float, default=None, help="Wall density for the environment")
     p.add_argument("--difficulty", type=str, default=None, help="Difficulty level for the environment")
-    p.add_argument("--strategy", choices=["ordered", "random", "generate"], default=None)
+    p.add_argument("--strategy", choices=["ordered", "random", "generate", "curriculum"], default=None)
     p.add_argument("--algos", nargs="+", default=[], help="Filter by alg_name")
     p.add_argument("--cl_methods", nargs="+", default=[], help="Filter by cl_method")
     p.add_argument("--wandb_tags", nargs="+", default=[], help="Require at least one tag")
