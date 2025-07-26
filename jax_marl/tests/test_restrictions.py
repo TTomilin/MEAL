@@ -256,9 +256,9 @@ WWXWW
             prev_agent_1_inv = curr_agent_1_inv
 
         # Save gif with slower fps for better visibility
-        gif_path = f"../../gifs/test_experimental_conditions_{scenario['name']}.gif"
-        makedirs("../../gifs", exist_ok=True)
-        iio.imwrite(gif_path, frames, loop=0, fps=1)  # Very slow fps (1) for detailed observation
+        gif_path = f"gifs/test_restrictions_{scenario['name']}.gif"
+        makedirs("gifs", exist_ok=True)
+        iio.imwrite(gif_path, frames, loop=0, fps=3)  # Slower fps (3) for better observation
         print(f"  📹 GIF saved to {gif_path}")
 
         # Print summary of what happened
