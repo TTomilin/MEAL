@@ -259,13 +259,16 @@ def main():
         '''
         Pads the observation space of the environment to be compatible with the network
         @param envs: the environment
-        returns the padded observation space
+        returns the padded observation space and agent restrictions
         '''
         envs = []
+        agent_restrictions_list = []
         for env_args in config.env_kwargs:
             # Create the environment
             env = make(config.env_name, **env_args)
             envs.append(env)
+            # Extract agent restrictions from env_args
+            agent_restrictions_list.append(env_args.get('agent_restrictions', {}))
 
         # find the environment with the largest observation space
         max_width, max_height = 0, 0
@@ -338,7 +341,7 @@ def main():
 
             padded_envs.append(freeze(env))  # Freeze the environment to prevent further modifications
 
-        return padded_envs
+        return padded_envs, agent_restrictions_list
 
     @partial(jax.jit)
     def evaluate_model(train_state, key):
@@ -443,10 +446,12 @@ def main():
         all_avg_rewards = []
         all_avg_soups = []
 
-        envs = pad_observation_space()
+        envs, agent_restrictions_list = pad_observation_space()
 
         for eval_idx, env in enumerate(envs):
-            env = make(config.env_name, layout=env)  # Create the environment
+            # Create the environment with agent restrictions
+            agent_restrictions = agent_restrictions_list[eval_idx]
+            env = make(config.env_name, layout=env, agent_restrictions=agent_restrictions)
 
             # Run k episodes
             all_rewards, all_soups = jax.vmap(lambda k: run_episode_while(env, k, config.eval_num_steps))(
@@ -460,13 +465,15 @@ def main():
 
         return all_avg_rewards, all_avg_soups
 
-    padded_envs = pad_observation_space()
+    padded_envs, agent_restrictions_list = pad_observation_space()
 
     envs = []
     env_names = []
     max_soup_dict = {}
     for i, env_layout in enumerate(padded_envs):
-        env = make(config.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i)
+        # Create the environment with agent restrictions
+        agent_restrictions = agent_restrictions_list[i]
+        env = make(config.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i, agent_restrictions=agent_restrictions)
         env = LogWrapper(env, replace_info=False)
         env_name = env.layout_name
         envs.append(env)
