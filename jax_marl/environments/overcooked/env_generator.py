@@ -30,7 +30,7 @@ from PIL import Image
 from flax.core.frozen_dict import FrozenDict
 
 from jax_marl.environments import Overcooked
-from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer, TILE_PIXELS
+from jax_marl.eval.visualizer import OvercookedVisualizer, TILE_PIXELS
 from jax_marl.environments.overcooked.env_validator import (
     evaluate_grid, UNPASSABLE_TILES, INTERACTIVE_TILES
 )

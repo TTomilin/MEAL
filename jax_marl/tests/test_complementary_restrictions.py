@@ -14,7 +14,7 @@ from flax.core import FrozenDict
 
 from jax_marl.environments.overcooked.layouts import cramped_room
 from jax_marl.environments.overcooked.overcooked import Overcooked, OBJECT_TO_INDEX
-from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
+from jax_marl.eval.visualizer import OvercookedVisualizer
 
 
 def test_complementary_restrictions():

@@ -24,7 +24,7 @@ from jax_marl.wrappers.baselines import (
     LogWrapper,
     CTRolloutManager,
 )
-from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
+from jax_marl.eval.visualizer import OvercookedVisualizer
 from architectures.mlp import QNetwork as MLPQNetwork
 from architectures.cnn import QNetwork as CNNQNetwork
 from baselines.utils_vdn import (

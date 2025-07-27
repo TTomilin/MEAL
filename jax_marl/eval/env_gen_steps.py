@@ -28,7 +28,7 @@ from jax_marl.environments.overcooked.env_generator import (
     place_tiles, remove_unreachable_items,
 )
 from jax_marl.environments.overcooked.env_validator import evaluate_grid
-from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
+from jax_marl.eval.visualizer import OvercookedVisualizer
 
 # ──────────────────────────────────────────────────────────────────────────
 # Configurable output folder

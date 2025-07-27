@@ -542,6 +542,7 @@ class OvercookedVisualizer:
             pot_empty_status=self.pot_empty_status,
         )
         self.window.show_img(img)
+        return img
 
     @classmethod
     def _render_obj(

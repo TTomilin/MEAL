@@ -11,7 +11,7 @@ from flax.core import FrozenDict
 from jax_marl.environments.overcooked.common import OBJECT_TO_INDEX
 from jax_marl.environments.overcooked.layouts import cramped_room
 from jax_marl.environments.overcooked.overcooked_n_agent import Overcooked
-from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
+from jax_marl.eval.visualizer import OvercookedVisualizer
 
 # ---------------------------------------------------------------------
 # 1.  Create 3-agent env (deterministic spawn → we know the layout)

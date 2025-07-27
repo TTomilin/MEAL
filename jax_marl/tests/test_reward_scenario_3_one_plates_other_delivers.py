@@ -15,7 +15,7 @@ from flax.core import FrozenDict
 
 from jax_marl.environments.overcooked.layouts import cramped_room
 from jax_marl.environments.overcooked.overcooked import Overcooked, DELIVERY_REWARD
-from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
+from jax_marl.eval.visualizer import OvercookedVisualizer
 
 
 def simulate_reward_processing(reward, shaped_reward, sparse_rewards=False, individual_rewards=False,

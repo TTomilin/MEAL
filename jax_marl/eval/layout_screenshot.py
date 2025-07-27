@@ -11,7 +11,7 @@ from jax_marl.environments.overcooked.layouts import (
     medium_layouts,
     easy_layouts,
 )
-from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer, TILE_PIXELS
+from jax_marl.eval.visualizer import OvercookedVisualizer, TILE_PIXELS
 
 
 def crop_to_minimal(state, agent_view_size: int):

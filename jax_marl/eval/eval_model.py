@@ -18,7 +18,7 @@ import optax
 from flax.training.train_state import TrainState
 from flax.serialization import from_bytes
 
-from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer
+from jax_marl.eval.visualizer import OvercookedVisualizer
 from jax_marl.registration import make
 from jax_marl.environments.env_selection import generate_sequence
 from architectures.mlp import ActorCritic as MLPActorCritic

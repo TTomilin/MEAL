@@ -18,7 +18,7 @@ from jax_marl.environments.overcooked.env_generator import (
 from jax_marl.environments.overcooked.env_validator import (
     evaluate_grid, WALL, FLOOR, AGENT, GOAL, ONION_PILE, POT
 )
-from jax_marl.eval.overcooked_visualizer import OvercookedVisualizer, TILE_PIXELS
+from jax_marl.eval.visualizer import OvercookedVisualizer, TILE_PIXELS
 
 
 def create_invalid_layout(issue_type, seed=None):
