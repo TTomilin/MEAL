@@ -1,6 +1,6 @@
 import numpy as np
 from jax_marl.eval.visualizer import OvercookedVisualizer
-from jax_marl.environments.overcooked.common import COLORS
+from jax_marl.environments.overcooked.common import COLORS, OBJECT_TO_INDEX
 
 class OvercookedVisualizerPO(OvercookedVisualizer):
     """Visualizer for Partially Observable Overcooked with view area highlighting"""
@@ -100,7 +100,8 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
             for i in range(self._num_agents):
                 if i < len(env_state.agent_pos):
                     # Get agent position directly from state (x, y format)
-                    pos = (int(env_state.agent_pos[i, 0]), int(env_state.agent_pos[i, 1]))
+                    # Adjust for padding that was removed from the grid
+                    pos = (int(env_state.agent_pos[i, 0]) - padding, int(env_state.agent_pos[i, 1]) - padding)
 
                     # Convert environment direction index to visualization direction tuple
                     dir_idx = int(env_state.agent_dir_idx[i])
@@ -165,3 +166,150 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
             img = blended[:, :, :3].astype(np.uint8)
 
         return img
+
+    def _create_mock_objects(self, grid, env_state):
+        """
+        Override parent method to adjust coordinates for padding removed from grid.
+
+        Parameters
+        ----------
+        grid : numpy.ndarray
+            The cropped grid representation of the environment
+        env_state : State
+            The environment state
+
+        Returns
+        -------
+        dict
+            A dictionary of mock objects for visualization with adjusted coordinates
+        """
+        objects = {}
+
+        # Check if we have pot positions and status information
+        if not hasattr(env_state, 'pot_pos') or not hasattr(env_state, 'maze_map'):
+            return objects
+
+        # Calculate padding that was removed from the grid
+        height, width = grid.shape[:2]
+        padding = (env_state.maze_map.shape[0] - height) // 2 if hasattr(env_state.maze_map, 'shape') else 0
+
+        # Find pots in the grid and create mock soup objects for them
+        for i, pot_pos in enumerate(env_state.pot_pos):
+            # Get pot status from maze_map (using original coordinates)
+            pot_x, pot_y = pot_pos
+            pot_status = env_state.maze_map[padding + pot_y, padding + pot_x, 2]
+
+            # Only create objects for pots that have ingredients or are cooking/ready
+            if pot_status < self.pot_empty_status:  # Use configurable empty pot status
+                obj_id = f"soup_{pot_x}_{pot_y}"
+
+                # Determine ingredients and status
+                # Convert JAX array to Python integer
+                pot_status_int = int(pot_status)
+                num_onions = min(3, self.pot_empty_status - pot_status_int) if pot_status_int >= self.pot_full_status else 3
+                ingredients = ['onion'] * num_onions
+
+                # Create a position tuple for the object - ADJUST FOR PADDING
+                position = (int(pot_x) - padding, int(pot_y) - padding)
+
+                # Create a mock soup object
+                is_ready = (pot_status == 0)  # Pot is ready when status is 0
+                is_cooking = (pot_status < self.pot_full_status and pot_status > 0)  # Use configurable full pot status
+
+                # Create a soup object with appropriate attributes
+                soup_obj = type('MockSoup', (), {
+                    'name': 'soup',
+                    'position': position,
+                    'ingredients': ingredients,
+                    'is_ready': is_ready,
+                    '_cooking_tick': pot_status if is_cooking else -1,
+                    'cook_time': self.pot_full_status  # Use configurable cook time
+                })
+
+                objects[obj_id] = soup_obj
+
+        # Scan the grid for individual items placed on counters (onions, plates, dishes)
+        # These coordinates are already correct since they're from the cropped grid
+        for y in range(height):
+            for x in range(width):
+                obj = grid[y, x, :]
+                obj_type = obj[0]
+
+                # Create objects for individual items placed on counters
+                if obj_type == OBJECT_TO_INDEX['onion']:
+                    obj_id = f"onion_{x}_{y}"
+                    onion_obj = type('MockOnion', (), {
+                        'name': 'onion',
+                        'position': (int(x), int(y)),
+                        'ingredients': None
+                    })
+                    objects[obj_id] = onion_obj
+                elif obj_type == OBJECT_TO_INDEX['plate']:
+                    obj_id = f"plate_{x}_{y}"
+                    plate_obj = type('MockPlate', (), {
+                        'name': 'dish',  # 'dish' is the visualization name for an empty plate
+                        'position': (int(x), int(y)),
+                        'ingredients': None
+                    })
+                    objects[obj_id] = plate_obj
+                elif obj_type == OBJECT_TO_INDEX['dish']:
+                    obj_id = f"dish_{x}_{y}"
+                    dish_obj = type('MockDish', (), {
+                        'name': 'soup',  # Dish with soup
+                        'position': (int(x), int(y)),
+                        'ingredients': ['onion', 'onion', 'onion'],
+                        'is_ready': True
+                    })
+                    objects[obj_id] = dish_obj
+
+        return objects
+
+    def animate(self, state_seq, agent_view_size, task_idx, task_name, exp_dir, env=None, tile_size: int = 32):
+        """
+        Make a GIF with view area highlighting for PO environments.
+
+        Args:
+            state_seq: List of states to animate
+            agent_view_size: Agent view size (kept for compatibility)
+            task_idx: Task index
+            task_name: Task name
+            exp_dir: Export directory
+            env: OvercookedPO environment instance (needed for view masks)
+            tile_size: Size of each tile in pixels
+        """
+        import imageio.v3 as iio
+        import os
+
+        # Generate frames using the PO render method with view highlighting
+        frames = []
+        for state in state_seq:
+            # Use the PO render method which supports view highlighting
+            frame = self.render(
+                agent_view_size=agent_view_size,
+                state=state,
+                env=env,
+                highlight_views=True,
+                tile_size=tile_size
+            )
+            if frame is not None:
+                frames.append(frame)
+
+        if not frames:
+            print("Warning: No frames generated for PO visualization")
+            return
+
+        # Create directory if it doesn't exist
+        os.makedirs(exp_dir, exist_ok=True)
+
+        file_name = f"task_{task_idx}_{task_name}"
+        file_path = f"{exp_dir}/{file_name}.gif"
+
+        iio.imwrite(file_path, frames, loop=0, fps=10)
+
+        # Log to wandb if available
+        try:
+            import wandb
+            if wandb.run is not None:
+                wandb.log({file_name: wandb.Video(file_path, format="gif")})
+        except ImportError:
+            pass

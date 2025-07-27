@@ -249,11 +249,17 @@ class OvercookedPO(Overcooked):
         width = self.obs_shape[0]
         height = self.obs_shape[1]
 
+        # Handle LogEnvState wrapper - extract the actual environment state
+        if hasattr(state, 'env_state'):
+            env_state = state.env_state
+        else:
+            env_state = state
+
         masks = {}
         for agent_idx in range(self.num_agents):
             agent_key = f"agent_{agent_idx}"
-            agent_pos = state.agent_pos[agent_idx]
-            agent_dir = state.agent_dir_idx[agent_idx]
+            agent_pos = env_state.agent_pos[agent_idx]
+            agent_dir = env_state.agent_dir_idx[agent_idx]
             masks[agent_key] = self._get_agent_view_mask(agent_pos, agent_dir, height, width)
 
         return masks

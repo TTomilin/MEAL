@@ -18,6 +18,7 @@ from flax.training.train_state import TrainState
 
 from jax_marl.registration import make
 from jax_marl.eval.visualizer import OvercookedVisualizer
+from jax_marl.eval.visualizer_po import OvercookedVisualizerPO
 from jax_marl.wrappers.baselines import LogWrapper
 from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
 from jax_marl.environments.overcooked.overcooked_po import OvercookedPO
@@ -266,35 +267,15 @@ def main():
             # Extract agent restrictions from env_args
             agent_restrictions_list.append(env_args.get('agent_restrictions', {}))
 
-        # For PO environments, ensure consistent observation spaces
+        # For PO environments, no padding is needed since observations are local
+        # PO environments naturally have consistent observation spaces based on view parameters
         if config.env_name == "overcooked_po":
-            # First, create temporary environments to find maximum dimensions
-            temp_envs = []
+            # Return the original layouts without modification
+            env_layouts = []
             for env_args in config.env_kwargs:
                 temp_env = make(config.env_name, **env_args)
-                temp_envs.append(temp_env)
-
-            # Find the maximum observation space dimensions across all PO environments
-            max_obs_width, max_obs_height = 0, 0
-            for env in temp_envs:
-                max_obs_width = max(max_obs_width, env.obs_shape[0])
-                max_obs_height = max(max_obs_height, env.obs_shape[1])
-
-            print(f"PO environments: normalizing observation space to ({max_obs_width}, {max_obs_height}, 26)")
-
-            # Create normalized layouts with consistent dimensions
-            normalized_layouts = []
-            for env in temp_envs:
-                # Create a copy of the layout
-                layout = dict(env.layout)
-
-                # Update the layout dimensions to match the maximum observation space
-                layout["width"] = max_obs_width
-                layout["height"] = max_obs_height
-
-                normalized_layouts.append(freeze(layout))
-
-            return normalized_layouts, agent_restrictions_list
+                env_layouts.append(temp_env.layout)
+            return env_layouts, agent_restrictions_list
 
         # For regular environments, apply padding as before
         # Create environments first
@@ -1047,7 +1028,11 @@ def main():
         # split the random number generator for training on the environments
         rng, *env_rngs = jax.random.split(rng, len(envs) + 1)
 
-        visualizer = OvercookedVisualizer(num_agents=temp_env.num_agents)
+        # Create appropriate visualizer based on environment type
+        if config.env_name == "overcooked_po":
+            visualizer = OvercookedVisualizerPO(num_agents=temp_env.num_agents)
+        else:
+            visualizer = OvercookedVisualizer(num_agents=temp_env.num_agents)
 
         evaluation_matrix = None
         if config.eval_forward_transfer:
@@ -1072,7 +1057,11 @@ def main():
                 # Generate & log a GIF after finishing task i
                 env_name = f"{i}__{env.layout_name}"
                 states = record_gif_of_episode(config, train_state, env, network, env_idx=i, max_steps=config.gif_len)
-                visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir)
+                # Pass environment instance to PO visualizer for view highlighting
+                if config.env_name == "overcooked_po":
+                    visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir, env=env)
+                else:
+                    visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir)
 
             if config.eval_forward_transfer:
                 # Evaluate at the end of training to get the average performance of the task right after training
