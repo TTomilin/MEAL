@@ -52,10 +52,7 @@ def collect_plasticity_runs(
 
     for seed in seeds:
         # Use different directory structure for single baseline vs CL methods
-        if method == "single":
-            run_dir = base / algo / method / "plasticity" / folder / f"seed_{seed}"
-        else:
-            run_dir = base / algo / method / f"level_{level}" / folder / f"seed_{seed}"
+        run_dir = base / algo / method / "plasticity" / folder / f"seed_{seed}"
         if not run_dir.exists():
             print(f"Warning: no directory {run_dir}")
             continue

@@ -38,6 +38,7 @@ from results.plotting.utils import (
     collect_plasticity_runs,
     create_plasticity_parser,
 )
+from results.plotting.utils.common import CRIT
 
 
 # ─────────────────────── helper functions ─────────────────────────
@@ -57,15 +58,15 @@ def _palette(n: int) -> List[str]:
 
 # metric helpers --------------------------------------------------------------
 
-def _compute_auc_loss(task_traces, repeats: int, sigma: float):
-    mean, std = [], []
+def _compute_auc_loss(task_traces, repeats: int, sigma: float, conf: float = 0.95):
+    mean, ci = [], []
     for traces in task_traces:
         if traces.size == 0:
-            mean.append(np.nan); std.append(np.nan); continue
+            mean.append(np.nan); ci.append(np.nan); continue
         n_seeds, T = traces.shape
         L = T // repeats
         if L == 0:
-            mean.append(np.nan); std.append(np.nan); continue
+            mean.append(np.nan); ci.append(np.nan); continue
         baseline = np.nanmean([_auc(traces[s, :L], sigma) for s in range(n_seeds)])
         losses = []
         for rep in range(1, repeats):
@@ -73,20 +74,33 @@ def _compute_auc_loss(task_traces, repeats: int, sigma: float):
             for s in range(n_seeds):
                 ratio = _auc(traces[s, seg], sigma) / baseline if baseline else np.nan
                 losses.append(max(0.0, 1.0 - ratio))
-        mean.append(float(np.nanmean(losses)) if losses else np.nan)
-        std.append(float(np.nanstd(losses, ddof=1)) if losses else np.nan)
-    return np.array(mean), np.array(std)
+
+        if losses:
+            losses_mean = float(np.nanmean(losses))
+            losses_std = float(np.nanstd(losses, ddof=1))
+            n_samples = len([x for x in losses if not np.isnan(x)])
+            # Calculate confidence interval
+            if n_samples > 0 and losses_std > 0:
+                ci_val = CRIT[conf] * losses_std / np.sqrt(n_samples)
+            else:
+                ci_val = 0.0
+            mean.append(losses_mean)
+            ci.append(ci_val)
+        else:
+            mean.append(np.nan)
+            ci.append(np.nan)
+    return np.array(mean), np.array(ci)
 
 
-def _capacity_metrics(task_traces, repeats: int, sigma: float):
-    fpr_m, fpr_s, rauc_m, rauc_s = [], [], [], []
+def _capacity_metrics(task_traces, repeats: int, sigma: float, conf: float = 0.95):
+    fpr_m, fpr_ci, rauc_m, rauc_ci = [], [], [], []
     for traces in task_traces:
         if traces.size == 0:
-            fpr_m.append(np.nan); fpr_s.append(np.nan); rauc_m.append(np.nan); rauc_s.append(np.nan); continue
+            fpr_m.append(np.nan); fpr_ci.append(np.nan); rauc_m.append(np.nan); rauc_ci.append(np.nan); continue
         n_seeds, T = traces.shape
         L = T // repeats
         if L == 0:
-            fpr_m.append(np.nan); fpr_s.append(np.nan); rauc_m.append(np.nan); rauc_s.append(np.nan); continue
+            fpr_m.append(np.nan); fpr_ci.append(np.nan); rauc_m.append(np.nan); rauc_ci.append(np.nan); continue
         base_fperf = traces[:, L - 1]
         base_rauc = np.array([_auc(traces[s, :L], sigma) for s in range(n_seeds)])
         fprs, raucs = [], []
@@ -98,11 +112,38 @@ def _capacity_metrics(task_traces, repeats: int, sigma: float):
                     fpr_val = min(fpr_val, 1.25)
                 rau_val = _auc(traces[s, seg], sigma) / base_rauc[s] if base_rauc[s] else np.nan
                 fprs.append(fpr_val); raucs.append(rau_val)
-        fpr_m.append(np.nanmean(fprs) if fprs else np.nan)
-        fpr_s.append(np.nanstd(fprs, ddof=1) if fprs else np.nan)
-        rauc_m.append(np.nanmean(raucs) if raucs else np.nan)
-        rauc_s.append(np.nanstd(raucs, ddof=1) if raucs else np.nan)
-    return (np.array(fpr_m), np.array(fpr_s), np.array(rauc_m), np.array(rauc_s))
+
+        # Calculate FPR mean and confidence interval
+        if fprs:
+            fpr_mean = np.nanmean(fprs)
+            fpr_std = np.nanstd(fprs, ddof=1)
+            fpr_n_samples = len([x for x in fprs if not np.isnan(x)])
+            if fpr_n_samples > 0 and fpr_std > 0:
+                fpr_ci_val = CRIT[conf] * fpr_std / np.sqrt(fpr_n_samples)
+            else:
+                fpr_ci_val = 0.0
+            fpr_m.append(fpr_mean)
+            fpr_ci.append(fpr_ci_val)
+        else:
+            fpr_m.append(np.nan)
+            fpr_ci.append(np.nan)
+
+        # Calculate RAUC mean and confidence interval
+        if raucs:
+            rauc_mean = np.nanmean(raucs)
+            rauc_std = np.nanstd(raucs, ddof=1)
+            rauc_n_samples = len([x for x in raucs if not np.isnan(x)])
+            if rauc_n_samples > 0 and rauc_std > 0:
+                rauc_ci_val = CRIT[conf] * rauc_std / np.sqrt(rauc_n_samples)
+            else:
+                rauc_ci_val = 0.0
+            rauc_m.append(rauc_mean)
+            rauc_ci.append(rauc_ci_val)
+        else:
+            rauc_m.append(np.nan)
+            rauc_ci.append(np.nan)
+
+    return (np.array(fpr_m), np.array(fpr_ci), np.array(rauc_m), np.array(rauc_ci))
 
 # ─────────────────────────── main ─────────────────────────────────
 
@@ -124,9 +165,9 @@ def main() -> None:
     out_dir = base / "plots"; out_dir.mkdir(exist_ok=True, parents=True)
 
     # CSV init --------------------------------------------------------------
-    header = ["method", "repeats", "task", "auc_loss_mean", "auc_loss_std"]
+    header = ["method", "repeats", "task", "auc_loss_mean", "auc_loss_ci"]
     if args.extra_capacity_stats:
-        header += ["fpr_mean", "fpr_std", "rauc_mean", "rauc_std"]
+        header += ["fpr_mean", "fpr_ci", "rauc_mean", "rauc_ci"]
     csv_rows = [tuple(header)]
 
     # For LaTeX global Means
@@ -147,34 +188,41 @@ def main() -> None:
             colour = colours[idx]
             label = f"{repeats} Repetitions"
 
-            auc_mean, auc_std = _compute_auc_loss(traces_per_task, repeats, args.sigma)
+            auc_mean, auc_ci = _compute_auc_loss(traces_per_task, repeats, args.sigma, args.confidence)
             x = np.arange(1, args.seq_len + 1)
-            axes[0].errorbar(x, auc_mean, yerr=auc_std, fmt="o-", capsize=3, color=colour, label=label)
+            axes[0].errorbar(x, auc_mean, yerr=auc_ci, fmt="o-", capsize=3, color=colour, label=label)
 
             # capacity stats ------------------------------------------------
             if args.extra_capacity_stats:
-                fpr_m, fpr_s, rauc_m, rauc_s = _capacity_metrics(traces_per_task, repeats, args.sigma)
-                axes[1].errorbar(x, fpr_m, yerr=fpr_s, fmt="s--", capsize=3, color=colour, label=label)
-                axes[2].errorbar(x, rauc_m, yerr=rauc_s, fmt="^:", capsize=3, color=colour, label=label)
+                fpr_m, fpr_ci, rauc_m, rauc_ci = _capacity_metrics(traces_per_task, repeats, args.sigma, args.confidence)
+                axes[1].errorbar(x, fpr_m, yerr=fpr_ci, fmt="s--", capsize=3, color=colour, label=label)
+                axes[2].errorbar(x, rauc_m, yerr=rauc_ci, fmt="^:", capsize=3, color=colour, label=label)
 
             # CSV rows -------------------------------------------------------
             for t in range(args.seq_len):
-                row = [method, repeats, t + 1, auc_mean[t], auc_std[t]]
+                row = [method, repeats, t + 1, auc_mean[t], auc_ci[t]]
                 if args.extra_capacity_stats:
-                    row.extend([fpr_m[t], fpr_s[t], rauc_m[t], rauc_s[t]])
+                    row.extend([fpr_m[t], fpr_ci[t], rauc_m[t], rauc_ci[t]])
                 csv_rows.append(tuple(row))
 
             # ---- global averages (across tasks) ----
             g_auc = float(np.nanmean(auc_mean))
+            g_auc_ci = float(np.nanmean(auc_ci))
             if args.extra_capacity_stats:
                 g_fpr = float(np.nanmean(fpr_m))
+                g_fpr_ci = float(np.nanmean(fpr_ci))
                 g_rauc = float(np.nanmean(rauc_m))
+                g_rauc_ci = float(np.nanmean(rauc_ci))
             else:
                 g_fpr = g_rauc = float("nan")
+                g_fpr_ci = g_rauc_ci = float("nan")
             global_means[method][repeats] = {
                 "auc": g_auc,
+                "auc_ci": g_auc_ci,
                 "fpr": g_fpr,
+                "fpr_ci": g_fpr_ci,
                 "rauc": g_rauc,
+                "rauc_ci": g_rauc_ci,
             }
 
         # prettify plots ----------------------------------------------------
@@ -215,7 +263,7 @@ def main() -> None:
             latex_lines.append("\\midrule")
             for rep in repeats_list:
                 gm = global_means[method][rep]
-                latex_lines.append(f"{rep} & {gm['auc']:.3f} & {gm['fpr']:.3f} & {gm['rauc']:.3f} \\")
+                latex_lines.append(f"{rep} & {gm['auc']:.3f} $\\pm$ {gm['auc_ci']:.3f} & {gm['fpr']:.3f} $\\pm$ {gm['fpr_ci']:.3f} & {gm['rauc']:.3f} $\\pm$ {gm['rauc_ci']:.3f} \\")
         else:
             latex_lines.append("\\begin{tabular}{lc}")
             latex_lines.append("\\toprule")
@@ -223,7 +271,7 @@ def main() -> None:
             latex_lines.append("\\midrule")
             for rep in repeats_list:
                 gm = global_means[method][rep]
-                latex_lines.append(f"{rep} & {gm['auc']:.3f} \\")
+                latex_lines.append(f"{rep} & {gm['auc']:.3f} $\\pm$ {gm['auc_ci']:.3f} \\")
         latex_lines.append("\\bottomrule")
         latex_lines.append("\\end{tabular}")
         latex_lines.append("\\end{table}")
