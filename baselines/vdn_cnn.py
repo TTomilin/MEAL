@@ -262,6 +262,19 @@ def main():
     markdown = f"|param|value|\n|-|-|\n{table_body}"
     writer.add_text("hyperparameters", markdown)
 
+    def get_view_params():
+        '''
+        Get view parameters for overcooked_po environments from config.
+        Returns a dictionary with view parameters if applicable, empty dict otherwise.
+        '''
+        if config.env_name == "overcooked_po" and config.difficulty:
+            return {
+                "view_ahead": config.view_ahead,
+                "view_sides": config.view_sides,
+                "view_behind": config.view_behind
+            }
+        return {}
+
     def pad_observation_space():
         '''
         Function that pads the observation space of all environments to be the same size by adding extra walls to the outside.
@@ -442,7 +455,8 @@ def main():
     train_envs = []
     test_envs = []
     for env_layout in padded_envs:
-        env = make(config.env_name, layout=env_layout)
+        view_params = get_view_params()
+        env = make(config.env_name, layout=env_layout, **view_params)
         env = LogWrapper(env, replace_info=False)
         train_env = CTRolloutManager(
             env, batch_size=config.num_envs, preprocess_obs=False

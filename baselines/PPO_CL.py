@@ -246,6 +246,19 @@ def main():
     markdown = f"|param|value|\n|-|-|\n{table_body}"
     writer.add_text("hyperparameters", markdown)
 
+    def get_view_params():
+        '''
+        Get view parameters for overcooked_po environments from config.
+        Returns a dictionary with view parameters if applicable, empty dict otherwise.
+        '''
+        if config.env_name == "overcooked_po" and config.difficulty:
+            return {
+                "view_ahead": config.view_ahead,
+                "view_sides": config.view_sides,
+                "view_behind": config.view_behind
+            }
+        return {}
+
     # pad the observation space
     def pad_observation_space():
         '''
@@ -435,7 +448,8 @@ def main():
         envs = pad_observation_space()
 
         for eval_idx, env in enumerate(envs):
-            env = make(config.env_name, layout=env, num_agents=config.num_agents)  # Create the environment
+            view_params = get_view_params()
+            env = make(config.env_name, layout=env, num_agents=config.num_agents, **view_params)  # Create the environment
 
             # Run k episodes
             all_rewards, all_soups = jax.vmap(lambda k: run_episode_while(env, k, config.eval_num_steps))(
@@ -455,8 +469,9 @@ def main():
     env_names = []
     max_soup_dict = {}
     for i, env_layout in enumerate(padded_envs):
+        view_params = get_view_params()
         env = make(config.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i,
-                   num_agents=config.num_agents)
+                   num_agents=config.num_agents, **view_params)
         env = LogWrapper(env, replace_info=False)
         env_name = env.layout_name
         envs.append(env)

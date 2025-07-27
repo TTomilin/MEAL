@@ -263,6 +263,19 @@ def main():
     markdown = f"|param|value|\n|-|-|\n{table_body}"
     writer.add_text("hyperparameters", markdown)
 
+    def get_view_params():
+        '''
+        Get view parameters for overcooked_po environments from config.
+        Returns a dictionary with view parameters if applicable, empty dict otherwise.
+        '''
+        if config.env_name == "overcooked_po" and config.difficulty:
+            return {
+                "view_ahead": config.view_ahead,
+                "view_sides": config.view_sides,
+                "view_behind": config.view_behind
+            }
+        return {}
+
     def create_environments():
         '''
         Creates environments, with padding for regular Overcooked but not for PO environments
@@ -472,7 +485,8 @@ def main():
         for eval_idx, env in enumerate(envs):
             # Create the environment with agent restrictions
             agent_restrictions = agent_restrictions_list[eval_idx]
-            env = make(config.env_name, layout=env, agent_restrictions=agent_restrictions)
+            view_params = get_view_params()
+            env = make(config.env_name, layout=env, agent_restrictions=agent_restrictions, **view_params)
 
             # Run k episodes
             all_rewards, all_soups = jax.vmap(lambda k: run_episode_while(env, k, config.eval_num_steps))(
@@ -494,8 +508,9 @@ def main():
     for i, env_layout in enumerate(env_layouts):
         # Create the environment with agent restrictions
         agent_restrictions = agent_restrictions_list[i]
+        view_params = get_view_params()
         env = make(config.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i,
-                   agent_restrictions=agent_restrictions)
+                   agent_restrictions=agent_restrictions, **view_params)
         env = LogWrapper(env, replace_info=False)
         env_name = env.layout_name
         envs.append(env)
