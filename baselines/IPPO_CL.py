@@ -93,6 +93,7 @@ class Config:
     # AGEM specific parameters
     agem_memory_size: int = 50000
     agem_sample_size: int = 128
+    agem_gradient_scale: float = 1000.0
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
@@ -821,7 +822,7 @@ def main():
                         # scale memory gradient by batch-size ratio
                         ppo_bs = config.num_actors * config.num_steps
                         mem_bs = config.agem_sample_size
-                        scale = (ppo_bs / mem_bs) * 1000  # scale factor for AGEM memory gradient
+                        scale = (ppo_bs / mem_bs) * config.agem_gradient_scale  # scale factor for AGEM memory gradient
                         grads_mem = jax.tree_util.tree_map(lambda g: g * scale, grads_mem)
 
                         # Project new grads
