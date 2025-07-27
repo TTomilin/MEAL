@@ -190,7 +190,15 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
 
         # Calculate padding that was removed from the grid
         height, width = grid.shape[:2]
-        padding = (env_state.maze_map.shape[0] - height) // 2 if hasattr(env_state.maze_map, 'shape') else 0
+        # Use the same padding calculation as in _render_state
+        # The grid was extracted with: grid = env_state.maze_map[padding:-padding, padding:-padding, :]
+        # So padding = agent_view_size - 1, but we need to get agent_view_size
+        # We can calculate it from the maze_map and grid sizes
+        if hasattr(env_state.maze_map, 'shape'):
+            maze_height = env_state.maze_map.shape[0]
+            padding = (maze_height - height) // 2
+        else:
+            padding = 0
 
         # Find pots in the grid and create mock soup objects for them
         for i, pot_pos in enumerate(env_state.pot_pos):
@@ -239,7 +247,7 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
                     obj_id = f"onion_{x}_{y}"
                     onion_obj = type('MockOnion', (), {
                         'name': 'onion',
-                        'position': (int(x), int(y)),
+                        'position': (int(y), int(x)),  # Fix: swap x,y to match grid coordinates
                         'ingredients': None
                     })
                     objects[obj_id] = onion_obj
@@ -247,7 +255,7 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
                     obj_id = f"plate_{x}_{y}"
                     plate_obj = type('MockPlate', (), {
                         'name': 'dish',  # 'dish' is the visualization name for an empty plate
-                        'position': (int(x), int(y)),
+                        'position': (int(y), int(x)),  # Fix: swap x,y to match grid coordinates
                         'ingredients': None
                     })
                     objects[obj_id] = plate_obj
@@ -255,7 +263,7 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
                     obj_id = f"dish_{x}_{y}"
                     dish_obj = type('MockDish', (), {
                         'name': 'soup',  # Dish with soup
-                        'position': (int(x), int(y)),
+                        'position': (int(y), int(x)),  # Fix: swap x,y to match grid coordinates
                         'ingredients': ['onion', 'onion', 'onion'],
                         'is_ready': True
                     })
