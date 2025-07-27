@@ -811,6 +811,11 @@ def main():
                             env_idx=env_idx
                         )
 
+                        # scale memory gradient by batch-size ratio
+                        ppo_bs = config.num_actors * config.num_steps
+                        mem_bs = config.agem_sample_size
+                        grads_mem = jax.tree_util.tree_map(lambda g: g * (ppo_bs / mem_bs), grads_mem)
+
                         # Project new grads
                         grads, proj_stats = agem_project(grads, grads_mem)
 
