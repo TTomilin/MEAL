@@ -195,6 +195,13 @@ def main():
         layout_file=config.layout_file,
     )
 
+    # Add view parameters for PO environments when difficulty is specified
+    if config.env_name == "overcooked_po" and config.difficulty:
+        for env_args in config.env_kwargs:
+            env_args["view_ahead"] = config.view_ahead
+            env_args["view_sides"] = config.view_sides
+            env_args["view_behind"] = config.view_behind
+
     # ── optional single-task baseline ─────────────────────────────────────────
     if config.single_task_idx is not None:
         idx = config.single_task_idx

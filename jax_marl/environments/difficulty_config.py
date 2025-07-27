@@ -18,6 +18,9 @@ DIFFICULTY_PARAMS = {
         "wall_density": 0.15,
         "height_rng": (6, 7),
         "width_rng": (6, 7),
+        "view_ahead": 2,
+        "view_sides": 1,
+        "view_behind": 0,
     },
     "medium": {
         "height_min": 8,
@@ -27,6 +30,9 @@ DIFFICULTY_PARAMS = {
         "wall_density": 0.25,
         "height_rng": (8, 9),
         "width_rng": (8, 9),
+        "view_ahead": 3,
+        "view_sides": 1,
+        "view_behind": 0,
     },
     "hard": {
         "height_min": 10,
@@ -36,6 +42,9 @@ DIFFICULTY_PARAMS = {
         "wall_density": 0.35,
         "height_rng": (10, 11),
         "width_rng": (10, 11),
+        "view_ahead": 3,
+        "view_sides": 2,
+        "view_behind": 1,
     }
 }
 
@@ -43,41 +52,44 @@ DIFFICULTY_PARAMS = {
 def get_difficulty_params(difficulty: str) -> Dict:
     """
     Get difficulty parameters for a given difficulty level.
-    
+
     Args:
         difficulty: The difficulty level ("easy", "medium", "hard")
-        
+
     Returns:
         Dictionary containing the parameters for the specified difficulty
-        
+
     Raises:
         ValueError: If the difficulty level is not recognized
     """
     difficulty_lower = difficulty.lower()
-    
+
     # Handle alternative names
     if difficulty_lower == "med":
         difficulty_lower = "medium"
-    
+
     if difficulty_lower not in DIFFICULTY_PARAMS:
         raise ValueError(f"Unknown difficulty level: {difficulty}. "
                         f"Available levels: {list(DIFFICULTY_PARAMS.keys())}")
-    
+
     return DIFFICULTY_PARAMS[difficulty_lower].copy()
 
 
 def apply_difficulty_to_config(config, difficulty: str) -> None:
     """
     Apply difficulty parameters to a configuration object.
-    
+
     Args:
         config: Configuration object to modify
         difficulty: The difficulty level to apply
     """
     params = get_difficulty_params(difficulty)
-    
+
     config.height_min = params["height_min"]
     config.height_max = params["height_max"]
     config.width_min = params["width_min"]
     config.width_max = params["width_max"]
     config.wall_density = params["wall_density"]
+    config.view_ahead = params["view_ahead"]
+    config.view_sides = params["view_sides"]
+    config.view_behind = params["view_behind"]

@@ -43,9 +43,8 @@ class CNN(nn.Module):
             x = act(x)
             return x
 
-        x = conv("conv1", x, (5, 5))
+        x = conv("conv1", x, (3, 3))
         x = conv("conv2", x, (3, 3))
-        x = conv("conv3", x, (3, 3))
 
         x = x.reshape((x.shape[0], -1))
         x = nn.Dense(64, name=f"{self.name_prefix}_proj",

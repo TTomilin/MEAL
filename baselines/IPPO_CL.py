@@ -21,7 +21,6 @@ from jax_marl.eval.visualizer import OvercookedVisualizer
 from jax_marl.eval.visualizer_po import OvercookedVisualizerPO
 from jax_marl.wrappers.baselines import LogWrapper
 from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
-from jax_marl.environments.overcooked.overcooked_po import OvercookedPO
 from architectures.mlp import ActorCritic as MLPActorCritic
 from architectures.cnn import ActorCritic as CNNActorCritic
 from baselines.utils import *
@@ -211,6 +210,13 @@ def main():
         layout_file=config.layout_file,
         complementary_restrictions=config.complementary_restrictions,
     )
+
+    # Add view parameters for PO environments when difficulty is specified
+    if config.env_name == "overcooked_po" and config.difficulty:
+        for env_args in config.env_kwargs:
+            env_args["view_ahead"] = config.view_ahead
+            env_args["view_sides"] = config.view_sides
+            env_args["view_behind"] = config.view_behind
 
     # ── optional single-task baseline ─────────────────────────────────────────
     if config.single_task_idx is not None:
@@ -487,7 +493,8 @@ def main():
     for i, env_layout in enumerate(env_layouts):
         # Create the environment with agent restrictions
         agent_restrictions = agent_restrictions_list[i]
-        env = make(config.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i, agent_restrictions=agent_restrictions)
+        env = make(config.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i,
+                   agent_restrictions=agent_restrictions)
         env = LogWrapper(env, replace_info=False)
         env_name = env.layout_name
         envs.append(env)
@@ -625,7 +632,7 @@ def main():
                 if config.sparse_rewards:
                     # Sparse rewards: only delivery rewards (no shaped rewards)
                     # reward already contains individual delivery rewards from environment
-                    pass  
+                    pass
                 elif config.individual_rewards:
                     # Individual rewards: delivery rewards + individual shaped rewards
                     # Environment now provides individual delivery rewards directly
@@ -1064,7 +1071,8 @@ def main():
                 states = record_gif_of_episode(config, train_state, env, network, env_idx=i, max_steps=config.gif_len)
                 # Pass environment instance to PO visualizer for view highlighting
                 if config.env_name == "overcooked_po":
-                    visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir, env=env)
+                    visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir,
+                                       env=env)
                 else:
                     visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir)
 
