@@ -178,9 +178,14 @@ def main():
         raise ValueError(
             "cl_method is required. Please specify a continual learning method (e.g., ewc, mas, l2, ft, agem).")
 
+    difficulty = config.difficulty
+    seq_length = config.seq_length
+    strategy = config.strategy
+    seed = config.seed
+
     # Set height_min, height_max, width_min, width_max, and wall_density based on difficulty
-    if config.difficulty:
-        apply_difficulty_to_config(config, config.difficulty)
+    if difficulty:
+        apply_difficulty_to_config(config, difficulty)
 
     # Set default regularization coefficient based on the CL method if not specified
     if config.reg_coef is None:
@@ -201,10 +206,10 @@ def main():
 
     # generate a sequence of tasks
     config.env_kwargs, layout_names = generate_sequence(
-        sequence_length=config.seq_length,
-        strategy=config.strategy,
+        sequence_length=seq_length,
+        strategy=strategy,
         layout_names=config.layouts,
-        seed=config.seed,
+        seed=seed,
         height_rng=(config.height_min, config.height_max),
         width_rng=(config.width_min, config.width_max),
         wall_density=config.wall_density,
@@ -213,7 +218,7 @@ def main():
     )
 
     # Add view parameters for PO environments when difficulty is specified
-    if config.env_name == "overcooked_po" and config.difficulty:
+    if config.env_name == "overcooked_po" and difficulty:
         for env_args in config.env_kwargs:
             env_args["view_ahead"] = config.view_ahead
             env_args["view_sides"] = config.view_sides
@@ -232,7 +237,7 @@ def main():
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
     network = "cnn" if config.use_cnn else "mlp"
-    run_name = f'{config.alg_name}_{config.cl_method}_{network}_seq{config.seq_length}_{config.strategy}_seed_{config.seed}_{timestamp}'
+    run_name = f'{config.alg_name}_{config.cl_method}_{difficulty}_{network}_seq{seq_length}_{strategy}_seed_{seed}_{timestamp}'
     exp_dir = os.path.join("runs", run_name)
 
     # Initialize WandB
@@ -268,7 +273,7 @@ def main():
         Get view parameters for overcooked_po environments from config.
         Returns a dictionary with view parameters if applicable, empty dict otherwise.
         '''
-        if config.env_name == "overcooked_po" and config.difficulty:
+        if config.env_name == "overcooked_po" and difficulty:
             return {
                 "view_ahead": config.view_ahead,
                 "view_sides": config.view_sides,
@@ -533,7 +538,7 @@ def main():
 
     ac_cls = CNNActorCritic if config.use_cnn else MLPActorCritic
 
-    network = ac_cls(temp_env.action_space().n, config.activation, config.seq_length, config.use_multihead,
+    network = ac_cls(temp_env.action_space().n, config.activation, seq_length, config.use_multihead,
                      config.shared_backbone, config.big_network, config.use_task_id, config.regularize_heads,
                      config.use_layer_norm)
 
@@ -542,7 +547,7 @@ def main():
         obs_dim = np.prod(obs_dim)
 
     # Initialize the network
-    rng = jax.random.PRNGKey(config.seed)
+    rng = jax.random.PRNGKey(seed)
     rng, network_rng = jax.random.split(rng)
     init_x = jnp.zeros((1, *obs_dim)) if config.use_cnn else jnp.zeros((1, obs_dim,))
     network_params = network.init(network_rng, init_x)
