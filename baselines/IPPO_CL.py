@@ -34,34 +34,6 @@ import tyro
 from tensorboardX import SummaryWriter
 
 
-def create_environment(config, **env_kwargs):
-    """
-    Create an environment based on config settings.
-
-    Args:
-        config: Configuration object containing environment settings
-        **env_kwargs: Additional keyword arguments for environment creation
-
-    Returns:
-        Environment instance (either Overcooked or OvercookedPO)
-    """
-    if config.use_po:
-        # Add PO-specific parameters to env_kwargs
-        po_kwargs = {
-            'view_ahead': config.po_view_ahead,
-            'view_behind': config.po_view_behind,
-            'view_sides': config.po_view_sides,
-        }
-        # Merge with existing env_kwargs, giving priority to explicitly passed kwargs
-        merged_kwargs = {**po_kwargs, **env_kwargs}
-
-        # Create OvercookedPO environment directly
-        return OvercookedPO(**merged_kwargs)
-    else:
-        # Use the standard make function for regular Overcooked
-        return make(config.env_name, **env_kwargs)
-
-
 @dataclass
 class Config:
     # ═══════════════════════════════════════════════════════════════════════════
@@ -134,12 +106,6 @@ class Config:
     difficulty: Optional[str] = None
     single_task_idx: Optional[int] = None
     layout_file: Optional[str] = None
-
-    # Partial observability parameters
-    use_po: bool = False  # Use partially observable environment
-    po_view_ahead: int = 3  # Number of tiles visible ahead of agent
-    po_view_behind: int = 1  # Number of tiles visible behind agent
-    po_view_sides: int = 2  # Number of tiles visible to sides of agent
 
     # Random layout generator parameters
     height_min: int = 6  # minimum layout height
@@ -289,21 +255,53 @@ def main():
     markdown = f"|param|value|\n|-|-|\n{table_body}"
     writer.add_text("hyperparameters", markdown)
 
-    # pad the observation space
-    def pad_observation_space():
+    def create_environments():
         '''
-        Pads the observation space of the environment to be compatible with the network
-        @param envs: the environment
-        returns the padded observation space and agent restrictions
+        Creates environments, with padding for regular Overcooked but not for PO environments
+        since PO environments have local observations that don't need padding.
+        returns the environment layouts and agent restrictions
         '''
-        envs = []
         agent_restrictions_list = []
         for env_args in config.env_kwargs:
-            # Create the environment
-            env = create_environment(config, **env_args)
-            envs.append(env)
             # Extract agent restrictions from env_args
             agent_restrictions_list.append(env_args.get('agent_restrictions', {}))
+
+        # For PO environments, ensure consistent observation spaces
+        if config.env_name == "overcooked_po":
+            # First, create temporary environments to find maximum dimensions
+            temp_envs = []
+            for env_args in config.env_kwargs:
+                temp_env = make(config.env_name, **env_args)
+                temp_envs.append(temp_env)
+
+            # Find the maximum observation space dimensions across all PO environments
+            max_obs_width, max_obs_height = 0, 0
+            for env in temp_envs:
+                max_obs_width = max(max_obs_width, env.obs_shape[0])
+                max_obs_height = max(max_obs_height, env.obs_shape[1])
+
+            print(f"PO environments: normalizing observation space to ({max_obs_width}, {max_obs_height}, 26)")
+
+            # Create normalized layouts with consistent dimensions
+            normalized_layouts = []
+            for env in temp_envs:
+                # Create a copy of the layout
+                layout = dict(env.layout)
+
+                # Update the layout dimensions to match the maximum observation space
+                layout["width"] = max_obs_width
+                layout["height"] = max_obs_height
+
+                normalized_layouts.append(freeze(layout))
+
+            return normalized_layouts, agent_restrictions_list
+
+        # For regular environments, apply padding as before
+        # Create environments first
+        envs = []
+        for env_args in config.env_kwargs:
+            env = make(config.env_name, **env_args)
+            envs.append(env)
 
         # find the environment with the largest observation space
         max_width, max_height = 0, 0
@@ -481,12 +479,12 @@ def main():
         all_avg_rewards = []
         all_avg_soups = []
 
-        envs, agent_restrictions_list = pad_observation_space()
+        envs, agent_restrictions_list = create_environments()
 
         for eval_idx, env in enumerate(envs):
             # Create the environment with agent restrictions
             agent_restrictions = agent_restrictions_list[eval_idx]
-            env = create_environment(config, layout=env, agent_restrictions=agent_restrictions)
+            env = make(config.env_name, layout=env, agent_restrictions=agent_restrictions)
 
             # Run k episodes
             all_rewards, all_soups = jax.vmap(lambda k: run_episode_while(env, k, config.eval_num_steps))(
@@ -500,15 +498,15 @@ def main():
 
         return all_avg_rewards, all_avg_soups
 
-    padded_envs, agent_restrictions_list = pad_observation_space()
+    env_layouts, agent_restrictions_list = create_environments()
 
     envs = []
     env_names = []
     max_soup_dict = {}
-    for i, env_layout in enumerate(padded_envs):
+    for i, env_layout in enumerate(env_layouts):
         # Create the environment with agent restrictions
         agent_restrictions = agent_restrictions_list[i]
-        env = create_environment(config, layout=env_layout, layout_name=layout_names[i], task_id=i, agent_restrictions=agent_restrictions)
+        env = make(config.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i, agent_restrictions=agent_restrictions)
         env = LogWrapper(env, replace_info=False)
         env_name = env.layout_name
         envs.append(env)
