@@ -100,8 +100,7 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
             for i in range(self._num_agents):
                 if i < len(env_state.agent_pos):
                     # Get agent position directly from state (x, y format)
-                    # Adjust for padding that was removed from the grid
-                    pos = (int(env_state.agent_pos[i, 0]) - padding, int(env_state.agent_pos[i, 1]) - padding)
+                    pos = (int(env_state.agent_pos[i, 0]), int(env_state.agent_pos[i, 1]))
 
                     # Convert environment direction index to visualization direction tuple
                     dir_idx = int(env_state.agent_dir_idx[i])
