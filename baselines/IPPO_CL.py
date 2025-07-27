@@ -2,6 +2,8 @@ import json
 import os
 from pathlib import Path
 
+from jax._src.flatten_util import ravel_pytree
+
 from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
     update_agem_memory
 from cl_methods.FT import FT
@@ -91,8 +93,8 @@ class Config:
     ewc_decay: float = 0.9  # Only for online EWC
 
     # AGEM specific parameters
-    agem_memory_size: int = 50000
-    agem_sample_size: int = 128
+    agem_memory_size: int = 100000
+    agem_sample_size: int = 1024
     agem_gradient_scale: float = 1000.0
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -820,9 +822,10 @@ def main():
                     # call the grad_fn function to get the total loss and the gradients
                     total_loss, grads = grad_fn(train_state.params, traj_batch, advantages, targets)
 
-                    # For AGEM, we need to project the gradients if this is not the first environment
+                    # For AGEM, we need to project the gradients
                     agem_stats = {}
-                    if config.cl_method.lower() == "agem" and env_idx > 0 and cl_state is not None:
+
+                    def apply_agem_projection():
                         # Sample from memory
                         rng_1, sample_rng = jax.random.split(rng)
                         # Pick a random sample from AGEM memory
@@ -842,14 +845,49 @@ def main():
                         # scale memory gradient by batch-size ratio
                         ppo_bs = config.num_actors * config.num_steps
                         mem_bs = config.agem_sample_size
-                        scale = (ppo_bs / mem_bs) * config.agem_gradient_scale  # scale factor for AGEM memory gradient
-                        grads_mem = jax.tree_util.tree_map(lambda g: g * scale, grads_mem)
+                        grads_mem_scaled = jax.tree_util.tree_map(lambda g: g * (ppo_bs / mem_bs), grads_mem)
 
                         # Project new grads
-                        grads, proj_stats = agem_project(grads, grads_mem)
+                        projected_grads, proj_stats = agem_project(grads, grads_mem_scaled)
 
                         # Combine stats for logging
-                        agem_stats = {**grads_stats, **proj_stats}
+                        combined_stats = {**grads_stats, **proj_stats}
+
+                        scaled_norm = jnp.linalg.norm(ravel_pytree(grads_mem_scaled)[0])
+                        combined_stats["agem/mem_grad_norm_scaled"] = scaled_norm
+
+                        # Add memory buffer fullness percentage
+                        memory_fullness_pct = (cl_state.size / cl_state.max_size) * 100.0
+                        combined_stats["agem/memory_fullness_pct"] = memory_fullness_pct
+
+                        return projected_grads, combined_stats
+
+                    def no_agem_projection():
+                        # Return empty stats with the same structure as apply_agem_projection
+                        empty_stats = {
+                            "agem/agem_alpha": jnp.array(0.0),
+                            "agem/agem_dot_g": jnp.array(0.0), 
+                            "agem/agem_final_grad_norm": jnp.array(0.0),
+                            "agem/agem_is_proj": jnp.array(False),
+                            "agem/agem_mem_grad_norm": jnp.array(0.0),
+                            "agem/agem_ppo_grad_norm": jnp.array(0.0),
+                            "agem/agem_projected_grad_norm": jnp.array(0.0),
+                            "agem/mem_grad_norm_scaled": jnp.array(0.0),
+                            "agem/memory_fullness_pct": jnp.array(0.0),
+                            "agem/ppo_actor_loss": jnp.array(0.0),
+                            "agem/ppo_entropy": jnp.array(0.0),
+                            "agem/ppo_total_loss": jnp.array(0.0),
+                            "agem/ppo_value_loss": jnp.array(0.0)
+                        }
+                        return grads, empty_stats
+
+                    # Use JAX-compatible conditional logic
+                    if config.cl_method.lower() == "agem" and cl_state is not None:
+                        grads, agem_stats = jax.lax.cond(
+                            cl_state.size > 0,
+                            lambda: apply_agem_projection(),
+                            lambda: no_agem_projection()
+                        )
 
                     loss_information = total_loss, grads, agem_stats
 
@@ -901,7 +939,7 @@ def main():
                 loss_dict = {
                     "total_loss": total_loss
                 }
-                if config.cl_method.lower() == "agem" and env_idx > 0:
+                if config.cl_method.lower() == "agem":
                     loss_dict["agem_stats"] = agem_stats
 
                 avg_grads = jax.tree_util.tree_map(lambda x: jnp.mean(x, axis=0), grads)

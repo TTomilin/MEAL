@@ -167,6 +167,9 @@ def agem_project(grads_ppo, grads_mem, max_norm=40.):
         agem_projected_grad_norm=projected_grad_norm,
         agem_final_grad_norm=final_grad_norm
     )
+
+    # Prefix all stats with "agem/" for consistent wandb logging
+    stats = {f"agem/{k}": v for k, v in stats.items()}
     return unravel(projected), stats
 
 
