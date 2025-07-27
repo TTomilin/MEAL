@@ -137,6 +137,10 @@ def agem_project(grads_ppo, grads_mem, max_norm=40.):
     g_new, unravel = ravel_pytree(grads_ppo)
     g_mem, _ = ravel_pytree(grads_mem)
 
+    # Compute gradient norms for logging
+    ppo_grad_norm = jnp.linalg.norm(g_new)
+    mem_grad_norm = jnp.linalg.norm(g_mem)
+
     dot_g = jnp.vdot(g_new, g_mem)
     dot_mem = jnp.vdot(g_mem, g_mem) + 1e-12
     alpha = dot_g / dot_mem
@@ -148,10 +152,21 @@ def agem_project(grads_ppo, grads_mem, max_norm=40.):
     )
 
     # second global-norm clip (recommended in AGEM paper)
-    norm = jnp.linalg.norm(projected)
-    projected = jnp.where(norm > max_norm, projected * (max_norm / norm), projected)
+    projected_grad_norm = jnp.linalg.norm(projected)
+    projected = jnp.where(projected_grad_norm > max_norm, projected * (max_norm / projected_grad_norm), projected)
 
-    stats = dict(agem_dot_g=dot_g, agem_alpha=alpha, agem_is_proj=(dot_g < 0))
+    # Final gradient norm after clipping
+    final_grad_norm = jnp.linalg.norm(projected)
+
+    stats = dict(
+        agem_dot_g=dot_g, 
+        agem_alpha=alpha, 
+        agem_is_proj=(dot_g < 0),
+        agem_ppo_grad_norm=ppo_grad_norm,
+        agem_mem_grad_norm=mem_grad_norm,
+        agem_projected_grad_norm=projected_grad_norm,
+        agem_final_grad_norm=final_grad_norm
+    )
     return unravel(projected), stats
 
 
