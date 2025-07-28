@@ -6,16 +6,16 @@ from jax._src.flatten_util import ravel_pytree
 
 @struct.dataclass
 class AGEMMemory:
-    obs: jnp.ndarray  # [M, *obs_shape]
-    actions: jnp.ndarray  # [M]
-    log_probs: jnp.ndarray  # [M]
-    advantages: jnp.ndarray  # [M]
-    targets: jnp.ndarray  # [M]
-    values: jnp.ndarray  # [M]
-    ptr: jnp.ndarray  # ()   write pointer  (static int32 on device)
-    size: jnp.ndarray  # ()   how many valid samples in buffer
-    total_seen: jnp.ndarray  # ()   total number of samples seen (for reservoir sampling)
-    max_size: int
+    obs: jnp.ndarray  # [max_tasks, max_size_per_task, *obs_shape]
+    actions: jnp.ndarray  # [max_tasks, max_size_per_task]
+    log_probs: jnp.ndarray  # [max_tasks, max_size_per_task]
+    advantages: jnp.ndarray  # [max_tasks, max_size_per_task]
+    targets: jnp.ndarray  # [max_tasks, max_size_per_task]
+    values: jnp.ndarray  # [max_tasks, max_size_per_task]
+    ptrs: jnp.ndarray  # [max_tasks]   write pointer for each task
+    sizes: jnp.ndarray  # [max_tasks]   how many valid samples per task
+    max_tasks: int
+    max_size_per_task: int
 
 
 class AGEM:
@@ -113,20 +113,22 @@ class AGEM:
         return 0.0
 
 
-def init_agem_memory(max_size: int, obs_shape: tuple):
-    """Create an *empty* buffer."""
+def init_agem_memory(max_size: int, obs_shape: tuple, max_tasks: int = 20):
+    """Create an *empty* per-task buffer."""
+    max_size_per_task = max_size // max_tasks  # Divide total memory among tasks
     zeros = lambda *shape: jnp.zeros(shape, dtype=jnp.float32)
+    zeros_int = lambda *shape: jnp.zeros(shape, dtype=jnp.int32)
     return AGEMMemory(
-        obs=zeros(max_size, *obs_shape),
-        actions=zeros(max_size, ),
-        log_probs=zeros(max_size, ),
-        advantages=zeros(max_size, ),
-        targets=zeros(max_size, ),
-        values=zeros(max_size, ),
-        ptr=jnp.array(0, dtype=jnp.int32),
-        size=jnp.array(0, dtype=jnp.int32),
-        total_seen=jnp.array(0, dtype=jnp.int32),
-        max_size=max_size,
+        obs=zeros(max_tasks, max_size_per_task, *obs_shape),
+        actions=zeros(max_tasks, max_size_per_task),
+        log_probs=zeros(max_tasks, max_size_per_task),
+        advantages=zeros(max_tasks, max_size_per_task),
+        targets=zeros(max_tasks, max_size_per_task),
+        values=zeros(max_tasks, max_size_per_task),
+        ptrs=zeros_int(max_tasks),
+        sizes=zeros_int(max_tasks),
+        max_tasks=max_tasks,
+        max_size_per_task=max_size_per_task,
     )
 
 
@@ -176,17 +178,55 @@ def agem_project(grads_ppo, grads_mem, max_norm=40.):
 
 
 def sample_memory(mem: AGEMMemory, sample_size: int, rng):
-    size = jnp.maximum(mem.size, 1)  # avoid zero
-    # draw `sample_size` indices *with replacement*
-    idxs = jax.random.randint(rng, (sample_size,), 0, size)
+    """Sample uniformly from data of all past tasks."""
+    # Find which tasks have data
+    total_samples = jnp.sum(mem.sizes)
 
-    obs = mem.obs[idxs]  # (sample_size, obs_dim)
-    actions = mem.actions[idxs]
-    logp = mem.log_probs[idxs]
-    advs = mem.advantages[idxs]
-    targets = mem.targets[idxs]
-    values = mem.values[idxs]
-    return obs, actions, logp, advs, targets, values
+    # If no tasks have data, return zeros
+    obs_shape = mem.obs.shape[2:]  # Remove task and per-task dimensions
+
+    def no_data_case():
+        return (
+            jnp.zeros((sample_size, *obs_shape)),
+            jnp.zeros((sample_size,)),
+            jnp.zeros((sample_size,)),
+            jnp.zeros((sample_size,)),
+            jnp.zeros((sample_size,)),
+            jnp.zeros((sample_size,))
+        )
+
+    def sample_from_tasks():
+        # Simple approach: randomly select task indices and sample indices
+        rng_task, rng_sample = jax.random.split(rng)
+
+        # For each sample, choose a random task weighted by its size
+        cumulative_sizes = jnp.cumsum(mem.sizes)
+        random_positions = jax.random.randint(rng_task, (sample_size,), 0, total_samples)
+
+        # Find which task each random position belongs to
+        task_indices = jnp.searchsorted(cumulative_sizes, random_positions, side='right')
+        task_indices = jnp.clip(task_indices, 0, mem.max_tasks - 1)
+
+        # For each selected task, choose a random sample index
+        sample_indices = jax.random.randint(rng_sample, (sample_size,), 0, jnp.maximum(jnp.max(mem.sizes), 1))
+        sample_indices = jnp.minimum(sample_indices, mem.sizes[task_indices] - 1)
+        sample_indices = jnp.maximum(sample_indices, 0)  # Ensure non-negative
+
+        # Extract the samples
+        sampled_obs = mem.obs[task_indices, sample_indices]
+        sampled_actions = mem.actions[task_indices, sample_indices]
+        sampled_logp = mem.log_probs[task_indices, sample_indices]
+        sampled_advs = mem.advantages[task_indices, sample_indices]
+        sampled_targets = mem.targets[task_indices, sample_indices]
+        sampled_values = mem.values[task_indices, sample_indices]
+
+        return sampled_obs, sampled_actions, sampled_logp, sampled_advs, sampled_targets, sampled_values
+
+    return jax.lax.cond(
+        total_samples > 0,
+        lambda: sample_from_tasks(),
+        lambda: no_data_case()
+    )
 
 
 def compute_memory_gradient(network, params,
@@ -240,87 +280,51 @@ def compute_memory_gradient(network, params,
     return grads, stats
 
 
-def update_agem_memory(mem: AGEMMemory,
+def update_agem_memory(mem: AGEMMemory, task_idx: int,
                        new_obs, new_actions, new_log_probs,
                        new_adv, new_tgt, new_val):
     """
-    Update AGEM memory using reservoir sampling to ensure older tasks are retained.
+    Update AGEM memory using simple circular buffer per task.
 
-    Reservoir sampling algorithm:
-    - For the first k items, add them directly to the reservoir
-    - For each subsequent item i, generate random j in [0, i)
-    - If j < k, replace reservoir[j] with item i
+    Args:
+        mem: Current memory state
+        task_idx: Index of the current task (0-indexed)
+        new_obs, new_actions, etc.: New data to add to the task's buffer
     """
     b = new_obs.shape[0]  # batch size to insert
 
-    def update_single_sample(carry, sample_data):
-        mem_state, sample_idx = carry
-        obs_i, action_i, logp_i, adv_i, tgt_i, val_i = sample_data
+    # Ensure task_idx is within bounds
+    task_idx = jnp.clip(task_idx, 0, mem.max_tasks - 1)
 
-        # Current position in the stream (0-indexed)
-        stream_pos = mem_state.total_seen + sample_idx
+    # Get current pointer and size for this task
+    current_ptr = mem.ptrs[task_idx]
+    current_size = mem.sizes[task_idx]
 
-        def add_to_reservoir():
-            # If reservoir not full, add to next available position
-            pos = mem_state.size
-            return mem_state.replace(
-                obs=mem_state.obs.at[pos].set(obs_i),
-                actions=mem_state.actions.at[pos].set(action_i),
-                log_probs=mem_state.log_probs.at[pos].set(logp_i),
-                advantages=mem_state.advantages.at[pos].set(adv_i),
-                targets=mem_state.targets.at[pos].set(tgt_i),
-                values=mem_state.values.at[pos].set(val_i),
-                size=mem_state.size + 1
-            )
+    # Calculate indices where to insert new data (circular buffer)
+    indices = (current_ptr + jnp.arange(b)) % mem.max_size_per_task
 
-        def reservoir_sample(rng_key):
-            # Generate random position in [0, stream_pos + 1)
-            rand_pos = jax.random.randint(rng_key, (), 0, stream_pos + 1)
+    # Update the memory for this specific task
+    updated_obs = mem.obs.at[task_idx, indices].set(new_obs)
+    updated_actions = mem.actions.at[task_idx, indices].set(new_actions)
+    updated_log_probs = mem.log_probs.at[task_idx, indices].set(new_log_probs)
+    updated_advantages = mem.advantages.at[task_idx, indices].set(new_adv)
+    updated_targets = mem.targets.at[task_idx, indices].set(new_tgt)
+    updated_values = mem.values.at[task_idx, indices].set(new_val)
 
-            def replace_sample():
-                # Replace sample at rand_pos with new sample
-                return mem_state.replace(
-                    obs=mem_state.obs.at[rand_pos].set(obs_i),
-                    actions=mem_state.actions.at[rand_pos].set(action_i),
-                    log_probs=mem_state.log_probs.at[rand_pos].set(logp_i),
-                    advantages=mem_state.advantages.at[rand_pos].set(adv_i),
-                    targets=mem_state.targets.at[rand_pos].set(tgt_i),
-                    values=mem_state.values.at[rand_pos].set(val_i)
-                )
+    # Update pointer and size for this task
+    new_ptr = (current_ptr + b) % mem.max_size_per_task
+    new_size = jnp.minimum(current_size + b, mem.max_size_per_task)
 
-            def keep_existing():
-                return mem_state
+    updated_ptrs = mem.ptrs.at[task_idx].set(new_ptr)
+    updated_sizes = mem.sizes.at[task_idx].set(new_size)
 
-            # Replace if rand_pos < reservoir_size (max_size)
-            return jax.lax.cond(
-                rand_pos < mem_state.max_size,
-                lambda: replace_sample(),
-                lambda: keep_existing()
-            )
-
-        # Use a deterministic RNG based on stream position for reproducibility
-        rng_key = jax.random.PRNGKey(stream_pos)
-
-        # If reservoir not full, add directly; otherwise use reservoir sampling
-        updated_mem = jax.lax.cond(
-            mem_state.size < mem_state.max_size,
-            lambda: add_to_reservoir(),
-            lambda: reservoir_sample(rng_key)
-        )
-
-        return (updated_mem, sample_idx + 1), None
-
-    # Prepare data for scan
-    sample_data = (new_obs, new_actions, new_log_probs, new_adv, new_tgt, new_val)
-
-    # Process each sample using scan
-    (final_mem, _), _ = jax.lax.scan(
-        update_single_sample,
-        (mem, 0),
-        sample_data
+    return mem.replace(
+        obs=updated_obs,
+        actions=updated_actions,
+        log_probs=updated_log_probs,
+        advantages=updated_advantages,
+        targets=updated_targets,
+        values=updated_values,
+        ptrs=updated_ptrs,
+        sizes=updated_sizes
     )
-
-    # Update total_seen counter
-    final_mem = final_mem.replace(total_seen=final_mem.total_seen + b)
-
-    return final_mem

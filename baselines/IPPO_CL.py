@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 
 from jax._src.flatten_util import ravel_pytree
 
@@ -862,7 +863,9 @@ def main():
                         combined_stats["agem/mem_grad_norm_scaled"] = scaled_norm
 
                         # Add memory buffer fullness percentage
-                        memory_fullness_pct = (cl_state.size / cl_state.max_size) * 100.0
+                        total_used = jnp.sum(cl_state.sizes)
+                        total_capacity = cl_state.max_tasks * cl_state.max_size_per_task
+                        memory_fullness_pct = (total_used / total_capacity) * 100.0
                         combined_stats["agem/memory_fullness_pct"] = memory_fullness_pct
 
                         return projected_grads, combined_stats
@@ -889,7 +892,7 @@ def main():
                     # Use JAX-compatible conditional logic
                     if config.cl_method.lower() == "agem" and cl_state is not None:
                         grads, agem_stats = jax.lax.cond(
-                            cl_state.size > 0,
+                            jnp.sum(cl_state.sizes) > 0,
                             lambda: apply_agem_projection(),
                             lambda: no_agem_projection()
                         )
@@ -980,7 +983,7 @@ def main():
                 val_for_mem = traj_batch.value[idx].reshape(-1)
 
                 cl_state = update_agem_memory(
-                    cl_state,
+                    cl_state, env_idx,
                     obs_for_mem, acts_for_mem, logp_for_mem,
                     adv_for_mem, tgt_for_mem, val_for_mem
                 )
@@ -1252,7 +1255,7 @@ def main():
         if not config.use_cnn:
             obs_dim = (np.prod(obs_dim),)
         # Initialize memory buffer
-        cl_state = init_agem_memory(config.agem_memory_size, obs_dim)
+        cl_state = init_agem_memory(config.agem_memory_size, obs_dim, max_tasks=config.seq_length)
 
     # apply the loop_over_envs function to the environments
     loop_over_envs(train_rng, train_state, cl_state, envs)
