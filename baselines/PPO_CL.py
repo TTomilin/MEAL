@@ -2,7 +2,9 @@ import json
 import os
 from pathlib import Path
 
-from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project
+from jax._src.flatten_util import ravel_pytree
+
+from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, update_agem_memory
 from cl_methods.FT import FT
 from cl_methods.L2 import L2
 from cl_methods.MAS import MAS
@@ -55,6 +57,8 @@ class Config:
     # Reward shaping
     reward_shaping: bool = True
     reward_shaping_horizon: float = 2.5e6
+    sparse_rewards: bool = False
+    individual_rewards: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # NETWORK ARCHITECTURE PARAMETERS
@@ -87,6 +91,7 @@ class Config:
     # AGEM specific parameters
     agem_memory_size: int = 50000
     agem_sample_size: int = 128
+    agem_gradient_scale: float = 1.0
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
@@ -155,6 +160,13 @@ def main():
     print("Device: ", jax.devices())
 
     config = tyro.cli(Config)
+
+    # Validate reward settings
+    if config.sparse_rewards and config.individual_rewards:
+        raise ValueError(
+            "Cannot enable both sparse_rewards and individual_rewards simultaneously. "
+            "Please choose only one reward setting."
+        )
 
     if config.single_task_idx is not None:  # single-task baseline
         config.cl_method = "ft"
@@ -580,7 +592,7 @@ def main():
                 rng, _rng = jax.random.split(rng)
 
                 # prepare the observations for the network
-                obs_batch = batchify(last_obs, agents, config.num_actors, not config.use_cnn)  # (num_actors, obs_dim)
+                obs_batch = batchify(last_obs, env.agents, config.num_actors, not config.use_cnn)  # (num_actors, obs_dim)
 
                 # apply the policy network to the observations to get the suggested actions and their values
                 pi, value = network.apply(train_state.params, obs_batch, env_idx=env_idx)
@@ -604,19 +616,32 @@ def main():
                     rng_step, env_state, env_act
                 )
 
-                # REWARD SHAPING IN NEW VERSION
-
-                # add the reward of one of the agents to the info dictionary
-                info["reward"] = reward["agent_0"]
-
                 current_timestep = update_step * config.num_steps * config.num_envs
 
-                # add the shaped reward to the normal reward
-                reward = jax.tree_util.tree_map(lambda x, y:
-                                                x + y * rew_shaping_anneal(current_timestep),
-                                                reward,
-                                                info["shaped_reward"]
-                                                )
+                # Apply different reward settings based on configuration
+                if config.sparse_rewards:
+                    # Sparse rewards: only delivery rewards (no shaped rewards)
+                    # reward already contains individual delivery rewards from environment
+                    pass
+                elif config.individual_rewards:
+                    # Individual rewards: delivery rewards + individual shaped rewards
+                    # Environment now provides individual delivery rewards directly
+                    reward = jax.tree_util.tree_map(lambda x, y:
+                                                    x + y * rew_shaping_anneal(current_timestep),
+                                                    reward,
+                                                    info["shaped_reward"]
+                                                    )
+                else:
+                    # Default behavior: shared delivery rewards + individual shaped rewards
+                    # Convert individual delivery rewards to shared rewards (both agents get total)
+                    total_delivery_reward = reward["agent_0"] + reward["agent_1"]
+                    shared_delivery_rewards = {"agent_0": total_delivery_reward, "agent_1": total_delivery_reward}
+
+                    reward = jax.tree_util.tree_map(lambda x, y:
+                                                    x + y * rew_shaping_anneal(current_timestep),
+                                                    shared_delivery_rewards,
+                                                    info["shaped_reward"]
+                                                    )
 
                 transition = Transition(
                     batchify(done, env.agents, config.num_actors, not config.use_cnn).squeeze(),
@@ -768,9 +793,10 @@ def main():
                     # call the grad_fn function to get the total loss and the gradients
                     total_loss, grads = grad_fn(train_state.params, traj_batch, advantages, targets)
 
-                    # For AGEM, we need to project the gradients if this is not the first environment
+                    # For AGEM, we need to project the gradients
                     agem_stats = {}
-                    if config.cl_method.lower() == "agem" and env_idx > 0 and cl_state is not None:
+
+                    def apply_agem_projection():
                         # Sample from memory
                         rng_1, sample_rng = jax.random.split(rng)
                         # Pick a random sample from AGEM memory
@@ -787,11 +813,59 @@ def main():
                             env_idx=env_idx
                         )
 
+                        # scale memory gradient by batch-size ratio
+                        # ppo_bs = config.num_actors * config.num_steps
+                        # mem_bs = config.agem_sample_size
+                        g_ppo, _  = ravel_pytree(grads)          # grads  = fresh PPO grads
+                        g_mem, _  = ravel_pytree(grads_mem)      # grads_mem = memory grads
+                        norm_ppo  = jnp.linalg.norm(g_ppo) + 1e-12
+                        norm_mem  = jnp.linalg.norm(g_mem) + 1e-12
+                        scale = norm_ppo / norm_mem * config.agem_gradient_scale
+                        grads_mem_scaled = jax.tree_util.tree_map(lambda g: g * scale, grads_mem)
+
                         # Project new grads
-                        grads, proj_stats = agem_project(grads, grads_mem)
+                        projected_grads, proj_stats = agem_project(grads, grads_mem_scaled)
 
                         # Combine stats for logging
-                        agem_stats = {**grads_stats, **proj_stats}
+                        combined_stats = {**grads_stats, **proj_stats}
+
+                        scaled_norm = jnp.linalg.norm(ravel_pytree(grads_mem_scaled)[0])
+                        combined_stats["agem/mem_grad_norm_scaled"] = scaled_norm
+
+                        # Add memory buffer fullness percentage
+                        total_used = jnp.sum(cl_state.sizes)
+                        total_capacity = cl_state.max_tasks * cl_state.max_size_per_task
+                        memory_fullness_pct = (total_used / total_capacity) * 100.0
+                        combined_stats["agem/memory_fullness_pct"] = memory_fullness_pct
+
+                        return projected_grads, combined_stats
+
+                    def no_agem_projection():
+                        # Return empty stats with the same structure as apply_agem_projection
+                        empty_stats = {
+                            "agem/agem_alpha": jnp.array(0.0),
+                            "agem/agem_dot_g": jnp.array(0.0), 
+                            "agem/agem_final_grad_norm": jnp.array(0.0),
+                            "agem/agem_is_proj": jnp.array(False),
+                            "agem/agem_mem_grad_norm": jnp.array(0.0),
+                            "agem/agem_ppo_grad_norm": jnp.array(0.0),
+                            "agem/agem_projected_grad_norm": jnp.array(0.0),
+                            "agem/mem_grad_norm_scaled": jnp.array(0.0),
+                            "agem/memory_fullness_pct": jnp.array(0.0),
+                            "agem/ppo_actor_loss": jnp.array(0.0),
+                            "agem/ppo_entropy": jnp.array(0.0),
+                            "agem/ppo_total_loss": jnp.array(0.0),
+                            "agem/ppo_value_loss": jnp.array(0.0)
+                        }
+                        return grads, empty_stats
+
+                    # Use JAX-compatible conditional logic
+                    if config.cl_method.lower() == "agem" and cl_state is not None:
+                        grads, agem_stats = jax.lax.cond(
+                            jnp.sum(cl_state.sizes) > 0,
+                            lambda: apply_agem_projection(),
+                            lambda: no_agem_projection()
+                        )
 
                     loss_information = total_loss, grads, agem_stats
 
@@ -862,23 +936,40 @@ def main():
 
             # unpack update_state
             train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state = update_state
-            metric = info
             current_timestep = update_step * config.num_steps * config.num_envs
-            metric = jax.tree_util.tree_map(lambda x: x.mean(), metric)
+            metrics = jax.tree_util.tree_map(lambda x: x.mean(), info)
+
+            if config.cl_method.lower() == "agem" and cl_state is not None:
+                rng, mem_rng = jax.random.split(rng)
+                perm = jax.random.permutation(mem_rng, advantages.shape[0])  # length = traj_len
+                idx = perm[: config.agem_sample_size]
+
+                obs_for_mem = traj_batch.obs[idx].reshape(-1, traj_batch.obs.shape[-1])
+                acts_for_mem = traj_batch.action[idx].reshape(-1)
+                logp_for_mem = traj_batch.log_prob[idx].reshape(-1)
+                adv_for_mem = advantages[idx].reshape(-1)
+                tgt_for_mem = targets[idx].reshape(-1)
+                val_for_mem = traj_batch.value[idx].reshape(-1)
+
+                cl_state = update_agem_memory(
+                    cl_state, env_idx,
+                    obs_for_mem, acts_for_mem, logp_for_mem,
+                    adv_for_mem, tgt_for_mem, val_for_mem
+                )
 
             # General section
             # Update the step counter
             update_step += 1
 
-            metric["General/env_index"] = env_idx
-            metric["General/update_step"] = update_step
-            metric["General/steps_for_env"] = steps_for_env
-            metric["General/env_step"] = update_step * config.num_steps * config.num_envs
+            metrics["General/env_index"] = env_idx
+            metrics["General/update_step"] = update_step
+            metrics["General/steps_for_env"] = steps_for_env
+            metrics["General/env_step"] = update_step * config.num_steps * config.num_envs
             if config.anneal_lr:
-                metric["General/learning_rate"] = linear_schedule(
+                metrics["General/learning_rate"] = linear_schedule(
                     update_step * config.num_minibatches * config.update_epochs)
             else:
-                metric["General/learning_rate"] = config.lr
+                metrics["General/learning_rate"] = config.lr
 
             # Losses section
             # Extract total_loss and components from loss_info
@@ -888,18 +979,18 @@ def main():
             value_loss, loss_actor, entropy, reg_loss = total_loss[1]
             total_loss = total_loss[0]  # The actual scalar loss value
 
-            metric["Losses/total_loss"] = total_loss.mean()
-            metric["Losses/value_loss"] = value_loss.mean()
-            metric["Losses/actor_loss"] = loss_actor.mean()
-            metric["Losses/entropy"] = entropy.mean()
-            metric["Losses/reg_loss"] = reg_loss.mean()
+            metrics["Losses/total_loss"] = total_loss.mean()
+            metrics["Losses/value_loss"] = value_loss.mean()
+            metrics["Losses/actor_loss"] = loss_actor.mean()
+            metrics["Losses/entropy"] = entropy.mean()
+            metrics["Losses/reg_loss"] = reg_loss.mean()
 
             # Add AGEM stats to metrics if they exist
             if "agem_stats" in loss_dict:
                 agem_stats = loss_dict["agem_stats"]
                 for k, v in agem_stats.items():
                     if v.size > 0:  # Only add if there are values
-                        metric[k] = v.mean()
+                        metrics[k] = v.mean()
 
             # Soup section
             # Agent-agnostic soup counting
@@ -909,31 +1000,31 @@ def main():
                 agent_soup = info["soups"][agent].sum()
                 agent_soups[agent] = agent_soup
                 soup_delivered += agent_soup
-                metric[f"Soup/{agent}_soup"] = agent_soup
+                metrics[f"Soup/{agent}_soup"] = agent_soup
 
             episode_frac = config.num_steps / env.max_steps
-            metric["Soup/total"] = soup_delivered
-            metric["Soup/scaled"] = soup_delivered / (max_soup_dict[env_names[env_idx]] * episode_frac)
-            metric.pop('soups', None)
+            metrics["Soup/total"] = soup_delivered
+            metrics["Soup/scaled"] = soup_delivered / (max_soup_dict[env_names[env_idx]] * episode_frac)
+            metrics.pop('soups', None)
 
             # Rewards section
             # Agent-agnostic reward logging
             for agent in env.agents:
-                metric[f"General/shaped_reward_{agent}"] = metric["shaped_reward"][agent]
-                metric[f"General/shaped_reward_annealed_{agent}"] = metric[
+                metrics[f"General/shaped_reward_{agent}"] = metrics["shaped_reward"][agent]
+                metrics[f"General/shaped_reward_annealed_{agent}"] = metrics[
                                                                         f"General/shaped_reward_{agent}"] * rew_shaping_anneal(
                     current_timestep)
-            metric.pop('shaped_reward', None)
+            metrics.pop('shaped_reward', None)
 
             # Advantages and Targets section
-            metric["Advantage_Targets/advantages"] = advantages.mean()
-            metric["Advantage_Targets/targets"] = targets.mean()
+            metrics["Advantage_Targets/advantages"] = advantages.mean()
+            metrics["Advantage_Targets/targets"] = targets.mean()
 
             # Evaluation section
             if config.evaluation:
                 for i in range(len(env_names)):
-                    metric[f"Evaluation/{env_names[i]}"] = jnp.nan
-                    metric[f"Scaled returns/evaluation_{env_names[i]}_scaled"] = jnp.nan
+                    metrics[f"Evaluation/{env_names[i]}"] = jnp.nan
+                    metrics[f"Scaled returns/evaluation_{env_names[i]}_scaled"] = jnp.nan
 
             def evaluate_and_log(rng, update_step):
                 rng, eval_rng = jax.random.split(rng)
@@ -958,14 +1049,14 @@ def main():
                 def do_not_log(metrics, update_step):
                     return None
 
-                jax.lax.cond((update_step % config.log_interval) == 0, log_metrics, do_not_log, metric, update_step)
+                jax.lax.cond((update_step % config.log_interval) == 0, log_metrics, do_not_log, metrics, update_step)
 
             # Evaluate the model and log the metrics
             evaluate_and_log(rng=rng, update_step=update_step)
 
             runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state)
 
-            return runner_state, metric
+            return runner_state, metrics
 
         rng, train_rng = jax.random.split(rng)
 
@@ -973,7 +1064,7 @@ def main():
         runner_state = (train_state, env_state, obsv, 0, 0, train_rng, cl_state)
 
         # apply the _update_step function a series of times, while keeping track of the state
-        runner_state, metric = jax.lax.scan(
+        runner_state, metrics = jax.lax.scan(
             f=_update_step,
             init=runner_state,
             xs=None,
@@ -981,7 +1072,7 @@ def main():
         )
 
         # Return the runner state after the training loop, and the metric arrays
-        return runner_state, metric
+        return runner_state, metrics
 
     def loop_over_envs(rng, train_state, cl_state, envs):
         '''
@@ -1005,7 +1096,7 @@ def main():
 
         for i, (rng, env) in enumerate(zip(env_rngs, envs)):
             # --- Train on environment i using the *current* ewc_state ---
-            runner_state, metric = train_on_environment(rng, train_state, env, cl_state, i)
+            runner_state, metrics = train_on_environment(rng, train_state, env, cl_state, i)
             train_state = runner_state[0]
 
             importance = cl.compute_importance(train_state.params, env, network, i, rng, config.use_cnn,
