@@ -102,6 +102,10 @@ def main() -> None:
         if cl_method == 'EWC' and cfg.get("ewc_mode") == "online":
             cl_method = "Online_EWC"
 
+        # Handle partial observability experiments
+        if cfg.get("env_name") == "overcooked_po":
+            cl_method = f"{cl_method}_partial"
+
         strategy = cfg.get("strategy")
         seq_len = cfg.get("seq_length")
         seed = max(cfg.get("seed", 1), 1)
