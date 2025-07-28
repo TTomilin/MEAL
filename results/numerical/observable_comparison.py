@@ -145,23 +145,17 @@ def compare_observability_settings(
             level=level,
         )
 
-        # Add rows for both settings
+        # Create one row per level with FO and PO as columns
         rows.append({
             "Level": level,
-            "Setting": "Fully Observable",
-            "AveragePerformance": full_metrics["AveragePerformance"],
-            "AveragePerformance_CI": full_metrics["AveragePerformance_CI"],
-            "Forgetting": full_metrics["Forgetting"],
-            "Forgetting_CI": full_metrics["Forgetting_CI"],
-        })
-
-        rows.append({
-            "Level": level,
-            "Setting": "Partially Observable",
-            "AveragePerformance": partial_metrics["AveragePerformance"],
-            "AveragePerformance_CI": partial_metrics["AveragePerformance_CI"],
-            "Forgetting": partial_metrics["Forgetting"],
-            "Forgetting_CI": partial_metrics["Forgetting_CI"],
+            "FO_AveragePerformance": full_metrics["AveragePerformance"],
+            "FO_AveragePerformance_CI": full_metrics["AveragePerformance_CI"],
+            "FO_Forgetting": full_metrics["Forgetting"],
+            "FO_Forgetting_CI": full_metrics["Forgetting_CI"],
+            "PO_AveragePerformance": partial_metrics["AveragePerformance"],
+            "PO_AveragePerformance_CI": partial_metrics["AveragePerformance_CI"],
+            "PO_Forgetting": partial_metrics["Forgetting"],
+            "PO_Forgetting_CI": partial_metrics["Forgetting_CI"],
         })
 
     return pd.DataFrame(rows)
@@ -209,50 +203,68 @@ if __name__ == "__main__":
         end_window_evals=args.end_window_evals,
     )
 
-    # For each level, identify best performance
+    # For each level, identify best performance and format the table
     df_out_rows = []
-    for level in args.levels:
-        level_data = df[df["Level"] == level]
 
-        # Find best values for this level (excluding NaN and inf values)
-        valid_A = level_data["AveragePerformance"].replace([np.inf, -np.inf], np.nan).dropna()
-        valid_F = level_data["Forgetting"].replace([np.inf, -np.inf], np.nan).dropna()
+    for _, row in df.iterrows():
+        level = row["Level"]
 
-        best_A = valid_A.max() if len(valid_A) > 0 else np.nan
-        best_F = valid_F.min() if len(valid_F) > 0 else np.nan
+        # Find best values across FO and PO for this level
+        fo_a = row["FO_AveragePerformance"]
+        po_a = row["PO_AveragePerformance"]
+        fo_f = row["FO_Forgetting"]
+        po_f = row["PO_Forgetting"]
 
-        for _, row in level_data.iterrows():
-            df_out_rows.append({
-                "Level": f"Level {row['Level']}",
-                "Setting": row["Setting"],
-                "AveragePerformance": _fmt(
-                    row["AveragePerformance"], 
-                    row["AveragePerformance_CI"], 
-                    row["AveragePerformance"] == best_A, 
-                    "max"
-                ),
-                "Forgetting": _fmt(
-                    row["Forgetting"], 
-                    row["Forgetting_CI"], 
-                    row["Forgetting"] == best_F, 
-                    "min"
-                ),
-            })
+        # Determine best values (excluding NaN and inf)
+        valid_a_values = [v for v in [fo_a, po_a] if not (np.isnan(v) or np.isinf(v))]
+        valid_f_values = [v for v in [fo_f, po_f] if not (np.isnan(v) or np.isinf(v))]
+
+        best_a = max(valid_a_values) if valid_a_values else np.nan
+        best_f = min(valid_f_values) if valid_f_values else np.nan
+
+        df_out_rows.append({
+            "Level": f"Level {int(level)}",
+            "FO_AveragePerformance": _fmt(
+                fo_a, 
+                row["FO_AveragePerformance_CI"], 
+                fo_a == best_a, 
+                "max"
+            ),
+            "PO_AveragePerformance": _fmt(
+                po_a, 
+                row["PO_AveragePerformance_CI"], 
+                po_a == best_a, 
+                "max"
+            ),
+            "FO_Forgetting": _fmt(
+                fo_f, 
+                row["FO_Forgetting_CI"], 
+                fo_f == best_f, 
+                "min"
+            ),
+            "PO_Forgetting": _fmt(
+                po_f, 
+                row["PO_Forgetting_CI"], 
+                po_f == best_f, 
+                "min"
+            ),
+        })
 
     df_out = pd.DataFrame(df_out_rows)
 
     # Rename columns to mathy headers
     df_out.columns = [
         "Level",
-        "Setting",
-        r"$\mathcal{A}\!\uparrow$",
-        r"$\mathcal{F}\!\downarrow$",
+        r"$\mathcal{A}\!\uparrow$ FO",
+        r"$\mathcal{A}\!\uparrow$ PO",
+        r"$\mathcal{F}\!\downarrow$ FO",
+        r"$\mathcal{F}\!\downarrow$ PO",
     ]
 
     latex_table = df_out.to_latex(
         index=False,
         escape=False,
-        column_format="llcc",
+        column_format="lcccc",
         label="tab:observability_comparison",
     )
 
