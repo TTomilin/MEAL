@@ -2,7 +2,7 @@
 # jax[cuda12] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 # jaxlib==0.4.25+cuda12.cudnn89 -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 jax[cuda12]
-flax
+flax==0.10.2
 chex==0.1.84
 optax==0.1.7
 dotmap==1.3.30
