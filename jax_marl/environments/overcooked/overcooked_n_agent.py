@@ -95,7 +95,14 @@ class Overcooked(MultiAgentEnv):
         self.agents = [f"agent_{i}" for i in range(num_agents)]
         self.start_idx = None if start_idx is None else jnp.array(start_idx, jnp.uint32)
 
-        self.action_set = jnp.array(list(Actions), dtype=jnp.uint8)
+        self.action_set = jnp.array([
+            Actions.up,
+            Actions.down,
+            Actions.right,
+            Actions.left,
+            Actions.stay,
+            Actions.interact,
+        ], dtype=jnp.uint8)
 
         self.random_reset = random_reset
         self.max_steps = max_steps
@@ -265,57 +272,95 @@ class Overcooked(MultiAgentEnv):
     # ───────────────────────── movement / step ────────────────────
 
     def _proposed_positions(self, state: State, action: chex.Array):
-        move_mask = action < 4  # 0-3 are the directional actions
-        step_vec = DIR_TO_VEC[action.clip(max=3)]
-        proposed = jnp.clip(
-            state.agent_pos + move_mask[:, None] * step_vec,
-            a_min=0,
-            a_max=jnp.array((self.width - 1, self.height - 1), jnp.uint32),
-        ).astype(jnp.uint32)
+        # Match the original overcooked.py logic exactly
+        is_move_action = jnp.logical_and(action != Actions.stay, action != Actions.interact)
+        is_move_action_transposed = jnp.expand_dims(is_move_action, 0).transpose()
 
-        # block by walls / goals
-        wall_block = state.wall_map[proposed[:, 1], proposed[:, 0]]
-        goal_block = (proposed[:, None, :] == state.goal_pos[None, :, :]).all(-1).any(-1)
-        blocked = wall_block | goal_block | (~move_mask)
-        return jnp.where(blocked[:, None], state.agent_pos, proposed)
+        # Calculate proposed positions like original
+        fwd_pos = jnp.minimum(
+            jnp.maximum(state.agent_pos + is_move_action_transposed * DIR_TO_VEC[jnp.minimum(action, 3)] \
+                        + ~is_move_action_transposed * state.agent_dir, 0),
+            jnp.array((self.width - 1, self.height - 1), dtype=jnp.uint32)
+        )
+
+        # Can't go past wall or goal - match original logic
+        def _wall_or_goal(fwd_position, wall_map, goal_pos):
+            fwd_wall = wall_map.at[fwd_position[1], fwd_position[0]].get()
+            goal_collision = lambda pos, goal: jnp.logical_and(pos[0] == goal[0], pos[1] == goal[1])
+            fwd_goal = jax.vmap(goal_collision, in_axes=(None, 0))(fwd_position, goal_pos)
+            fwd_goal = jnp.any(fwd_goal)
+            return jnp.asarray(fwd_wall), jnp.asarray(fwd_goal)
+
+        fwd_pos_has_wall, fwd_pos_has_goal = jax.vmap(_wall_or_goal, in_axes=(0, None, None))(fwd_pos, state.wall_map, state.goal_pos)
+        fwd_pos_blocked = jnp.logical_or(fwd_pos_has_wall, fwd_pos_has_goal)
+        fwd_pos_blocked = fwd_pos_blocked.flatten()[:self.num_agents]
+        fwd_pos_blocked = fwd_pos_blocked.reshape((self.num_agents, 1))
+
+        bounced = jnp.logical_or(fwd_pos_blocked, ~is_move_action_transposed)
+        proposed = (bounced * state.agent_pos + (~bounced) * fwd_pos).astype(jnp.uint32)
+
+        return proposed
 
     def _resolve_collisions(self, current, proposed):
         n = current.shape[0]
 
-        # same destination (collision)  ────────────────────────────────
-        same_dest = (proposed[:, None, :] == proposed[None, :, :]).all(-1)
-        coll = (same_dest.sum(-1) > 1)  # True if ≥2 agents share a tile
+        # For 2 agents, match the original overcooked.py logic exactly
+        if n == 2:
+            # Check for collision (both agents going to same position)
+            collision = jnp.all(proposed[0] == proposed[1])
 
-        # swap places and circular movements ──────────────────────────
-        if n == 1:  # no other agents → no swap test
-            blocked = coll
+            # If collision, both agents stay in place
+            alice_pos = jnp.where(collision, current[0], proposed[0])
+            bob_pos = jnp.where(collision, current[1], proposed[1])
+
+            # Check for swapping places (agents passing through each other)
+            swap_places = jnp.logical_and(
+                jnp.all(proposed[0] == current[1]),
+                jnp.all(proposed[1] == current[0]),
+            )
+
+            # If swapping and no collision, prevent the swap
+            alice_pos = jnp.where(~collision & swap_places, current[0], alice_pos)
+            bob_pos = jnp.where(~collision & swap_places, current[1], bob_pos)
+
+            return jnp.array([alice_pos, bob_pos]).astype(jnp.uint32)
+
         else:
-            # Check for direct pairwise swaps (i ↔ j)
-            swap = ((proposed[:, None, :] == current[None, :, :]).all(-1) &
-                    (proposed[None, :, :] == current[:, None, :]).all(-1))
-            # ignore i==j diagonal ─ we only care about pairs (i ≠ j)
-            swap = swap & (~jnp.eye(n, dtype=bool))
+            # For n > 2 agents, use the original generic logic
+            # same destination (collision)  ────────────────────────────────
+            same_dest = (proposed[:, None, :] == proposed[None, :, :]).all(-1)
+            coll = (same_dest.sum(-1) > 1)  # True if ≥2 agents share a tile
 
-            # Check for circular movements (A→B→C→A, etc.)
-            # An agent is part of a circular movement if it's moving to another agent's 
-            # current position AND that other agent is also moving
+            # swap places and circular movements ──────────────────────────
+            if n == 1:  # no other agents → no swap test
+                blocked = coll
+            else:
+                # Check for direct pairwise swaps (i ↔ j)
+                swap = ((proposed[:, None, :] == current[None, :, :]).all(-1) &
+                        (proposed[None, :, :] == current[:, None, :]).all(-1))
+                # ignore i==j diagonal ─ we only care about pairs (i ≠ j)
+                swap = swap & (~jnp.eye(n, dtype=bool))
 
-            # Find agents that are actually moving (not staying in place)
-            is_moving = ~(proposed == current).all(-1)
+                # Check for circular movements (A→B→C→A, etc.)
+                # An agent is part of a circular movement if it's moving to another agent's 
+                # current position AND that other agent is also moving
 
-            # Create a matrix where entry (i,j) is True if agent i is moving to agent j's current position
-            moving_to_agent_pos = (proposed[:, None, :] == current[None, :, :]).all(-1)
-            moving_to_agent_pos = moving_to_agent_pos & (~jnp.eye(n, dtype=bool))  # ignore self
+                # Find agents that are actually moving (not staying in place)
+                is_moving = ~(proposed == current).all(-1)
 
-            # An agent is blocked if it's moving to another agent's position AND that other agent is also moving
-            # This prevents both simple swaps and circular movements
-            # For each agent, check if it's moving to any other moving agent's current position
-            targets_moving_agents = moving_to_agent_pos & is_moving[None, :]  # broadcast is_moving
-            circular_blocked = targets_moving_agents.any(axis=1)  # True if agent targets any moving agent
+                # Create a matrix where entry (i,j) is True if agent i is moving to agent j's current position
+                moving_to_agent_pos = (proposed[:, None, :] == current[None, :, :]).all(-1)
+                moving_to_agent_pos = moving_to_agent_pos & (~jnp.eye(n, dtype=bool))  # ignore self
 
-            blocked = coll | swap.any(-1) | circular_blocked
+                # An agent is blocked if it's moving to another agent's position AND that other agent is also moving
+                # This prevents both simple swaps and circular movements
+                # For each agent, check if it's moving to any other moving agent's current position
+                targets_moving_agents = moving_to_agent_pos & is_moving[None, :]  # broadcast is_moving
+                circular_blocked = targets_moving_agents.any(axis=1)  # True if agent targets any moving agent
 
-        return jnp.where(blocked[:, None], current, proposed).astype(jnp.uint32)
+                blocked = coll | swap.any(-1) | circular_blocked
+
+            return jnp.where(blocked[:, None], current, proposed).astype(jnp.uint32)
 
     def step_agents(self, key, state, action):
         assert action.shape == (self.num_agents,)
@@ -401,11 +446,14 @@ class Overcooked(MultiAgentEnv):
     ) -> Tuple[Dict[str, chex.Array], State, Dict[str, float], Dict[str, bool], Dict]:
         """Perform single timestep state transition."""
 
-        # convert incoming dict → jnp.array([a0,a1,…])
+        # convert incoming dict → jnp.array([a0,a1,…]) and apply action_set.take() like original
         if isinstance(actions, dict):
-            act_arr = jnp.array([actions[a].flatten()[0] for a in self.agents], dtype=jnp.uint8)
+            action_indices = jnp.array([actions[a].flatten()[0] for a in self.agents], dtype=jnp.uint8)
         else:
-            act_arr = actions
+            action_indices = actions
+
+        # Use action_set.take() to convert indices to action values, matching original behavior
+        act_arr = self.action_set.take(indices=action_indices)
 
         state, reward, shaped_rewards, soups_delivered = self.step_agents(key, state, act_arr)
 
@@ -629,8 +677,35 @@ class Overcooked(MultiAgentEnv):
 
         # Interactions with onion/plate piles and objects on counter
         # Pickup if: table, not empty, room in inv & object is not something unpickable (e.g. pot or goal)
-        successful_pickup = is_table * ~table_is_empty * inv_is_empty * jnp.logical_or(object_is_pile,
-                                                                                       object_is_pickable)
+        base_pickup_condition = is_table * ~table_is_empty * inv_is_empty * jnp.logical_or(object_is_pile,
+                                                                                           object_is_pickable)
+
+        # Apply agent restrictions if they exist (for compatibility with original)
+        agent_key = f"agent_{player_idx}"
+        can_pick_onions = jnp.array(True)
+        can_pick_plates = jnp.array(True)
+
+        # Note: agent_restrictions not implemented in n-agent version, but keeping structure for compatibility
+        # if self.agent_restrictions:
+        #     can_pick_onions = jnp.array(not self.agent_restrictions.get(f"{agent_key}_cannot_pick_onions", False))
+        #     can_pick_plates = jnp.array(not self.agent_restrictions.get(f"{agent_key}_cannot_pick_plates", False))
+
+        # Check if the object being picked up is restricted
+        picking_up_onion = jnp.logical_or(object_on_table == OBJECT_TO_INDEX["onion_pile"], 
+                                         object_on_table == OBJECT_TO_INDEX["onion"])
+        picking_up_plate = jnp.logical_or(object_on_table == OBJECT_TO_INDEX["plate_pile"], 
+                                         object_on_table == OBJECT_TO_INDEX["plate"])
+
+        # Agent can pick up the object if not restricted
+        can_pick_this_object = jnp.logical_or(
+            jnp.logical_and(picking_up_onion, can_pick_onions),
+            jnp.logical_or(
+                jnp.logical_and(picking_up_plate, can_pick_plates),
+                jnp.logical_and(~picking_up_onion, ~picking_up_plate)  # Other objects (dishes) are always allowed
+            )
+        )
+
+        successful_pickup = base_pickup_condition * can_pick_this_object
         successful_drop = is_table * table_is_empty * ~inv_is_empty
         successful_delivery = is_table * object_is_goal * holding_dish
         no_effect = jnp.logical_and(jnp.logical_and(~successful_pickup, ~successful_drop), ~successful_delivery)
