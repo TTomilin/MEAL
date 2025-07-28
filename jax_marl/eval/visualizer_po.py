@@ -265,7 +265,9 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
                         'name': 'soup',  # Dish with soup
                         'position': (int(y), int(x)),  # Fix: swap x,y to match grid coordinates
                         'ingredients': ['onion', 'onion', 'onion'],
-                        'is_ready': True
+                        'is_ready': True,
+                        '_cooking_tick': -1,  # Not cooking (already ready)
+                        'cook_time': self.pot_full_status  # Use configurable cook time
                     })
                     objects[obj_id] = dish_obj
 
