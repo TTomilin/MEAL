@@ -42,7 +42,6 @@ def _mean_ci(series: List[float]) -> ConfInt:
 def compute_metrics(
         data_root: Path,
         algo: str,
-        arch: str,
         methods: List[str],
         strategy: str,
         seq_len: int,
@@ -70,7 +69,22 @@ def compute_metrics(
             for i in range(seq_len):
                 baseline_file = baseline_seed_dir / f"{i}_training_soup.json"
                 if baseline_file.exists():
-                    baseline_training_files.append(load_series(baseline_file))
+                    baseline_series = load_series(baseline_file)
+                    # Validate the loaded data
+                    if len(baseline_series) == 0:
+                        print(f"[warn] empty baseline data for task {i}, seed {seed}")
+                        baseline_training_files.append(None)
+                    elif np.all(np.isnan(baseline_series)):
+                        print(f"[warn] baseline data contains all NaN for task {i}, seed {seed}")
+                        baseline_training_files.append(None)
+                    elif np.all(np.isinf(baseline_series)):
+                        print(f"[warn] baseline data contains all inf/-inf for task {i}, seed {seed}")
+                        baseline_training_files.append(None)
+                    elif np.all(np.isnan(baseline_series) | np.isinf(baseline_series)):
+                        print(f"[warn] baseline data contains all NaN/inf/-inf for task {i}, seed {seed}")
+                        baseline_training_files.append(None)
+                    else:
+                        baseline_training_files.append(baseline_series)
                 else:
                     baseline_training_files.append(None)
             baseline_data[seed] = baseline_training_files
@@ -103,26 +117,61 @@ def compute_metrics(
             chunk = n_train // seq_len
 
             # 2) Per‑environment evaluation curves
-            env_files = sorted([
-                f for f in sd.glob("*_soup.*") if "training" not in f.name
-            ])
-            if len(env_files) != seq_len:
-                print(
-                    f"[warn] expected {seq_len} env files, found {len(env_files)} "
-                    f"for {method} seed {seed}"
-                )
-                print(f"[debug] found files: {[f.name for f in env_files]}")
-                all_soup_files = list(sd.glob("*_soup.*"))
-                print(f"[debug] all *_soup.* files: {[f.name for f in all_soup_files]}")
-                continue
-            env_series = [load_series(f) for f in env_files]
-            L = max(len(s) for s in env_series)
+            # Handle missing files by creating expected file paths and loading them
+            # This ensures we always have seq_len series, even if some files are missing
+            env_series = []
+            missing_files = []
+            for i in range(seq_len):
+                expected_file = sd / f"{i}_gen_soup.json"
+                if expected_file.exists():
+                    env_series.append(load_series(expected_file))
+                else:
+                    # Try alternative naming patterns
+                    alt_file = sd / f"{i}_soup.json"
+                    if alt_file.exists():
+                        env_series.append(load_series(alt_file))
+                    else:
+                        print(f"[warn] missing env file for task {i}, seed {seed}, method {method}, using zeros")
+                        missing_files.append(i)
+                        # Create a default array of zeros with reasonable length
+                        env_series.append(np.zeros(100))
+
+            # Replace NaN and inf/-inf values with zeros in env_series
+            processed_env_series = []
+            for i, series in enumerate(env_series):
+                # Check for NaN and inf/-inf values
+                has_nan = np.any(np.isnan(series))
+                has_inf = np.any(np.isinf(series))
+
+                if np.all(np.isnan(series)) and not has_inf:
+                    print(f"[warn] env series {i} contains all NaN values for {method} seed {seed}, replacing with zeros")
+                    processed_series = np.zeros_like(series)
+                elif np.all(np.isinf(series)) and not has_nan:
+                    print(f"[warn] env series {i} contains all inf/-inf values for {method} seed {seed}, replacing with zeros")
+                    processed_series = np.zeros_like(series)
+                elif np.all(np.isnan(series) | np.isinf(series)):
+                    print(f"[warn] env series {i} contains all NaN/inf/-inf values for {method} seed {seed}, replacing with zeros")
+                    processed_series = np.zeros_like(series)
+                elif has_nan and has_inf:
+                    print(f"[warn] env series {i} contains some NaN and inf/-inf values for {method} seed {seed}, replacing with zeros")
+                    processed_series = np.where(np.isnan(series) | np.isinf(series), 0.0, series)
+                elif has_nan:
+                    print(f"[warn] env series {i} contains some NaN values for {method} seed {seed}, replacing NaN with zeros")
+                    processed_series = np.where(np.isnan(series), 0.0, series)
+                elif has_inf:
+                    print(f"[warn] env series {i} contains some inf/-inf values for {method} seed {seed}, replacing with zeros")
+                    processed_series = np.where(np.isinf(series), 0.0, series)
+                else:
+                    processed_series = series
+                processed_env_series.append(processed_series)
+
+            L = max(len(s) for s in processed_env_series)
             env_mat = np.vstack([
-                np.pad(s, (0, L - len(s)), constant_values=s[-1]) for s in env_series
+                np.pad(s, (0, L - len(s)), constant_values=s[-1]) for s in processed_env_series
             ])
 
             # Average Performance (AP) – last eval of mean curve
-            AP_seeds.append(env_mat.mean(axis=0)[-1])
+            AP_seeds.append(np.nanmean(env_mat, axis=0)[-1])
 
             # Forward Transfer (FT) – normalized area between CL and baseline curves
             if seed not in baseline_data:
@@ -144,24 +193,63 @@ def compute_metrics(
                 else:
                     auc_cl = cl_task_curve[0] if len(cl_task_curve) == 1 else 0.0
 
+                # Check if CL AUC is NaN or inf/-inf
+                if np.isnan(auc_cl) or np.isinf(auc_cl):
+                    print(f"[warn] CL AUC is NaN/inf/-inf for task {i}, seed {seed}, method {method}")
+                    continue  # Skip this task
+
                 # Calculate AUC for baseline method (task i)
                 baseline_task_curve = baseline_data[seed][i]
                 if baseline_task_curve is not None:
+                    # Check if baseline data contains all NaN or inf/-inf values
+                    if np.all(np.isnan(baseline_task_curve)):
+                        print(f"[warn] baseline data contains all NaN for task {i}, seed {seed}")
+                        continue  # Skip this task
+                    elif np.all(np.isinf(baseline_task_curve)):
+                        print(f"[warn] baseline data contains all inf/-inf for task {i}, seed {seed}")
+                        continue  # Skip this task
+                    elif np.all(np.isnan(baseline_task_curve) | np.isinf(baseline_task_curve)):
+                        print(f"[warn] baseline data contains all NaN/inf/-inf for task {i}, seed {seed}")
+                        continue  # Skip this task
+
                     if len(baseline_task_curve) > 1:
                         auc_baseline = np.trapz(baseline_task_curve) / len(baseline_task_curve)
                     else:
                         auc_baseline = baseline_task_curve[0] if len(baseline_task_curve) == 1 else 0.0
 
+                    # Check if calculated AUC is NaN or inf/-inf
+                    if np.isnan(auc_baseline):
+                        print(f"[warn] baseline AUC is NaN for task {i}, seed {seed}")
+                        continue  # Skip this task
+                    elif np.isinf(auc_baseline):
+                        print(f"[warn] baseline AUC is inf/-inf for task {i}, seed {seed}")
+                        continue  # Skip this task
+
                     # Calculate Forward Transfer: FTi = (AUCi - AUCb_i) / (1 - AUCb_i)
                     denominator = 1.0 - auc_baseline
-                    if abs(denominator) > 1e-8:  # Avoid division by zero
-                        ft_i = (auc_cl - auc_baseline) / denominator
-                        ft_vals.append(ft_i)
+
+                    # More robust checks for problematic denominators
+                    if np.isnan(denominator) or np.isinf(denominator) or abs(denominator) < 1e-8:
+                        if abs(auc_baseline - 1.0) < 1e-8:
+                            print(f"[warn] baseline AUC ≈ 1.0 for task {i}, seed {seed}, method {method}")
+                        elif np.isnan(auc_baseline):
+                            print(f"[warn] baseline AUC is NaN for task {i}, seed {seed}, method {method}")
+                        elif np.isinf(denominator):
+                            print(f"[warn] denominator is inf/-inf ({denominator}) for task {i}, seed {seed}, method {method}")
+                        else:
+                            print(f"[warn] denominator too small ({denominator}) for task {i}, seed {seed}, method {method}")
+                        # Skip this task - don't append to ft_vals
                     else:
-                        # If baseline AUC is 1.0, forward transfer is undefined
-                        print(f"[warn] baseline AUC = 1.0 for task {i}, seed {seed}, method {method}")
+                        ft_i = (auc_cl - auc_baseline) / denominator
+                        # Check if the final ft_i is inf/-inf
+                        if np.isinf(ft_i):
+                            print(f"[warn] Forward Transfer result is inf/-inf for task {i}, seed {seed}, method {method}")
+                            # Skip this task - don't append to ft_vals
+                        else:
+                            ft_vals.append(ft_i)
                 else:
                     print(f"[warn] missing baseline data for task {i}, seed {seed}")
+                    # Don't append anything to ft_vals - skip this task
 
             if ft_vals:
                 FT_seeds.append(float(np.nanmean(ft_vals)))
@@ -172,6 +260,7 @@ def compute_metrics(
             f_vals = []
             final_idx = env_mat.shape[1] - 1
             fw_start = max(0, final_idx - end_window_evals + 1)
+            # Process all series (NaN values have been replaced with zeros)
             for i in range(seq_len):
                 final_avg = np.nanmean(env_mat[i, fw_start : final_idx + 1])
                 best_perf = np.nanmax(env_mat[i, : final_idx + 1])
@@ -217,7 +306,6 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--data_root", required=True)
     p.add_argument("--algo", required=True)
-    p.add_argument("--arch", required=True)
     p.add_argument("--methods", nargs="+", required=True)
     p.add_argument("--strategy", required=True)
     p.add_argument("--seq_len", type=int, default=10)
@@ -237,7 +325,6 @@ if __name__ == "__main__":
         df = compute_metrics(
             data_root=Path(args.data_root),
             algo=args.algo,
-            arch=args.arch,
             methods=args.methods,
             strategy=args.strategy,
             seq_len=args.seq_len,
@@ -248,13 +335,12 @@ if __name__ == "__main__":
         # Pretty‑print method names
         df["Method"] = df["Method"].replace({"Online_EWC": "Online EWC"})
     else:
-        # All levels case (new behavior)
-        all_dfs = []
+        # All levels case (new behavior) - pivot so each method is one row with columns for each level
+        level_data = {}
         for level in [1, 2, 3]:
             level_df = compute_metrics(
                 data_root=Path(args.data_root),
                 algo=args.algo,
-                arch=args.arch,
                 methods=args.methods,
                 strategy=args.strategy,
                 seq_len=args.seq_len,
@@ -262,49 +348,141 @@ if __name__ == "__main__":
                 end_window_evals=args.end_window_evals,
                 level=level,
             )
-            # Pretty‑print method names before adding level info
+            # Pretty‑print method names
             level_df["Method"] = level_df["Method"].replace({"Online_EWC": "Online EWC"})
-            # Add level information to the method names
-            level_df["Method"] = level_df["Method"].apply(lambda x: f"{x} (L{level})")
-            all_dfs.append(level_df)
+            level_data[level] = level_df
 
-        # Combine all levels into one dataframe
-        df = pd.concat(all_dfs, ignore_index=True)
+        # Create pivoted structure: one row per method, columns for each level
+        methods = level_data[1]["Method"].tolist()
+        rows = []
+
+        for method in methods:
+            row = {"Method": method}
+
+            # Add columns for each level and metric
+            for level in [1, 2, 3]:
+                level_df = level_data[level]
+                method_row = level_df[level_df["Method"] == method].iloc[0]
+
+                # Add columns with level suffix
+                row[f"AveragePerformance_L{level}"] = method_row["AveragePerformance"]
+                row[f"AveragePerformance_CI_L{level}"] = method_row["AveragePerformance_CI"]
+                row[f"Forgetting_L{level}"] = method_row["Forgetting"]
+                row[f"Forgetting_CI_L{level}"] = method_row["Forgetting_CI"]
+                row[f"ForwardTransfer_L{level}"] = method_row["ForwardTransfer"]
+                row[f"ForwardTransfer_CI_L{level}"] = method_row["ForwardTransfer_CI"]
+
+            rows.append(row)
+
+        df = pd.DataFrame(rows)
 
 
-    # Identify best means (ignoring CI)
-    best_A = df["AveragePerformance"].max()
-    best_F = df["Forgetting"].min()
-    best_FT = df["ForwardTransfer"].max()
+    if args.level is not None:
+        # Single level case - original formatting
+        # Identify best means (ignoring CI)
+        best_A = df["AveragePerformance"].max()
+        best_F = df["Forgetting"].min()
+        best_FT = df["ForwardTransfer"].max()
 
-    # Build human‑readable strings with CI
-    df_out = pd.DataFrame()
-    df_out["Method"] = df["Method"]
-    df_out["AveragePerformance"] = df.apply(
-        lambda r: _fmt(r.AveragePerformance, r.AveragePerformance_CI, r.AveragePerformance == best_A, "max"),
-        axis=1,
-    )
-    df_out["Forgetting"] = df.apply(
-        lambda r: _fmt(r.Forgetting, r.Forgetting_CI, r.Forgetting == best_F, "min"),
-        axis=1,
-    )
-    df_out["ForwardTransfer"] = df.apply(
-        lambda r: _fmt(r.ForwardTransfer, r.ForwardTransfer_CI, r.ForwardTransfer == best_FT, "max"),
-        axis=1,
-    )
+        # Build human‑readable strings with CI
+        df_out = pd.DataFrame()
+        df_out["Method"] = df["Method"]
+        df_out["AveragePerformance"] = df.apply(
+            lambda r: _fmt(r.AveragePerformance, r.AveragePerformance_CI, r.AveragePerformance == best_A, "max"),
+            axis=1,
+        )
+        df_out["Forgetting"] = df.apply(
+            lambda r: _fmt(r.Forgetting, r.Forgetting_CI, r.Forgetting == best_F, "min"),
+            axis=1,
+        )
+        df_out["ForwardTransfer"] = df.apply(
+            lambda r: _fmt(r.ForwardTransfer, r.ForwardTransfer_CI, r.ForwardTransfer == best_FT, "max"),
+            axis=1,
+        )
 
-    # Rename columns to mathy headers
-    df_out.columns = [
-        "Method",
-        r"$\mathcal{A}\!\uparrow$",
-        r"$\mathcal{F}\!\downarrow$",
-        r"$\mathcal{FT}\!\uparrow$",
-    ]
+        # Rename columns to mathy headers
+        df_out.columns = [
+            "Method",
+            r"$\mathcal{A}\!\uparrow$",
+            r"$\mathcal{F}\!\downarrow$",
+            r"$\mathcal{FT}\!\uparrow$",
+        ]
+
+        column_format = "lccc"
+    else:
+        # All levels case - new formatting with columns for each level
+        # Identify best means for each level (ignoring CI)
+        best_values = {}
+        for level in [1, 2, 3]:
+            best_values[f"A_L{level}"] = df[f"AveragePerformance_L{level}"].max()
+            best_values[f"F_L{level}"] = df[f"Forgetting_L{level}"].min()
+            best_values[f"FT_L{level}"] = df[f"ForwardTransfer_L{level}"].max()
+
+        # Build human‑readable strings with CI
+        df_out = pd.DataFrame()
+        df_out["Method"] = df["Method"]
+
+        # Add formatted columns grouped by metric type: first all A, then all F, then all FT
+        # Average Performance columns for all levels
+        for level in [1, 2, 3]:
+            df_out[f"AveragePerformance_L{level}"] = df.apply(
+                lambda r: _fmt(
+                    r[f"AveragePerformance_L{level}"], 
+                    r[f"AveragePerformance_CI_L{level}"], 
+                    r[f"AveragePerformance_L{level}"] == best_values[f"A_L{level}"], 
+                    "max"
+                ),
+                axis=1,
+            )
+
+        # Forgetting columns for all levels
+        for level in [1, 2, 3]:
+            df_out[f"Forgetting_L{level}"] = df.apply(
+                lambda r: _fmt(
+                    r[f"Forgetting_L{level}"], 
+                    r[f"Forgetting_CI_L{level}"], 
+                    r[f"Forgetting_L{level}"] == best_values[f"F_L{level}"], 
+                    "min"
+                ),
+                axis=1,
+            )
+
+        # Forward Transfer columns for all levels
+        for level in [1, 2, 3]:
+            df_out[f"ForwardTransfer_L{level}"] = df.apply(
+                lambda r: _fmt(
+                    r[f"ForwardTransfer_L{level}"], 
+                    r[f"ForwardTransfer_CI_L{level}"], 
+                    r[f"ForwardTransfer_L{level}"] == best_values[f"FT_L{level}"], 
+                    "max"
+                ),
+                axis=1,
+            )
+
+        # Rename columns to mathy headers with level indicators
+        # Group headers by metric type: first all A, then all F, then all FT
+        new_columns = ["Method"]
+
+        # Average Performance headers for all levels
+        for level in [1, 2, 3]:
+            new_columns.append(rf"$\mathcal{{A}}_{{{level}}}\!\uparrow$")
+
+        # Forgetting headers for all levels
+        for level in [1, 2, 3]:
+            new_columns.append(rf"$\mathcal{{F}}_{{{level}}}\!\downarrow$")
+
+        # Forward Transfer headers for all levels
+        for level in [1, 2, 3]:
+            new_columns.append(rf"$\mathcal{{FT}}_{{{level}}}\!\uparrow$")
+        df_out.columns = new_columns
+
+        # Column format: Method + 3 A columns + 3 F columns + 3 FT columns = 10 columns
+        column_format = "l" + "c" * 9
 
     latex_table = df_out.to_latex(
         index=False,
         escape=False,
-        column_format="lccc",
+        column_format=column_format,
         label="tab:cmarl_metrics",
     )
 
