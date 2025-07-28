@@ -93,7 +93,7 @@ def experiment_suffix(cfg: dict) -> str:
         return "sparse_rewards"
     if cfg.get("individual_rewards", False):
         return "individual_rewards"
-    if not cfg.get("use_multihead", True):
+    if not cfg.get("use_multihead", True) and cfg.get("cl_method") != "AGEM":
         return "no_multihead"
     if not cfg.get("use_task_id", True):
         return "no_task_id"
