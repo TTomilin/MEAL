@@ -10,7 +10,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 # Main dependencies required for the package
 install_requires = [
     "jax[cuda12]",  # JAX with CUDA 12 support
-    "flax",
+    "flax==0.10.2",
     "chex==0.1.84",
     "optax==0.1.7",
     "dotmap==1.3.30",
@@ -27,25 +27,25 @@ install_requires = [
 # Additional dependencies that are less sensitive to version changes
 extras_require = {
     "dev": [
-        "pytest",
+        "pytest==8.3.3",
     ],
     "viz": [
-        "wandb",
-        "imageio",
-        "pygame",
+        "wandb==0.18.7",
+        "imageio==2.36.0",
+        "pygame==2.6.1",
         "matplotlib>=3.8.3",
         "pillow>=10.2.0",
-        "seaborn",
+        "seaborn==0.13.2",
     ],
     "utils": [
-        "tyro",
+        "tyro==0.9.2",
         "numpy>=1.26.1",
         "hydra-core>=1.3.2",
         "omegaconf>=2.3.0",
         "pettingzoo>=1.24.3",
         "tqdm>=4.66.0",
-        "python-dotenv",
-        "pandas",
+        "python-dotenv==1.0.1",
+        "pandas==2.2.3",
     ],
 }
 
