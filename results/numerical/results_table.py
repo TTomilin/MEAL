@@ -222,7 +222,7 @@ if __name__ == "__main__":
     p.add_argument("--strategy", required=True)
     p.add_argument("--seq_len", type=int, default=10)
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
-    p.add_argument("--level", type=int, default=1, help="Difficulty level of the environment")
+    p.add_argument("--level", type=int, default=None, help="Difficulty level of the environment (if not provided, generates table for all levels 1, 2, 3)")
     p.add_argument(
         "--end_window_evals",
         type=int,
@@ -231,20 +231,46 @@ if __name__ == "__main__":
     )
     args = p.parse_args()
 
-    df = compute_metrics(
-        data_root=Path(args.data_root),
-        algo=args.algo,
-        arch=args.arch,
-        methods=args.methods,
-        strategy=args.strategy,
-        seq_len=args.seq_len,
-        seeds=args.seeds,
-        end_window_evals=args.end_window_evals,
-        level=args.level,
-    )
+    # Handle single level or all levels
+    if args.level is not None:
+        # Single level case (original behavior)
+        df = compute_metrics(
+            data_root=Path(args.data_root),
+            algo=args.algo,
+            arch=args.arch,
+            methods=args.methods,
+            strategy=args.strategy,
+            seq_len=args.seq_len,
+            seeds=args.seeds,
+            end_window_evals=args.end_window_evals,
+            level=args.level,
+        )
+        # Pretty‑print method names
+        df["Method"] = df["Method"].replace({"Online_EWC": "Online EWC"})
+    else:
+        # All levels case (new behavior)
+        all_dfs = []
+        for level in [1, 2, 3]:
+            level_df = compute_metrics(
+                data_root=Path(args.data_root),
+                algo=args.algo,
+                arch=args.arch,
+                methods=args.methods,
+                strategy=args.strategy,
+                seq_len=args.seq_len,
+                seeds=args.seeds,
+                end_window_evals=args.end_window_evals,
+                level=level,
+            )
+            # Pretty‑print method names before adding level info
+            level_df["Method"] = level_df["Method"].replace({"Online_EWC": "Online EWC"})
+            # Add level information to the method names
+            level_df["Method"] = level_df["Method"].apply(lambda x: f"{x} (L{level})")
+            all_dfs.append(level_df)
 
-    # Pretty‑print method names
-    df["Method"] = df["Method"].replace({"Online_EWC": "Online EWC"})
+        # Combine all levels into one dataframe
+        df = pd.concat(all_dfs, ignore_index=True)
+
 
     # Identify best means (ignoring CI)
     best_A = df["AveragePerformance"].max()
