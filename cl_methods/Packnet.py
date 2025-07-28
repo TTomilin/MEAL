@@ -425,6 +425,60 @@ class Packnet():
 
         return state
 
+    def mask_gradients(self, state: PacknetState, gradients):
+        '''
+        Masks gradients for frozen weights before the optimizer step.
+        This is the proper PackNet approach - zero gradients before optimizer sees them.
+        '''
+
+        def first_task():
+            # No previous tasks to mask - return gradients unchanged
+            return gradients
+
+        def train_mode():
+            # Training mode: mask gradients for weights from previous tasks
+            prev_mask = self.combine_masks(state.masks, state.current_task)
+
+            def mask_gradient_leaf(grad_leaf, mask_leaf):
+                """
+                Zero out gradients for frozen weights (where mask is True)
+                """
+                return jnp.where(mask_leaf, jnp.zeros_like(grad_leaf), grad_leaf)
+
+            # Apply masking to gradients
+            masked_grads = jax.tree_util.tree_map(mask_gradient_leaf, gradients["params"], prev_mask)
+            return {"params": masked_grads}
+
+        def finetune_mode():
+            # Fine-tuning mode: mask gradients for pruned weights of current task
+            current_mask = self.get_mask(state.masks, state.current_task)
+
+            def mask_gradient_leaf(grad_leaf, mask_leaf):
+                """
+                Zero out gradients for pruned weights (where mask is False)
+                Keep gradients for active weights (where mask is True)
+                """
+                return jnp.where(mask_leaf, grad_leaf, jnp.zeros_like(grad_leaf))
+
+            # Apply masking to gradients
+            masked_grads = jax.tree_util.tree_map(mask_gradient_leaf, gradients["params"], current_mask)
+            return {"params": masked_grads}
+
+        def train_mode_dispatch():
+            # Dispatch between first task and other tasks in training mode
+            return jax.lax.cond(
+                state.current_task == 0,
+                lambda: first_task(),
+                lambda: train_mode()
+            )
+
+        # Apply gradient masking based on current task and mode using JAX conditionals
+        return jax.lax.cond(
+            state.train_mode,
+            train_mode_dispatch,
+            finetune_mode
+        )
+
     def on_backwards_end(self, state: PacknetState, actor_train_state, params_copy):
         '''
         Handles the end of the backwards pass

@@ -909,16 +909,12 @@ def main():
                     actor_loss, actor_grads = actor_grad_fn(actor_train_state.params, traj_batch, advantages)
                     critic_loss, critic_grads = critic_grad_fn(critic_train_state.params, traj_batch, targets)
 
-                    # Create a copy of the parameters
-                    actor_params_copy = actor_train_state.params.copy()
+                    # Mask gradients for frozen weights BEFORE optimizer step (proper PackNet)
+                    actor_grads = cl.mask_gradients(packnet_state, actor_grads)
+                    # Note: We don't mask critic gradients as PackNet typically only applies to actor
 
                     actor_train_state = actor_train_state.apply_gradients(grads=actor_grads)
                     critic_train_state = critic_train_state.apply_gradients(grads=critic_grads)
-
-                    # Mask the gradients 
-                    actor_train_state = cl.on_backwards_end(packnet_state, actor_train_state, actor_params_copy)
-
-                    del actor_params_copy
 
                     total_loss = actor_loss[0] + critic_loss[0]
                     loss_information = {
