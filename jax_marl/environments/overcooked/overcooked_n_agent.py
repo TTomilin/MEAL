@@ -171,7 +171,7 @@ class Overcooked(MultiAgentEnv):
 
         onions_in_soup = (jnp.minimum(POT_EMPTY_STATUS - pot_status,
                                       MAX_ONIONS_IN_POT) * (pot_status < POT_FULL_STATUS)
-                          + MAX_ONIONS_IN_POT * dish_mask)
+                          * pot_mask + MAX_ONIONS_IN_POT * dish_mask)
 
         pot_cook_time = pot_status * (pot_status < POT_FULL_STATUS)
         soup_ready = pot_mask * (pot_status == POT_READY_STATUS) + dish_mask
@@ -206,6 +206,33 @@ class Overcooked(MultiAgentEnv):
             pos_layers)
 
         # ────────────────────── assemble per-agent views ───────────────────────
+        # Add agent inventory handling to environment layers
+        agent_inv_items = jnp.expand_dims(state.agent_inv, (1, 2)) * pos_layers
+        obj_with_inv = jnp.where(jnp.sum(pos_layers, 0), jnp.sum(agent_inv_items, 0), obj)
+        soup_ready_with_inv = soup_ready + (jnp.sum(agent_inv_items, 0) == OBJECT_TO_INDEX["dish"]) * jnp.sum(pos_layers, 0)
+        onions_in_soup_with_inv = onions_in_soup + (jnp.sum(agent_inv_items, 0) == OBJECT_TO_INDEX["dish"]) * 3 * jnp.sum(pos_layers, 0)
+
+        # Rebuild env_layers with agent inventory
+        env_layers_with_inv = jnp.stack([
+            pot_mask.astype(jnp.uint8),  # 10
+            (obj_with_inv == OBJECT_TO_INDEX["wall"]).astype(jnp.uint8),
+            (obj_with_inv == OBJECT_TO_INDEX["onion_pile"]).astype(jnp.uint8),
+            jnp.zeros_like(obj, jnp.uint8),  # tomato‐pile (unused)
+            (obj_with_inv == OBJECT_TO_INDEX["plate_pile"]).astype(jnp.uint8),
+            (obj_with_inv == OBJECT_TO_INDEX["goal"]).astype(jnp.uint8),  # 15
+            onions_in_pot.astype(jnp.uint8),
+            jnp.zeros_like(obj, jnp.uint8),  # tomatoes in pot (unused)
+            onions_in_soup_with_inv.astype(jnp.uint8),
+            jnp.zeros_like(obj, jnp.uint8),  # tomatoes in soup (unused)
+            pot_cook_time.astype(jnp.uint8),  # 20
+            soup_ready_with_inv.astype(jnp.uint8),
+            (obj_with_inv == OBJECT_TO_INDEX["plate"]).astype(jnp.uint8),
+            (obj_with_inv == OBJECT_TO_INDEX["onion"]).astype(jnp.uint8),
+            jnp.zeros_like(obj, jnp.uint8),  # tomatoes (unused)
+            urgency.astype(jnp.uint8),  # 25
+        ], axis=0)  # → (16,H,W)
+
+        # Generic n-agent observation structure
         views: Dict[str, chex.Array] = {}
         for i in range(self.num_agents):
             own_pos = pos_layers[i:i + 1]  # 1 layer
@@ -214,13 +241,22 @@ class Overcooked(MultiAgentEnv):
             others_ori = jnp.delete(ori_layers,
                                     slice(4 * i, 4 * (i + 1)), axis=0)  # 4(n-1)
 
+            # Structure observations: [own_pos, others_pos, own_ori, others_ori, env_layers]
+            # For 2 agents: others_pos is (1,H,W), for n>2: others_pos is aggregated to (1,H,W)
+            if others_pos.shape[0] == 1:
+                # Single other agent - use as is
+                other_pos_layer = others_pos
+            else:
+                # Multiple other agents - aggregate their positions
+                other_pos_layer = others_pos.sum(0, keepdims=True)
+
             layers = jnp.concatenate([
-                own_pos,
-                others_pos.sum(0, keepdims=True),  # aggregate pos
-                own_ori,
-                others_ori,
-                env_layers,
-            ], axis=0)  # (C,H,W)
+                own_pos,           # 1 layer: own position
+                other_pos_layer,   # 1 layer: other agent(s) position
+                own_ori,           # 4 layers: own orientation
+                others_ori,        # 4(n-1) layers: other agents' orientations
+                env_layers_with_inv,  # 16 layers: environment
+            ], axis=0)
 
             views[f"agent_{i}"] = jnp.transpose(layers, (1, 2, 0))  # (H,W,C)
 
@@ -413,6 +449,7 @@ class Overcooked(MultiAgentEnv):
         In both cases, the environment layout is determined by `self.layout`
         """
 
+
         # Whether to fully randomize the start state
         random_reset = self.random_reset
         layout = self.layout
@@ -425,65 +462,16 @@ class Overcooked(MultiAgentEnv):
         wall_idx = layout.get("wall_idx")
         occupied = jnp.zeros_like(all_pos).at[wall_idx].set(1)
 
-        # -------------- choose starting squares ----------------------
-        #  Priority:
-        #  1. user-supplied `start_idx`
-        #  2. if random_reset → ignore layout, sample every chef uniformly
-        #  3. layout-provided squares + (if n_agents > layout) sample the remainder
-        #
-        #  all samples are drawn only from free counter tiles (no walls / fixtures)
-        #
-        provided_idx = (
-            self.start_idx  # 1️⃣ explicit hard-coded spawn
-            if self.start_idx is not None
-            else (  # 2️⃣ fully random episode
-                jnp.array([], jnp.uint32)
-                if self.random_reset
-                else layout.get("agent_idx", jnp.array([], jnp.uint32))  # 3️⃣ layout default
-            )
-        )
-
-        n_provided = provided_idx.shape[0]
-        n_missing = self.num_agents - n_provided
-        agent_idx = provided_idx[: self.num_agents]
-
-        if n_missing > 0:
-            # ————————————————— mask out forbidden squares —————————————————
-            occupied_mask = occupied.at[agent_idx].set(1)
-
-            fixture_idx = (layout["onion_pile_idx"]
-                           | layout["plate_pile_idx"]
-                           | layout["goal_idx"]
-                           | layout["pot_idx"])
-            occupied_mask = occupied_mask.at[fixture_idx].set(1)
-
-            # ————————————————— sample the remainder ——————————————————————
-            # build a boolean “can-spawn-here” mask
-            blocked = occupied_mask.at[(
-                       layout["onion_pile_idx"]
-                       | layout["plate_pile_idx"]
-                       | layout["goal_idx"]
-                       | layout["pot_idx"]
-                   )].set(1)
-
-            key, sub = jax.random.split(key)
-
-            weights = (~blocked).astype(jnp.float32)      # 1 = floor, 0 = not allowed
-            weights = weights / weights.sum()             # normalise for choice()
-
-            extra_idx = jax.random.choice(
-                   sub,                                       # PRNG
-                   all_pos,                                   # *static* 1-D index vector
-                   shape=(n_missing,),
-                replace=False,
-                p=weights,                                 # zero-probability ⇒ never picked
-            )
-            agent_idx = jnp.concatenate([agent_idx, extra_idx], axis=0)
-
+        # Agent positioning - match original overcooked.py logic
         wall_map = occupied.reshape(h, w).astype(jnp.bool_)
 
-        # Replace with fixed layout if applicable. Also randomize if agent position not provided
-        # agent_idx = random_reset * agent_idx + (1 - random_reset) * layout.get("agent_idx", agent_idx)
+        # Reset agent position + dir - like original
+        key, subkey = jax.random.split(key)
+        agent_idx = jax.random.choice(subkey, all_pos, shape=(num_agents,),
+                                      p=(~occupied.astype(jnp.bool_)).astype(jnp.float32), replace=False)
+
+        # Replace with fixed layout if applicable - like original
+        agent_idx = random_reset * agent_idx + (1 - random_reset) * layout.get("agent_idx", agent_idx)
         agent_pos = jnp.array([agent_idx % w, agent_idx // w], dtype=jnp.uint32).transpose()  # dim = n_agents x 2
         occupied = occupied.at[agent_idx].set(1)
 
@@ -512,10 +500,10 @@ class Overcooked(MultiAgentEnv):
         empty_table_mask = empty_table_mask.at[pot_idx].set(0)
 
         key, subkey = jax.random.split(key)
-        # Pot status is determined by a number between 0 (inclusive) and 24 (exclusive)
-        # 23 corresponds to an empty pot (default)
-        pot_status = jax.random.randint(subkey, (pot_idx.shape[0],), 0, 24)
-        pot_status = pot_status * random_reset + (1 - random_reset) * jnp.ones((pot_idx.shape[0])) * 23
+        # Pot status is determined by a number between 0 (inclusive) and pot_empty_status+1 (exclusive)
+        # pot_empty_status corresponds to an empty pot (default 23, or 8 for tests with soup_cook_time=5)
+        pot_status = jax.random.randint(subkey, (pot_idx.shape[0],), 0, POT_EMPTY_STATUS + 1)
+        pot_status = pot_status * random_reset + (1 - random_reset) * jnp.ones((pot_idx.shape[0])) * POT_EMPTY_STATUS
 
         onion_pos = jnp.array([])
         plate_pos = jnp.array([])
@@ -538,15 +526,13 @@ class Overcooked(MultiAgentEnv):
             agent_view_size=self.agent_view_size
         )
 
-        # agent inventory (empty by default, can be randomized)
+        # agent inventory - match original logic
         key, subkey = jax.random.split(key)
         possible_items = jnp.array([OBJECT_TO_INDEX['empty'], OBJECT_TO_INDEX['onion'],
                                     OBJECT_TO_INDEX['plate'], OBJECT_TO_INDEX['dish']])
-
-        # inventories: length == num_agents
-        default_inv = jnp.full((self.num_agents,), OBJECT_TO_INDEX["empty"])
-        random_agent_inv = jax.random.choice(subkey, possible_items, shape=(self.num_agents,), replace=True)
-        agent_inv = jnp.where(self.random_reset, random_agent_inv, default_inv)
+        random_agent_inv = jax.random.choice(subkey, possible_items, shape=(num_agents,), replace=True)
+        agent_inv = random_reset * random_agent_inv + \
+                    (1 - random_reset) * jnp.full((num_agents,), OBJECT_TO_INDEX['empty'])
 
         state = State(
             agent_pos=agent_pos,
@@ -565,6 +551,7 @@ class Overcooked(MultiAgentEnv):
         obs = self.get_obs(state)
 
         return lax.stop_gradient(obs), lax.stop_gradient(state)
+
 
     def process_interact(
             self,
