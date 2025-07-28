@@ -1056,11 +1056,13 @@ def main():
                         else:
                             avg_rewards, avg_soups = evaluate_model(actor_train_state_eval, eval_rng)
 
-                        # Note: Since layout_names is not accessible in this scope, we'll skip
-                        # the detailed evaluation metrics here. They will be handled elsewhere.
-                        # Just add basic evaluation metrics
+                        # Apply episode fraction scaling to avg_soups like in IPPO_CL.py
+                        episode_frac = config.eval_num_steps / env.max_steps
+                        avg_soups = [soup * episode_frac for soup in avg_soups]
+
+                        # Use basic logging since layout_names and max_soup_dict cannot be passed to JIT function
                         for i, (reward, soup) in enumerate(zip(avg_rewards, avg_soups)):
-                            metric[f"Evaluation/env_{i}_reward"] = reward
+                            metric[f"Evaluation/env_{i}_soup_scaled"] = soup
                             metric[f"Evaluation/env_{i}_soup"] = soup
                     # Extract parameters 
                     actor_params = jax.tree_util.tree_map(lambda x: x, actor_train_state_eval.params["params"])
