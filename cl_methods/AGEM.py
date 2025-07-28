@@ -14,6 +14,7 @@ class AGEMMemory:
     values: jnp.ndarray  # [M]
     ptr: jnp.ndarray  # ()   write pointer  (static int32 on device)
     size: jnp.ndarray  # ()   how many valid samples in buffer
+    total_seen: jnp.ndarray  # ()   total number of samples seen (for reservoir sampling)
     max_size: int
 
 
@@ -124,6 +125,7 @@ def init_agem_memory(max_size: int, obs_shape: tuple):
         values=zeros(max_size, ),
         ptr=jnp.array(0, dtype=jnp.int32),
         size=jnp.array(0, dtype=jnp.int32),
+        total_seen=jnp.array(0, dtype=jnp.int32),
         max_size=max_size,
     )
 
@@ -241,17 +243,84 @@ def compute_memory_gradient(network, params,
 def update_agem_memory(mem: AGEMMemory,
                        new_obs, new_actions, new_log_probs,
                        new_adv, new_tgt, new_val):
-    b = new_obs.shape[0]  # batch size to insert
-    idxs = (jnp.arange(b) + mem.ptr) % mem.max_size
+    """
+    Update AGEM memory using reservoir sampling to ensure older tasks are retained.
 
-    mem = mem.replace(
-        obs=mem.obs.at[idxs].set(new_obs),
-        actions=mem.actions.at[idxs].set(new_actions),
-        log_probs=mem.log_probs.at[idxs].set(new_log_probs),
-        advantages=mem.advantages.at[idxs].set(new_adv),
-        targets=mem.targets.at[idxs].set(new_tgt),
-        values=mem.values.at[idxs].set(new_val),
-        ptr=(mem.ptr + b) % mem.max_size,
-        size=jnp.minimum(mem.size + b, mem.max_size),
+    Reservoir sampling algorithm:
+    - For the first k items, add them directly to the reservoir
+    - For each subsequent item i, generate random j in [0, i)
+    - If j < k, replace reservoir[j] with item i
+    """
+    b = new_obs.shape[0]  # batch size to insert
+
+    def update_single_sample(carry, sample_data):
+        mem_state, sample_idx = carry
+        obs_i, action_i, logp_i, adv_i, tgt_i, val_i = sample_data
+
+        # Current position in the stream (0-indexed)
+        stream_pos = mem_state.total_seen + sample_idx
+
+        def add_to_reservoir():
+            # If reservoir not full, add to next available position
+            pos = mem_state.size
+            return mem_state.replace(
+                obs=mem_state.obs.at[pos].set(obs_i),
+                actions=mem_state.actions.at[pos].set(action_i),
+                log_probs=mem_state.log_probs.at[pos].set(logp_i),
+                advantages=mem_state.advantages.at[pos].set(adv_i),
+                targets=mem_state.targets.at[pos].set(tgt_i),
+                values=mem_state.values.at[pos].set(val_i),
+                size=mem_state.size + 1
+            )
+
+        def reservoir_sample(rng_key):
+            # Generate random position in [0, stream_pos + 1)
+            rand_pos = jax.random.randint(rng_key, (), 0, stream_pos + 1)
+
+            def replace_sample():
+                # Replace sample at rand_pos with new sample
+                return mem_state.replace(
+                    obs=mem_state.obs.at[rand_pos].set(obs_i),
+                    actions=mem_state.actions.at[rand_pos].set(action_i),
+                    log_probs=mem_state.log_probs.at[rand_pos].set(logp_i),
+                    advantages=mem_state.advantages.at[rand_pos].set(adv_i),
+                    targets=mem_state.targets.at[rand_pos].set(tgt_i),
+                    values=mem_state.values.at[rand_pos].set(val_i)
+                )
+
+            def keep_existing():
+                return mem_state
+
+            # Replace if rand_pos < reservoir_size (max_size)
+            return jax.lax.cond(
+                rand_pos < mem_state.max_size,
+                lambda: replace_sample(),
+                lambda: keep_existing()
+            )
+
+        # Use a deterministic RNG based on stream position for reproducibility
+        rng_key = jax.random.PRNGKey(stream_pos)
+
+        # If reservoir not full, add directly; otherwise use reservoir sampling
+        updated_mem = jax.lax.cond(
+            mem_state.size < mem_state.max_size,
+            lambda: add_to_reservoir(),
+            lambda: reservoir_sample(rng_key)
+        )
+
+        return (updated_mem, sample_idx + 1), None
+
+    # Prepare data for scan
+    sample_data = (new_obs, new_actions, new_log_probs, new_adv, new_tgt, new_val)
+
+    # Process each sample using scan
+    (final_mem, _), _ = jax.lax.scan(
+        update_single_sample,
+        (mem, 0),
+        sample_data
     )
-    return mem
+
+    # Update total_seen counter
+    final_mem = final_mem.replace(total_seen=final_mem.total_seen + b)
+
+    return final_mem
