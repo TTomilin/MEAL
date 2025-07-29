@@ -194,7 +194,7 @@ class Packnet():
         cutoff = jnp.nanquantile(jnp.abs(all_prunable), prune_perc)
         jax.debug.print("cutoff: {cutoff}", cutoff=cutoff)
         # count the number of params under the cutoff
-        num_pruned = jnp.sum(jnp.abs(all_prunable) < cutoff)
+        num_pruned = jnp.sum(jnp.abs(all_prunable) <= cutoff)
         jax.debug.print("number of params to be pruned: {num_pruned}", num_pruned=num_pruned)
         mask = {}
         new_params = {}
