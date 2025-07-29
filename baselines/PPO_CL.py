@@ -513,14 +513,18 @@ def main():
                      config.shared_backbone, config.big_network, config.use_task_id, config.regularize_heads,
                      config.use_layer_norm)
 
-    obs_dim = temp_env.observation_space().shape
-    if not config.use_cnn:
-        obs_dim = np.prod(obs_dim)
+    # Get the correct observation dimension by simulating the batchify process
+    # This ensures the network is initialized with the same shape it will receive during training
+    rng = jax.random.PRNGKey(config.seed)
+    rng, reset_rng = jax.random.split(rng)
+    reset_rngs = jax.random.split(reset_rng, config.num_envs)
+    temp_obs, _ = jax.vmap(temp_env.reset, in_axes=(0,))(reset_rngs)
+    temp_obs_batch = batchify(temp_obs, temp_env.agents, config.num_actors, not config.use_cnn)
+    obs_dim = temp_obs_batch.shape[1]  # Get the actual dimension after batchify
 
     # Initialize the network
-    rng = jax.random.PRNGKey(config.seed)
     rng, network_rng = jax.random.split(rng)
-    init_x = jnp.zeros((1, *obs_dim)) if config.use_cnn else jnp.zeros((1, obs_dim,))
+    init_x = jnp.zeros((1, obs_dim))
     network_params = network.init(network_rng, init_x)
 
     # Initialize the optimizer

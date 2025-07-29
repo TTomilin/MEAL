@@ -519,7 +519,18 @@ class Overcooked(MultiAgentEnv):
                                       p=(~occupied.astype(jnp.bool_)).astype(jnp.float32), replace=False)
 
         # Replace with fixed layout if applicable - like original
-        agent_idx = random_reset * agent_idx + (1 - random_reset) * layout.get("agent_idx", agent_idx)
+        layout_agent_idx = layout.get("agent_idx", jnp.array([], dtype=jnp.uint32))
+        if not random_reset and len(layout_agent_idx) > 0:
+            # Use the first num_agents positions from the layout
+            agent_idx = layout_agent_idx[:num_agents]
+
+            # If there are unused agent spawn positions in the layout, treat them as walls/counters
+            if len(layout_agent_idx) > num_agents:
+                unused_agent_positions = layout_agent_idx[num_agents:]
+                # Add unused agent spawn positions to the wall map so they appear as counters
+                wall_map = wall_map.at[unused_agent_positions // w, unused_agent_positions % w].set(True)
+                occupied = occupied.at[unused_agent_positions].set(1)
+
         agent_pos = jnp.array([agent_idx % w, agent_idx // w], dtype=jnp.uint32).transpose()  # dim = n_agents x 2
         occupied = occupied.at[agent_idx].set(1)
 
