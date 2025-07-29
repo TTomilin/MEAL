@@ -788,7 +788,7 @@ def main():
                                                     info["shaped_reward"]
                                                     )
 
-                transition = Transition(
+                transition = Transition_MAPPO(
                     batchify(done, env.agents, config.num_actors, not config.use_cnn).squeeze(),
                     action,
                     value,

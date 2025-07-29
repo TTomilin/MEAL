@@ -26,11 +26,9 @@ class Transition(NamedTuple):
     reward: jnp.ndarray  # the reward received
     log_prob: jnp.ndarray  # the log probability of the action
     obs: jnp.ndarray  # the observation
-    global_state: jnp.ndarray  # the global state for centralized critic
-    # info: jnp.ndarray # additional information
 
 
-class Transition_CNN(NamedTuple):
+class Transition_MAPPO(NamedTuple):
     '''
     Named tuple to store the transition information
     '''
@@ -40,7 +38,7 @@ class Transition_CNN(NamedTuple):
     reward: jnp.ndarray  # the reward received
     log_prob: jnp.ndarray  # the log probability of the action
     obs: jnp.ndarray  # the observation
-    info: jnp.ndarray  # additional information
+    global_state: jnp.ndarray  # the global state for centralized critic
 
 
 def batchify(x: dict, agent_list, num_actors, flatten=True):
