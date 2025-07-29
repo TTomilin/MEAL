@@ -82,7 +82,7 @@ pip install -e .
 
 ```bash
 # Create environment
-conda create -n meal python=3.10
+conda create -n meal python=3.10.15
 
 # Activate environment
 conda activate meal
