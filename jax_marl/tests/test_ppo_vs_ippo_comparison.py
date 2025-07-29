@@ -21,19 +21,25 @@ from architectures.mlp import ActorCritic as MLPActorCritic
 from baselines.utils import batchify, unbatchify
 
 
-def create_identical_environments():
+def create_identical_environments(num_agents=2):
     """Create identical environments for both PPO_CL and IPPO_CL"""
     # Use cramped room layout with deterministic reset
     env_kwargs = {
         "layout": FrozenDict(cramped_room),
-        "num_agents": 2,
+        "num_agents": num_agents,
         "random_reset": False,
         "max_steps": 400
     }
 
     # Create environments
-    ppo_env = OvercookedNAgent(**env_kwargs)
-    ippo_env = Overcooked(**env_kwargs)
+    if num_agents == 1:
+        # Original overcooked.py doesn't support num_agents=1, so use n_agent for both
+        ppo_env = OvercookedNAgent(**env_kwargs)
+        ippo_env = OvercookedNAgent(**env_kwargs)
+    else:
+        # For num_agents >= 2, use the original comparison
+        ppo_env = OvercookedNAgent(**env_kwargs)
+        ippo_env = Overcooked(**env_kwargs)
 
     return ppo_env, ippo_env
 
@@ -68,7 +74,7 @@ def create_identical_networks(config, env):
     return network, network_params
 
 
-def create_identical_configs():
+def create_identical_configs(num_agents=2):
     """Create identical configurations for both implementations"""
     # Base configuration
     base_config = {
@@ -102,8 +108,8 @@ def create_identical_configs():
     ippo_config = IPPOConfig(**base_config)
 
     # Set computed parameters
-    ppo_config.num_actors = ppo_config.num_envs * 2  # 2 agents
-    ippo_config.num_actors = ippo_config.num_envs * 2
+    ppo_config.num_actors = ppo_config.num_envs * num_agents
+    ippo_config.num_actors = ippo_config.num_envs * num_agents
     ppo_config.minibatch_size = ppo_config.num_actors * ppo_config.num_steps // ppo_config.num_minibatches
     ippo_config.minibatch_size = ippo_config.num_actors * ippo_config.num_steps // ippo_config.num_minibatches
 
@@ -161,6 +167,9 @@ def run_identical_episode(env, network, train_state, config, rng):
 
 def compare_reward_processing(reward, info, config_ppo, config_ippo):
     """Compare reward processing between PPO_CL and IPPO_CL"""
+    # Get agent keys dynamically
+    agent_keys = list(reward.keys())
+
     # PPO_CL reward processing
     if config_ppo.sparse_rewards:
         ppo_reward = reward
@@ -168,9 +177,14 @@ def compare_reward_processing(reward, info, config_ppo, config_ippo):
         ppo_reward = jax.tree_util.tree_map(lambda x, y: x + y, reward, info["shaped_reward"])
     else:
         # Default: shared delivery + individual shaped
-        total_delivery = reward["agent_0"] + reward["agent_1"]
-        shared_delivery = {"agent_0": total_delivery, "agent_1": total_delivery}
-        ppo_reward = jax.tree_util.tree_map(lambda x, y: x + y, shared_delivery, info["shaped_reward"])
+        if len(agent_keys) == 1:
+            # For single agent, no sharing needed
+            ppo_reward = jax.tree_util.tree_map(lambda x, y: x + y, reward, info["shaped_reward"])
+        else:
+            # For multiple agents, share delivery rewards
+            total_delivery = sum(reward[agent] for agent in agent_keys)
+            shared_delivery = {agent: total_delivery for agent in agent_keys}
+            ppo_reward = jax.tree_util.tree_map(lambda x, y: x + y, shared_delivery, info["shaped_reward"])
 
     # IPPO_CL reward processing (should be identical now)
     if config_ippo.sparse_rewards:
@@ -179,24 +193,29 @@ def compare_reward_processing(reward, info, config_ppo, config_ippo):
         ippo_reward = jax.tree_util.tree_map(lambda x, y: x + y, reward, info["shaped_reward"])
     else:
         # Default: shared delivery + individual shaped
-        total_delivery = reward["agent_0"] + reward["agent_1"]
-        shared_delivery = {"agent_0": total_delivery, "agent_1": total_delivery}
-        ippo_reward = jax.tree_util.tree_map(lambda x, y: x + y, shared_delivery, info["shaped_reward"])
+        if len(agent_keys) == 1:
+            # For single agent, no sharing needed
+            ippo_reward = jax.tree_util.tree_map(lambda x, y: x + y, reward, info["shaped_reward"])
+        else:
+            # For multiple agents, share delivery rewards
+            total_delivery = sum(reward[agent] for agent in agent_keys)
+            shared_delivery = {agent: total_delivery for agent in agent_keys}
+            ippo_reward = jax.tree_util.tree_map(lambda x, y: x + y, shared_delivery, info["shaped_reward"])
 
     return ppo_reward, ippo_reward
 
 
-def test_ppo_vs_ippo_comparison():
+def test_ppo_vs_ippo_comparison(num_agents=1):
     """Main test function comparing PPO_CL and IPPO_CL"""
-    print("🔍 TESTING PPO_CL vs IPPO_CL COMPARISON")
+    print(f"🔍 TESTING PPO_CL vs IPPO_CL COMPARISON (num_agents={num_agents})")
     print("=" * 60)
 
     # Create identical environments
-    ppo_env, ippo_env = create_identical_environments()
+    ppo_env, ippo_env = create_identical_environments(num_agents)
     print("✅ Created identical environments")
 
     # Create identical configurations
-    ppo_config, ippo_config = create_identical_configs()
+    ppo_config, ippo_config = create_identical_configs(num_agents)
     print("✅ Created identical configurations")
 
     # Create identical networks
@@ -243,14 +262,11 @@ def test_ppo_vs_ippo_comparison():
     differences_found = False
 
     for step, (ppo_step, ippo_step) in enumerate(zip(ppo_trajectory, ippo_trajectory)):
-        # Compare observations
-        if not jnp.allclose(ppo_step['obs']['agent_0'], ippo_step['obs']['agent_0'], atol=1e-6):
-            print(f"❌ Step {step}: Agent 0 observations differ")
-            differences_found = True
-
-        if not jnp.allclose(ppo_step['obs']['agent_1'], ippo_step['obs']['agent_1'], atol=1e-6):
-            print(f"❌ Step {step}: Agent 1 observations differ")
-            differences_found = True
+        # Compare observations for all agents
+        for agent in ppo_env.agents:
+            if not jnp.allclose(ppo_step['obs'][agent], ippo_step['obs'][agent], atol=1e-6):
+                print(f"❌ Step {step}: {agent} observations differ")
+                differences_found = True
 
         # Compare actions
         if not jnp.allclose(ppo_step['action'], ippo_step['action'], atol=1e-6):
@@ -272,15 +288,11 @@ def test_ppo_vs_ippo_comparison():
             ppo_step['reward'], ppo_step['info'], ppo_config, ippo_config
         )
 
-        if not jnp.allclose(ppo_reward['agent_0'], ippo_reward['agent_0'], atol=1e-6):
-            print(f"❌ Step {step}: Agent 0 processed rewards differ")
-            print(f"   PPO: {ppo_reward['agent_0']}, IPPO: {ippo_reward['agent_0']}")
-            differences_found = True
-
-        if not jnp.allclose(ppo_reward['agent_1'], ippo_reward['agent_1'], atol=1e-6):
-            print(f"❌ Step {step}: Agent 1 processed rewards differ")
-            print(f"   PPO: {ppo_reward['agent_1']}, IPPO: {ippo_reward['agent_1']}")
-            differences_found = True
+        for agent in ppo_env.agents:
+            if not jnp.allclose(ppo_reward[agent], ippo_reward[agent], atol=1e-6):
+                print(f"❌ Step {step}: {agent} processed rewards differ")
+                print(f"   PPO: {ppo_reward[agent]}, IPPO: {ippo_reward[agent]}")
+                differences_found = True
 
     if not differences_found:
         print("✅ All trajectory data identical between PPO_CL and IPPO_CL!")
@@ -342,7 +354,8 @@ def test_ppo_vs_ippo_comparison():
 
 
 if __name__ == "__main__":
-    success = test_ppo_vs_ippo_comparison()
+    # Test with 1 agent (as specified in the issue)
+    success = test_ppo_vs_ippo_comparison(num_agents=1)
     if success:
         print("\n🎯 All tests passed! PPO_CL and IPPO_CL are equivalent.")
     else:
