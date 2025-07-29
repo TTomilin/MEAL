@@ -1,6 +1,7 @@
 from jax_marl.environments import Overcooked
 from jax_marl.environments.overcooked.overcooked_n_agent import Overcooked as OvercookedNAgent
 from jax_marl.environments.overcooked.overcooked_po import OvercookedPO
+from jax_marl.environments.overcooked.overcooked_single import OvercookedSingle
 
 
 def make(env_id: str, **env_kwargs):
@@ -10,6 +11,8 @@ def make(env_id: str, **env_kwargs):
 
     elif env_id == "overcooked":
         env = Overcooked(**env_kwargs)
+    elif env_id == "overcooked_single":
+        env = OvercookedSingle(**env_kwargs)
     elif env_id == "overcooked_po":
         env = OvercookedPO(**env_kwargs)
     elif env_id == "overcooked_n_agent" or env_kwargs.get('num_agents', 2) != 2:
@@ -17,4 +20,4 @@ def make(env_id: str, **env_kwargs):
 
     return env
 
-registered_envs = ["overcooked", "overcooked_po", "overcooked_n_agent"]
+registered_envs = ["overcooked", "overcooked_single", "overcooked_po", "overcooked_n_agent"]

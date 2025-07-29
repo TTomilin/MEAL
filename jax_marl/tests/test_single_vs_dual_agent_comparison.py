@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """
-Test that compares 1-agent overcooked_n_agent environment with 2-agent regular overcooked environment.
+Test that compares 1-agent overcooked_single environment with 2-agent regular overcooked environment.
 Agent 0 performs the same deterministic actions in both environments to cook soup.
-Compares observations and rewards (masking out agent 1 in the 2-agent environment).
+Compares observations and rewards (excluding agent 1 layers from the 2-agent environment).
 Generates GIFs for both rollouts using visualization.
 """
 import os
@@ -27,12 +27,14 @@ from jax_marl.eval.visualizer import OvercookedVisualizer
 
 def test_single_vs_dual_agent_comparison():
     """
-    Compare 1-agent overcooked_n_agent with 2-agent regular overcooked.
+    Compare 1-agent overcooked_single with 2-agent regular overcooked.
     Agent 0 performs identical deterministic actions in both environments.
+    Excludes agent 1 layers from comparison.
     """
     print("=== SINGLE VS DUAL AGENT COMPARISON TEST ===")
-    print("Comparing 1-agent overcooked_n_agent with 2-agent regular overcooked")
+    print("Comparing 1-agent overcooked_single with 2-agent regular overcooked")
     print("Agent 0 will perform identical actions in both environments")
+    print("Agent 1 layers (position and orientations) are excluded from comparison")
 
     # Use the same fixed layout and deterministic reset for both environments
     layout = FrozenDict(cramped_room)
@@ -54,7 +56,7 @@ def test_single_vs_dual_agent_comparison():
     obs_1, state_1 = env_1_agent.reset(rng1)
     obs_2, state_2 = env_2_agent.reset(rng2)
 
-    print(f"Initial observations - 1-agent keys: {list(obs_1.keys())}")
+    print(f"Initial observations - 1-agent shape: {obs_1.shape}")
     print(f"Initial observations - 2-agent keys: {list(obs_2.keys())}")
 
     # Set up visualization for both environments
@@ -110,8 +112,8 @@ def test_single_vs_dual_agent_comparison():
     for t, action in enumerate(actions_agent_0):
         # Step 1-agent environment
         rng, step_key1 = jax.random.split(rng)
-        obs_1, state_1, reward_1, done_1, info_1 = env_1_agent.step_env(
-            step_key1, state_1, {"agent_0": jnp.uint32(action)}
+        obs_1, state_1, reward_1, done_1, info_1 = env_1_agent.step(
+            step_key1, state_1, jnp.uint32(action)
         )
 
         # Step 2-agent environment (agent 0 does action, agent 1 stays)
@@ -123,10 +125,10 @@ def test_single_vs_dual_agent_comparison():
         # Store rollout data
         rollout_data_1_agent.append({
             'step': t,
-            'obs': obs_1["agent_0"],
-            'reward': reward_1["agent_0"],
-            'shaped_reward': info_1["shaped_reward"]["agent_0"],
-            'done': done_1["agent_0"]
+            'obs': obs_1,  # Single agent returns observation directly
+            'reward': reward_1,
+            'shaped_reward': info_1["shaped_reward"],
+            'done': done_1
         })
 
         rollout_data_2_agent.append({
@@ -142,8 +144,8 @@ def test_single_vs_dual_agent_comparison():
         add_frame_2_agent(state_2)
 
         # Print progress for key steps
-        if t % 10 == 0 or reward_1["agent_0"] > 0 or reward_2["agent_0"] > 0:
-            print(f"Step {t}: 1-agent reward={reward_1['agent_0']:.1f}, 2-agent reward={reward_2['agent_0']:.1f}")
+        if t % 10 == 0 or reward_1 > 0 or reward_2["agent_0"] > 0:
+            print(f"Step {t}: 1-agent reward={reward_1:.1f}, 2-agent reward={reward_2['agent_0']:.1f}")
 
     # Compare the rollouts
     print(f"\n=== COMPARING ROLLOUTS ===")
@@ -160,23 +162,31 @@ def test_single_vs_dual_agent_comparison():
     print(f"\n=== DETAILED OBSERVATION COMPARISON ===")
     obs_1_shape = rollout_data_1_agent[0]['obs'].shape
     obs_2_shape = rollout_data_2_agent[0]['obs'].shape
-    print(f"1-agent obs shape: {obs_1_shape} (overcooked_n_agent)")
+    print(f"1-agent obs shape: {obs_1_shape} (overcooked_single)")
     print(f"2-agent obs shape: {obs_2_shape} (overcooked)")
 
     # Channel structure analysis
     print(f"\nChannel structure analysis:")
-    print(f"1-agent environment (overcooked_n_agent with 1 agent):")
-    print(f"  - Channels 0: Agent 0 position")
-    print(f"  - Channels 1-4: Agent 0 orientations (4 directions)")
-    print(f"  - Channels 5-20: Environment layers (16 layers)")
-    print(f"  - Channel 21: Urgency layer")
-    print(f"  - Total: 22 channels")
+    print(f"1-agent environment (overcooked_single):")
+    print(f"  - Channel 0: Agent 0 position")
+    print(f"  - Channel 1: Empty (no agent 1)")
+    print(f"  - Channels 2-5: Agent 0 orientations (4 directions)")
+    print(f"  - Channels 6-9: Empty (no agent 1 orientations)")
+    print(f"  - Channels 10-25: Environment layers (16 layers)")
+    print(f"  - Total: 26 channels")
 
     print(f"\n2-agent environment (overcooked with 2 agents):")
     print(f"  - Channels 0-1: Agent positions (agent 0, agent 1)")
     print(f"  - Channels 2-9: Agent orientations (4 for agent 0, 4 for agent 1)")
     print(f"  - Channels 10-25: Environment layers (16 layers)")
     print(f"  - Total: 26 channels")
+
+    print(f"\nComparison strategy:")
+    print(f"  - Compare agent 0 position: channel 0 vs channel 0")
+    print(f"  - Compare agent 0 orientations: channels 2-5 vs channels 2-5")
+    print(f"  - Compare environment layers: channels 10-25 vs channels 10-25")
+    print(f"  - EXCLUDE agent 1 position: skip channel 1 from 2-agent env")
+    print(f"  - EXCLUDE agent 1 orientations: skip channels 6-9 from 2-agent env")
 
     def analyze_observation_differences(obs_1, obs_2, step_num):
         """Detailed analysis of observation differences between environments"""
@@ -193,26 +203,28 @@ def test_single_vs_dual_agent_comparison():
         obs_2_float = obs_2.astype(np.float32)
 
         # Extract agent 0 position from both environments
-        agent_0_pos_1 = obs_1_float[:, :, 0]  # 1-agent: channel 0
+        agent_0_pos_1 = obs_1_float[:, :, 0]  # single-agent: channel 0
         agent_0_pos_2 = obs_2_float[:, :, 0]  # 2-agent: channel 0
 
-        # Extract agent 0 orientations
-        agent_0_ori_1 = obs_1_float[:, :, 1:5]  # 1-agent: channels 1-4
-        agent_0_ori_2 = obs_2_float[:, :, 2:6]  # 2-agent: channels 2-5
+        # Extract agent 0 orientations (excluding agent 1 orientations from 2-agent env)
+        agent_0_ori_1 = obs_1_float[:, :, 2:6]  # single-agent: channels 2-5
+        agent_0_ori_2 = obs_2_float[:, :, 2:6]  # 2-agent: channels 2-5 (agent 0 only)
 
-        # Extract environment layers (align properly)
-        env_layers_1 = obs_1_float[:, :, 5:21]   # 1-agent: channels 5-20 (16 layers)
-        env_layers_2 = obs_2_float[:, :, 10:26]  # 2-agent: channels 10-25 (16 layers)
+        # Extract environment layers (same channels in both environments)
+        env_layers_1 = obs_1_float[:, :, 10:26]   # single-agent: channels 10-25 (16 layers)
+        env_layers_2 = obs_2_float[:, :, 10:26]   # 2-agent: channels 10-25 (16 layers)
 
-        # Extract urgency layer
-        urgency_1 = obs_1_float[:, :, 21]  # 1-agent: channel 21
-        urgency_2 = obs_2_float[:, :, 25]  # 2-agent: channel 25
+        # Note: We explicitly EXCLUDE the following from comparison:
+        # - Channel 1 from 2-agent env (agent 1 position)
+        # - Channels 6-9 from 2-agent env (agent 1 orientations)
 
-        # Calculate differences
+        # Calculate differences (only for agent 0 and environment layers)
         agent_pos_diff = np.sum(np.abs(agent_0_pos_1 - agent_0_pos_2))
         agent_ori_diff = np.sum(np.abs(agent_0_ori_1 - agent_0_ori_2))
         env_layers_diff = np.sum(np.abs(env_layers_1 - env_layers_2))
-        urgency_diff = np.sum(np.abs(urgency_1 - urgency_2))
+
+        # No urgency layer comparison since both environments use the same channel
+        urgency_diff = 0.0
 
         # Analyze specific environment layers
         layer_names = [
@@ -342,8 +354,8 @@ def test_single_vs_dual_agent_comparison():
     # Final assessment
     if avg_obs_diff == 0 and steps_with_pos_diff == 0 and steps_with_ori_diff == 0:
         print(f"\n🎯 CONCLUSION: The environments provide identical experiences for agent 0!")
-        print(f"   This validates that overcooked_n_agent with 1 agent is equivalent to")
-        print(f"   overcooked with 2 agents from agent 0's perspective.")
+        print(f"   This validates that overcooked_single is equivalent to")
+        print(f"   overcooked with 2 agents from agent 0's perspective (excluding agent 1 layers).")
     elif avg_obs_diff < 5:
         print(f"\n✅ CONCLUSION: The environments are highly consistent for agent 0!")
         print(f"   Small differences are likely due to implementation variations.")
@@ -355,7 +367,7 @@ def test_single_vs_dual_agent_comparison():
     print(f"\n=== SAVING GIFS ===")
     makedirs("gifs", exist_ok=True)
 
-    gif_path_1 = "gifs/single_agent_overcooked_n_agent.gif"
+    gif_path_1 = "gifs/single_agent_overcooked_single.gif"
     gif_path_2 = "gifs/dual_agent_overcooked_agent0_only.gif"
 
     iio.imwrite(gif_path_1, frames_1_agent, loop=0, fps=8)

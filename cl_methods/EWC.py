@@ -131,7 +131,13 @@ def compute_fisher(params: FrozenDict,
         # env step (batched over agents internally by env)
         act_dict = { agent: actions[i] for i, agent in enumerate(env.agents) }
         obs_next, env_state, _, done_info, _ = env.step(key_step, env_state, act_dict)
-        done = done_info["__all__"]
+
+        # Handle both single-agent (boolean) and multi-agent (dictionary) done values
+        if isinstance(done_info, dict):
+            done = done_info["__all__"]
+        else:
+            # Single-agent environment returns done as boolean directly
+            done = done_info
 
         return (rng, env_state, obs_next, fisher_acc), done
 

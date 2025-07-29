@@ -41,15 +41,24 @@ class Transition_MAPPO(NamedTuple):
     global_state: jnp.ndarray  # the global state for centralized critic
 
 
-def batchify(x: dict, agent_list, num_actors, flatten=True):
+def batchify(x, agent_list, num_actors, flatten=True):
     '''
     converts the observations of a batch of agents into an array of size (num_actors, -1) that can be used by the network
     @param flatten: for MLP architectures
-    @param x: dictionary of observations
+    @param x: dictionary of observations (multi-agent) or direct array (single-agent)
     @param agent_list: list of agents
     @param num_actors: number of actors
     returns the batchified observations
     '''
+    # Handle single-agent case where x is already an array
+    if isinstance(x, jnp.ndarray):
+        # For single-agent, x is already the observation array
+        batched = x
+        if flatten:
+            batched = batched.reshape((num_actors, -1))
+        return batched
+
+    # Handle multi-agent case where x is a dictionary
     x = jnp.stack([x[a] for a in agent_list])
     batched = jnp.concatenate(x, axis=0)
     if flatten:
@@ -65,9 +74,16 @@ def unbatchify(x: jnp.ndarray, agent_list, num_envs, num_actors):
     @param agent_list: list of agents
     @param num_envs: number of environments
     @param num_actors: number of actors
-    returns the unbatchified observations
+    returns the unbatchified observations (dict for multi-agent, direct array for single-agent)
     '''
     x = x.reshape((num_actors, num_envs, -1))
+
+    # Handle single-agent case
+    if len(agent_list) == 1:
+        # For single-agent, return the action directly (not as a dictionary)
+        return x[0]  # Shape: (num_envs, -1)
+
+    # Handle multi-agent case
     return {a: x[i] for i, a in enumerate(agent_list)}
 
 
@@ -246,12 +262,14 @@ def _pad_to(img: jnp.ndarray, target_shape):
 # ---------------------------------------------------------------
 # util: build a (2, …) batch without Python branches
 # ---------------------------------------------------------------
-def _prep_obs(raw_obs: dict[str, jnp.ndarray], use_cnn: bool) -> jnp.ndarray:
+def _prep_obs(raw_obs, use_cnn: bool) -> jnp.ndarray:
     """
     Stack per‐agent observations into a single array of shape
     (num_agents, …).
 
     If use_cnn=False, each obs is flattened to a 1D float32 vector first.
+
+    Handles both single-agent (direct array) and multi-agent (dictionary) observations.
     """
 
     def _single(obs: jnp.ndarray) -> jnp.ndarray:
@@ -261,11 +279,17 @@ def _prep_obs(raw_obs: dict[str, jnp.ndarray], use_cnn: bool) -> jnp.ndarray:
         # introduce a leading "agent" axis
         return obs[None]
 
-    # Sort the keys so that the agent‐ordering is deterministic
-    agent_ids = sorted(raw_obs.keys())
+    # Handle both single-agent (direct array) and multi-agent (dictionary) cases
+    if isinstance(raw_obs, dict):
+        # Multi-agent case: raw_obs is a dictionary
+        # Sort the keys so that the agent‐ordering is deterministic
+        agent_ids = sorted(raw_obs.keys())
 
-    # Build a list of (1, …) arrays, one per agent
-    per_agent = [_single(raw_obs[a]) for a in agent_ids]
+        # Build a list of (1, …) arrays, one per agent
+        per_agent = [_single(raw_obs[a]) for a in agent_ids]
+    else:
+        # Single-agent case: raw_obs is a direct array
+        per_agent = [_single(raw_obs)]
 
     # Concatenate along the new leading axis → (num_agents, …)
     return jnp.concatenate(per_agent, axis=0)

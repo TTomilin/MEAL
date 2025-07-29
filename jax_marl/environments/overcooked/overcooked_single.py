@@ -77,6 +77,7 @@ class OvercookedSingle:
             max_steps: int = 400,
             task_id: int = 0,
             soup_cook_time: int = DEFAULT_SOUP_COOK_TIME,
+            num_agents: int = 1,
     ):
         # Hardcode to single agent
         self.num_agents = 1
@@ -95,7 +96,6 @@ class OvercookedSingle:
         self.agent_view_size = 5  # Hard coded. Only affects map padding -- not observations.
         self.layout = layout
         self.layout_name = layout_name
-        # Single agent only
         self.agents = ["agent_0"]
 
         self.action_set = jnp.array([
@@ -120,11 +120,19 @@ class OvercookedSingle:
             self,
             key: chex.PRNGKey,
             state: State,
-            action: chex.Array,
+            action,
     ) -> Tuple[chex.Array, State, float, bool, dict]:
         """Perform single timestep state transition."""
 
-        act = self.action_set.take(indices=action)
+        # Handle both direct actions and dictionary actions (for compatibility with multi-agent interfaces)
+        if isinstance(action, dict):
+            # Extract action for the single agent
+            action_value = action[self.agents[0]]
+        else:
+            # Direct action value
+            action_value = action
+
+        act = self.action_set.take(indices=action_value)
 
         state, reward, shaped_reward, soups_delivered = self.step_agent(key, state, act)
 
@@ -325,7 +333,7 @@ class OvercookedSingle:
             self, key: chex.PRNGKey, state: State, action: chex.Array,
     ) -> Tuple[State, float, float, float]:
         """Process single agent action and compute rewards."""
-        
+
         # Update agent position (forward action)
         is_move_action = jnp.logical_and(action != Actions.stay, action != Actions.interact)
 

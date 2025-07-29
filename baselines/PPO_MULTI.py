@@ -97,7 +97,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
-    env_name: str = "overcooked_single"
+    env_name: str = "overcooked_n_agent"
     num_agents: int = 2  # number of agents in the environment
     seq_length: int = 10
     repeat_sequence: int = 1
@@ -404,19 +404,8 @@ def main():
                 # ***Create a batched copy for the network only.***
                 # For each agent, expand dims to get shape (1, H, W, C) then flatten to (1, -1)
                 batched_obs = {}
-
-                # Handle both single-agent (direct array) and multi-agent (dictionary) cases
-                if isinstance(obs, dict):
-                    # Multi-agent case: obs is a dictionary
-                    for agent, v in obs.items():
-                        v_b = jnp.expand_dims(v, axis=0)  # now (1, H, W, C)
-                        if not cfg.use_cnn:
-                            v_b = jnp.reshape(v_b, (v_b.shape[0], -1))  # flatten
-                        batched_obs[agent] = v_b
-                else:
-                    # Single-agent case: obs is a direct array
-                    agent = agents[0]  # Get the single agent name
-                    v_b = jnp.expand_dims(obs, axis=0)  # now (1, H, W, C)
+                for agent, v in obs.items():
+                    v_b = jnp.expand_dims(v, axis=0)  # now (1, H, W, C)
                     if not cfg.use_cnn:
                         v_b = jnp.reshape(v_b, (v_b.shape[0], -1))  # flatten
                     batched_obs[agent] = v_b
@@ -441,33 +430,11 @@ def main():
                     act, _ = select_action(train_state, key_agent, batched_obs[agent])
                     actions[agent] = act
 
-                # Handle action format for single-agent vs multi-agent environments
-                if len(agents) == 1:
-                    # Single-agent case: pass action directly
-                    env_actions = actions[agents[0]]
-                else:
-                    # Multi-agent case: pass actions as dictionary
-                    env_actions = actions
-
                 # Environment step
-                next_obs, next_state, reward, done_step, info = env.step(key_s, state_env, env_actions)
-
-                # Handle both single-agent (boolean/direct value) and multi-agent (dictionary) cases
-                if isinstance(done_step, dict):
-                    done = done_step["__all__"]
-                else:
-                    done = done_step
-
-                if isinstance(reward, dict):
-                    reward = sum(reward[agent] for agent in agents)  # Sum of all agent rewards
-                else:
-                    # Single-agent case: reward is already a direct value
-                    pass  # reward is already the total reward
-
-                if isinstance(info["soups"], dict):
-                    soups_this_step = sum(info["soups"][agent] for agent in agents)
-                else:
-                    soups_this_step = info["soups"]  # Single-agent case: direct value
+                next_obs, next_state, reward, done_step, info = env.step(key_s, state_env, actions)
+                done = done_step["__all__"]
+                reward = sum(reward[agent] for agent in agents)  # Sum of all agent rewards
+                soups_this_step = sum(info["soups"][agent] for agent in agents)
                 total_reward += reward
                 total_soup += soups_this_step
                 step_count += 1
@@ -643,14 +610,7 @@ def main():
 
                 # format the actions to be compatible with the environment
                 env_act = unbatchify(action, env.agents, cfg.num_envs, env.num_agents)
-
-                # Handle single-agent vs multi-agent action formatting
-                if isinstance(env_act, dict):
-                    # Multi-agent case: flatten each agent's actions
-                    env_act = {k: v.flatten() for k, v in env_act.items()}
-                else:
-                    # Single-agent case: actions are already in the right format
-                    env_act = env_act.flatten()
+                env_act = {k: v.flatten() for k, v in env_act.items()}
 
                 # STEP ENV
                 # split the random number generator for stepping the environment
@@ -672,31 +632,22 @@ def main():
                 elif cfg.individual_rewards:
                     # Individual rewards: delivery rewards + individual shaped rewards
                     # Environment now provides individual delivery rewards directly
-                    if len(env.agents) == 1:
-                        # Single-agent case: reward and shaped_reward are direct values
-                        reward = reward + info["shaped_reward"] * rew_shaping_anneal(current_timestep)
-                    else:
-                        # Multi-agent case: reward and shaped_reward are dictionaries
-                        reward = jax.tree_util.tree_map(lambda x, y:
-                                                        x + y * rew_shaping_anneal(current_timestep),
-                                                        reward,
-                                                        info["shaped_reward"]
-                                                        )
+                    reward = jax.tree_util.tree_map(lambda x, y:
+                                                    x + y * rew_shaping_anneal(current_timestep),
+                                                    reward,
+                                                    info["shaped_reward"]
+                                                    )
                 else:
                     # Default behavior: shared delivery rewards + individual shaped rewards
-                    if len(env.agents) == 1:
-                        # Single-agent case: reward and shaped_reward are direct values
-                        reward = reward + info["shaped_reward"] * rew_shaping_anneal(current_timestep)
-                    else:
-                        # Multi-agent case: Convert individual delivery rewards to shared rewards (all agents get total)
-                        total_delivery_reward = sum(reward[agent] for agent in env.agents)
-                        shared_delivery_rewards = {agent: total_delivery_reward for agent in env.agents}
+                    # Convert individual delivery rewards to shared rewards (all agents get total)
+                    total_delivery_reward = sum(reward[agent] for agent in env.agents)
+                    shared_delivery_rewards = {agent: total_delivery_reward for agent in env.agents}
 
-                        reward = jax.tree_util.tree_map(lambda x, y:
-                                                        x + y * rew_shaping_anneal(current_timestep),
-                                                        shared_delivery_rewards,
-                                                        info["shaped_reward"]
-                                                        )
+                    reward = jax.tree_util.tree_map(lambda x, y:
+                                                    x + y * rew_shaping_anneal(current_timestep),
+                                                    shared_delivery_rewards,
+                                                    info["shaped_reward"]
+                                                    )
 
                 transition = Transition(
                     batchify(done, env.agents, cfg.num_actors, not cfg.use_cnn).squeeze(),
@@ -1052,13 +1003,7 @@ def main():
             agent_soups = {}
             soup_delivered = 0
             for agent in env.agents:
-                # Handle both single-agent (direct value) and multi-agent (dictionary) cases
-                if isinstance(info["soups"], dict):
-                    # Multi-agent case: soups is a dictionary
-                    agent_soup = info["soups"][agent].sum()
-                else:
-                    # Single-agent case: soups is a direct value
-                    agent_soup = info["soups"].sum()
+                agent_soup = info["soups"][agent].sum()
                 agent_soups[agent] = agent_soup
                 soup_delivered += agent_soup
                 metrics[f"Soup/{agent}_soup"] = agent_soup
@@ -1071,13 +1016,7 @@ def main():
             # Rewards section
             # Agent-agnostic reward logging
             for agent in env.agents:
-                # Handle both single-agent (direct value) and multi-agent (dictionary) cases
-                if isinstance(metrics["shaped_reward"], dict):
-                    # Multi-agent case: shaped_reward is a dictionary
-                    metrics[f"General/shaped_reward_{agent}"] = metrics["shaped_reward"][agent]
-                else:
-                    # Single-agent case: shaped_reward is a direct value
-                    metrics[f"General/shaped_reward_{agent}"] = metrics["shaped_reward"]
+                metrics[f"General/shaped_reward_{agent}"] = metrics["shaped_reward"][agent]
                 metrics[f"General/shaped_reward_annealed_{agent}"] = metrics[
                                                                          f"General/shaped_reward_{agent}"] * rew_shaping_anneal(
                     current_timestep)
@@ -1305,29 +1244,7 @@ def record_gif_of_episode(config, train_state, env, network, env_idx=0, max_step
 
     while not done and step_count < max_steps:
         obs_dict = {}
-
-        # Handle both single-agent (direct array) and multi-agent (dictionary) observations
-        if isinstance(obs, dict):
-            # Multi-agent case: obs is a dictionary
-            agents = list(obs.keys())
-            for agent_id, obs_v in obs.items():
-                # Determine the expected raw shape for this agent.
-                expected_shape = env.observation_space().shape
-                # If the observation is unbatched, add a batch dimension.
-                if obs_v.ndim == len(expected_shape):
-                    obs_b = jnp.expand_dims(obs_v, axis=0)  # now (1, ...)
-                else:
-                    obs_b = obs_v
-                if not config.use_cnn:
-                    # Flatten the nonbatch dimensions.
-                    obs_b = jnp.reshape(obs_b, (obs_b.shape[0], -1))
-                obs_dict[agent_id] = obs_b
-        else:
-            # Single-agent case: obs is a direct array
-            agents = env.agents  # Get agents from environment
-            agent_id = agents[0]  # Single agent
-            obs_v = obs
-
+        for agent_id, obs_v in obs.items():
             # Determine the expected raw shape for this agent.
             expected_shape = env.observation_space().shape
             # If the observation is unbatched, add a batch dimension.
@@ -1341,28 +1258,15 @@ def record_gif_of_episode(config, train_state, env, network, env_idx=0, max_step
             obs_dict[agent_id] = obs_b
 
         actions = {}
+        agents = list(obs.keys())  # Get agents from observation keys
         act_keys = jax.random.split(rng, len(agents))
         for i, agent_id in enumerate(agents):
             pi, _ = network.apply(train_state.params, obs_dict[agent_id], env_idx=env_idx)
             actions[agent_id] = jnp.squeeze(pi.sample(seed=act_keys[i]), axis=0)
 
-        # Handle action format for single-agent vs multi-agent environments
-        if len(agents) == 1:
-            # Single-agent case: pass action directly
-            env_actions = actions[agents[0]]
-        else:
-            # Multi-agent case: pass actions as dictionary
-            env_actions = actions
-
         rng, key_step = jax.random.split(rng)
-        next_obs, next_state, reward, done_info, info = env.step(key_step, state, env_actions)
-
-        # Handle both single-agent (boolean) and multi-agent (dictionary) done values
-        if isinstance(done_info, dict):
-            done = done_info["__all__"]
-        else:
-            # Single-agent environment returns done as boolean directly
-            done = done_info
+        next_obs, next_state, reward, done_info, info = env.step(key_step, state, actions)
+        done = done_info["__all__"]
 
         obs, state = next_obs, next_state
         step_count += 1

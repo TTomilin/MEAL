@@ -38,8 +38,13 @@ class JaxMARLWrapper(object):
     #     x = jnp.stack([x[a] for a in self._env.agents])
     #     return x.reshape((self._env.num_agents, -1))
 
-    def _batchify_floats(self, x: dict):
-        return jnp.stack([x[a] for a in self._env.agents])
+    def _batchify_floats(self, x):
+        # Handle both single-agent (direct float) and multi-agent (dictionary) reward values
+        if isinstance(x, dict):
+            return jnp.stack([x[a] for a in self._env.agents])
+        else:
+            # Single-agent environment returns reward as float directly
+            return jnp.array([x])
 
 
 @struct.dataclass
@@ -79,17 +84,22 @@ class LogWrapper(JaxMARLWrapper):
         state: LogEnvState,
         action: Union[int, float],
     ) -> Tuple[chex.Array, LogEnvState, float, bool, dict]:
-        
+
         # perform the step
         obs, env_state, reward, done, info = self._env.step(
             key, state.env_state, action
         )
-        ep_done = done["__all__"]
+        # Handle both single-agent (boolean) and multi-agent (dictionary) done values
+        if isinstance(done, dict):
+            ep_done = done["__all__"]
+        else:
+            # Single-agent environment returns done as boolean directly
+            ep_done = done
 
 
         new_episode_return = state.episode_returns + self._batchify_floats(reward) # reward of the current step
         new_episode_length = state.episode_lengths + 1  # length of the current episode
-        
+
         state = LogEnvState(
             env_state=env_state,
             episode_returns=new_episode_return * (1 - ep_done),
@@ -109,7 +119,7 @@ class LogWrapper(JaxMARLWrapper):
 class MPELogWrapper(LogWrapper):
     """ Times reward signal by number of agents within the environment,
     to match the on-policy codebase. """
-    
+
     @partial(jax.jit, static_argnums=(0,))
     def step(
         self,
@@ -121,7 +131,12 @@ class MPELogWrapper(LogWrapper):
             key, state.env_state, action
         )
         rewardlog = jax.tree.map(lambda x: x*self._env.num_agents, reward)  # As per on-policy codebase
-        ep_done = done["__all__"]
+        # Handle both single-agent (boolean) and multi-agent (dictionary) done values
+        if isinstance(done, dict):
+            ep_done = done["__all__"]
+        else:
+            # Single-agent environment returns done as boolean directly
+            ep_done = done
         new_episode_return = state.episode_returns + self._batchify_floats(rewardlog)
         new_episode_length = state.episode_lengths + 1
         state = LogEnvState(
@@ -164,9 +179,9 @@ class CTRolloutManager(JaxMARLWrapper):
     """
 
     def __init__(self, env: MultiAgentEnv, batch_size:int, preprocess_obs:bool=True):
-        
+
         super().__init__(env)
-        
+
         self.batch_size = batch_size
         self.training_agents = self.agents
         self.preprocess_obs = preprocess_obs  
@@ -175,7 +190,7 @@ class CTRolloutManager(JaxMARLWrapper):
             self.observation_spaces = {agent:self.observation_space() for agent in self.agents}
         if len(env.action_spaces) == 0:
             self.action_spaces = {agent:env.action_space() for agent in self.agents}
-        
+
         # batched action sampling
         self.batch_samplers = {agent: jax.jit(jax.vmap(self.action_space(agent).sample, in_axes=0)) for agent in self.agents}
 
@@ -192,11 +207,11 @@ class CTRolloutManager(JaxMARLWrapper):
         self.valid_actions = {a:jnp.arange(u.n) for a, u in self.action_spaces.items()}
         self.valid_actions_oh ={a:jnp.concatenate((jnp.ones(u.n), jnp.zeros(self.max_action_space - u.n))) for a, u in self.action_spaces.items()}
 
-        
+
         self.global_state = lambda obs, state:  jnp.concatenate([obs[agent].flatten() for agent in self.agents], axis=-1)
         self.global_reward = lambda rewards: rewards[self.training_agents[0]]
 
-    
+
     @partial(jax.jit, static_argnums=0)
     def batch_reset(self, key):
         keys = jax.random.split(key, self.batch_size)
@@ -228,10 +243,10 @@ class CTRolloutManager(JaxMARLWrapper):
         obs["__all__"] = self.global_state(obs_, state)
         reward["__all__"] = self.global_reward(reward)
         return obs, state, reward, done, infos
-    
+
     def batch_sample(self, key, agent):
         return self.batch_samplers[agent](jax.random.split(key, self.batch_size)).astype(int)
-    
+
     @partial(jax.jit, static_argnums=0)
     def get_valid_actions(self, state):
         # default is to return the same valid actions one hot encoded for each env 
@@ -247,4 +262,3 @@ class CTRolloutManager(JaxMARLWrapper):
         # concatenate the extra features
         arr = jnp.concatenate((arr, extra_features), axis=-1)
         return arr
-
