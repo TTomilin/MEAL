@@ -9,7 +9,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 # Main dependencies required for the package
 install_requires = [
-    "jax[cuda12]==0.4.35",  # JAX with CUDA 12 support
+    "jax[cuda12]==0.4.35",  # JAX with CUDA 12.6 support
     "flax==0.10.2",
     "chex==0.1.84",
     "optax==0.1.7",
@@ -36,6 +36,9 @@ extras_require = {
         "matplotlib>=3.8.3",
         "pillow>=10.2.0",
         "seaborn==0.13.2",
+        "ipython==8.37.0",
+        "ipywidgets==8.1.7",
+        "tensorboard==2.20.0",
     ],
     "utils": [
         "tyro==0.9.2",

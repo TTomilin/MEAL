@@ -1,7 +1,6 @@
 import json
 import os
 from pathlib import Path
-from dotenv import load_dotenv
 
 from jax._src.flatten_util import ravel_pytree
 
@@ -792,7 +791,7 @@ def main():
                         # For MAPPO: Use global state for critic, local observations for actor
                         # In this simplified version, we use the same observations for both
                         global_state = traj_batch.obs  # For centralized critic
-                        local_obs = traj_batch.obs     # For decentralized actor
+                        local_obs = traj_batch.obs  # For decentralized actor
 
                         # apply the network to the observations in the trajectory batch
                         pi, value = network.apply(params, global_state, env_idx=env_idx)
@@ -861,10 +860,10 @@ def main():
                         # scale memory gradient by batch-size ratio
                         # ppo_bs = config.num_actors * config.num_steps
                         # mem_bs = config.agem_sample_size
-                        g_ppo, _  = ravel_pytree(grads)          # grads  = fresh PPO grads
-                        g_mem, _  = ravel_pytree(grads_mem)      # grads_mem = memory grads
-                        norm_ppo  = jnp.linalg.norm(g_ppo) + 1e-12
-                        norm_mem  = jnp.linalg.norm(g_mem) + 1e-12
+                        g_ppo, _ = ravel_pytree(grads)  # grads  = fresh PPO grads
+                        g_mem, _ = ravel_pytree(grads_mem)  # grads_mem = memory grads
+                        norm_ppo = jnp.linalg.norm(g_ppo) + 1e-12
+                        norm_mem = jnp.linalg.norm(g_mem) + 1e-12
                         scale = norm_ppo / norm_mem * config.agem_gradient_scale
                         grads_mem_scaled = jax.tree_util.tree_map(lambda g: g * scale, grads_mem)
 
@@ -889,7 +888,7 @@ def main():
                         # Return empty stats with the same structure as apply_agem_projection
                         empty_stats = {
                             "agem/agem_alpha": jnp.array(0.0),
-                            "agem/agem_dot_g": jnp.array(0.0), 
+                            "agem/agem_dot_g": jnp.array(0.0),
                             "agem/agem_final_grad_norm": jnp.array(0.0),
                             "agem/agem_is_proj": jnp.array(False),
                             "agem/agem_mem_grad_norm": jnp.array(0.0),
