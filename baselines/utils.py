@@ -26,7 +26,6 @@ class Transition(NamedTuple):
     reward: jnp.ndarray  # the reward received
     log_prob: jnp.ndarray  # the log probability of the action
     obs: jnp.ndarray  # the observation
-    global_state: jnp.ndarray  # the global state for centralized critic
     # info: jnp.ndarray # additional information
 
 
@@ -297,8 +296,8 @@ def create_run_name(config, network_architecture):
     """
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     unique_id = uuid.uuid4()
-    run_name = f'{config.alg_name}_{config.cl_method}_{network_architecture}_\
-        seq{config.seq_length}_{config.strategy}_seed_{config.seed}_{timestamp}_{unique_id}'
+    run_name = (f'{config.alg_name}_{config.cl_method}_{network_architecture}_seq'
+                f'{config.seq_length}_{config.strategy}_seed_{config.seed}_{timestamp}_{unique_id}')
     return run_name
 
 
