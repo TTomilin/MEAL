@@ -480,11 +480,8 @@ def main():
                     params = train_state.params
 
                     # For evaluation, we only need the actor network for action selection
-                    if is_decoupled:
-                        pi, _ = network_apply(params, obs, env_idx=eval_idx, network_type='actor')
-                        value = None  # We don't need value during evaluation
-                    else:
-                        pi, value = network_apply(params, obs, env_idx=eval_idx)
+                    pi, _ = network_apply(params, obs, env_idx=eval_idx, network_type='actor')
+                    value = None  # We don't need value during evaluation
 
                     action = jnp.squeeze(pi.sample(seed=rng), axis=0)
                     return action, value
@@ -579,95 +576,73 @@ def main():
         frac = 1.0 - (count // (config.num_minibatches * config.update_epochs)) / config.num_updates
         return config.lr * frac
 
-    # For MAPPO, use decoupled networks when not using CNN
-    if config.use_cnn:
-        # Use unified ActorCritic for CNN (existing implementation)
-        ac_cls = CNNActorCritic
-        network = ac_cls(temp_env.action_space().n, config.activation, seq_length, config.use_multihead,
-                         config.shared_backbone, config.big_network, config.use_task_id, config.regularize_heads,
-                         config.use_layer_norm)
+    # MAPPO always uses decoupled Actor and Critic networks
+    obs_dim = temp_env.observation_space().shape
+    local_obs_dim = np.prod(obs_dim)  # Individual agent observation dimension
+    global_obs_dim = local_obs_dim * temp_env.num_agents  # Global state dimension
 
-        obs_dim = temp_env.observation_space().shape
-        init_x = jnp.zeros((1, *obs_dim))
+    # Create separate actor and critic networks
+    actor_network = Actor(
+        action_dim=temp_env.action_space().n,
+        activation=config.activation,
+        num_tasks=seq_length,
+        use_multihead=config.use_multihead,
+        use_task_id=config.use_task_id
+    )
 
-        # Initialize the network
-        rng = jax.random.PRNGKey(seed)
-        rng, network_rng = jax.random.split(rng)
-        network_params = network.init(network_rng, init_x)
+    critic_network = Critic(
+        activation=config.activation,
+        num_tasks=seq_length,
+        use_multihead=config.use_multihead,
+        use_task_id=config.use_task_id
+    )
 
-        # Store network info for later use
-        actor_network = None
-        critic_network = None
-        is_decoupled = False
-    else:
-        # Use decoupled Actor and Critic for MLP (MAPPO-friendly)
-        obs_dim = temp_env.observation_space().shape
-        local_obs_dim = np.prod(obs_dim)  # Individual agent observation dimension
-        global_obs_dim = local_obs_dim * temp_env.num_agents  # Global state dimension
+    # Initialize both networks
+    rng = jax.random.PRNGKey(seed)
+    rng, actor_rng, critic_rng = jax.random.split(rng, 3)
 
-        # Create separate actor and critic networks
-        actor_network = Actor(
-            action_dim=temp_env.action_space().n,
-            activation=config.activation,
-            num_tasks=seq_length,
-            use_multihead=config.use_multihead,
-            use_task_id=config.use_task_id
-        )
+    # Actor uses local observations
+    actor_init_x = jnp.zeros((1, local_obs_dim))
+    actor_params = actor_network.init(actor_rng, actor_init_x, env_idx=0)
 
-        critic_network = Critic(
-            activation=config.activation,
-            num_tasks=seq_length,
-            use_multihead=config.use_multihead,
-            use_task_id=config.use_task_id
-        )
+    # Critic uses global state (concatenated observations from all agents)
+    critic_init_x = jnp.zeros((1, global_obs_dim))
+    critic_params = critic_network.init(critic_rng, critic_init_x, env_idx=0)
 
-        # Initialize both networks
-        rng = jax.random.PRNGKey(seed)
-        rng, actor_rng, critic_rng = jax.random.split(rng, 3)
+    # Combine parameters into a single structure for compatibility
+    network_params = {
+        'actor': actor_params,
+        'critic': critic_params
+    }
 
-        # Actor uses local observations
-        actor_init_x = jnp.zeros((1, local_obs_dim))
-        actor_params = actor_network.init(actor_rng, actor_init_x, env_idx=0)
+    # Create a wrapper network object for compatibility with functions expecting unified interface
+    class DecoupledNetworkWrapper:
+        """
+        Wrapper class to provide unified network interface for decoupled actor/critic networks.
+        This allows EWC and other functions to work with decoupled networks.
+        """
 
-        # Critic uses global state (concatenated observations from all agents)
-        critic_init_x = jnp.zeros((1, global_obs_dim))
-        critic_params = critic_network.init(critic_rng, critic_init_x, env_idx=0)
+        def __init__(self, actor_net, critic_net):
+            self.actor_network = actor_net
+            self.critic_network = critic_net
 
-        # Combine parameters into a single structure for compatibility
-        network_params = {
-            'actor': actor_params,
-            'critic': critic_params
-        }
-
-        # Create a wrapper network object for compatibility with functions expecting unified interface
-        class DecoupledNetworkWrapper:
+        def apply(self, params, obs, *, env_idx=0):
             """
-            Wrapper class to provide unified network interface for decoupled actor/critic networks.
-            This allows EWC and other functions to work with decoupled networks.
+            Apply method that mimics unified network behavior.
+            For EWC and similar functions, we primarily need the actor network's policy output.
             """
+            # Use actor network for policy (which is what EWC needs for Fisher computation)
+            if isinstance(params, dict) and 'actor' in params:
+                # Decoupled parameters structure
+                pi = self.actor_network.apply(params['actor'], obs, env_idx=env_idx)
+                # For compatibility, return None for value (EWC doesn't need it)
+                return pi, None
+            else:
+                # Fallback for unified parameters structure
+                pi = self.actor_network.apply(params, obs, env_idx=env_idx)
+                return pi, None
 
-            def __init__(self, actor_net, critic_net):
-                self.actor_network = actor_net
-                self.critic_network = critic_net
-
-            def apply(self, params, obs, *, env_idx=0):
-                """
-                Apply method that mimics unified network behavior.
-                For EWC and similar functions, we primarily need the actor network's policy output.
-                """
-                # Use actor network for policy (which is what EWC needs for Fisher computation)
-                if isinstance(params, dict) and 'actor' in params:
-                    # Decoupled parameters structure
-                    pi = self.actor_network.apply(params['actor'], obs, env_idx=env_idx)
-                    # For compatibility, return None for value (EWC doesn't need it)
-                    return pi, None
-                else:
-                    # Fallback for unified parameters structure
-                    pi = self.actor_network.apply(params, obs, env_idx=env_idx)
-                    return pi, None
-
-        network = DecoupledNetworkWrapper(actor_network, critic_network)
-        is_decoupled = True
+    network = DecoupledNetworkWrapper(actor_network, critic_network)
 
     # Initialize the optimizer
     tx = optax.chain(
@@ -675,39 +650,27 @@ def main():
         optax.adam(learning_rate=linear_schedule if config.anneal_lr else config.lr, eps=1e-5)
     )
 
-    # Handle JIT compilation and TrainState creation for both unified and decoupled cases
-    if is_decoupled:
-        # JIT compile the separate networks
-        actor_network.apply = jax.jit(actor_network.apply)
-        critic_network.apply = jax.jit(critic_network.apply)
+    # JIT compile the separate networks
+    actor_network.apply = jax.jit(actor_network.apply)
+    critic_network.apply = jax.jit(critic_network.apply)
 
-        # Create a combined apply function for compatibility
-        def combined_apply_fn(params, obs, *, env_idx=0, network_type='both'):
-            if network_type == 'actor':
-                return actor_network.apply(params['actor'], obs, env_idx=env_idx), None
-            elif network_type == 'critic':
-                return None, critic_network.apply(params['critic'], obs, env_idx=env_idx)
-            else:  # both
-                pi = actor_network.apply(params['actor'], obs, env_idx=env_idx)
-                value = critic_network.apply(params['critic'], obs, env_idx=env_idx)
-                return pi, value
+    # Create a combined apply function for compatibility
+    def combined_apply_fn(params, obs, *, env_idx=0, network_type='both'):
+        if network_type == 'actor':
+            return actor_network.apply(params['actor'], obs, env_idx=env_idx), None
+        elif network_type == 'critic':
+            return None, critic_network.apply(params['critic'], obs, env_idx=env_idx)
+        else:  # both
+            pi = actor_network.apply(params['actor'], obs, env_idx=env_idx)
+            value = critic_network.apply(params['critic'], obs, env_idx=env_idx)
+            return pi, value
 
-        # Initialize the training state
-        train_state = TrainState.create(
-            apply_fn=combined_apply_fn,
-            params=network_params,
-            tx=tx
-        )
-    else:
-        # jit the apply function for unified network
-        network.apply = jax.jit(network.apply)
-
-        # Initialize the training state
-        train_state = TrainState.create(
-            apply_fn=network.apply,
-            params=network_params,
-            tx=tx
-        )
+    # Initialize the training state
+    train_state = TrainState.create(
+        apply_fn=combined_apply_fn,
+        params=network_params,
+        tx=tx
+    )
 
     @partial(jax.jit, static_argnums=(2, 4))
     def train_on_environment(rng, train_state, env, cl_state, env_idx):
@@ -768,13 +731,16 @@ def main():
                 # For MAPPO: Create global state for centralized critic
                 # The critic should receive concatenated observations from all agents
                 global_state = create_global_state_for_critic(last_obs, env.agents, config.num_envs)
-                # Repeat global state for each actor to match the batch structure
-                global_state_batch = jnp.repeat(global_state, len(env.agents), axis=0)
 
-                # Apply networks based on architecture type
-                # For decoupled MAPPO: Actor uses local observations, Critic uses global state
+                # MAPPO: Actor uses local observations, Critic uses global state
                 pi = train_state.apply_fn(train_state.params, obs_batch, env_idx=env_idx, network_type='actor')[0]
-                value = train_state.apply_fn(train_state.params, global_state_batch, env_idx=env_idx, network_type='critic')[1]
+                # Critic outputs one value per environment (not per agent)
+                value_per_env = train_state.apply_fn(train_state.params, global_state, env_idx=env_idx, network_type='critic')[1]
+                # Tile the values to match the batch structure (one value per agent, but same value for agents in same env)
+                value = jnp.repeat(value_per_env, len(env.agents), axis=0)
+
+                # Store the global state batch for use in loss computation (repeat for each agent)
+                global_state_batch = jnp.repeat(global_state, len(env.agents), axis=0)
 
                 # Sample and action from the policy
                 action = pi.sample(seed=_rng)
@@ -828,7 +794,8 @@ def main():
                     value,
                     batchify(reward, env.agents, config.num_actors).squeeze(),
                     log_prob,
-                    obs_batch  # Use local observations to match network initialization
+                    obs_batch,  # Use local observations for actor
+                    global_state_batch  # Store real global state for critic
                 )
 
                 # Increment steps_for_env by the number of parallel envs
@@ -851,18 +818,12 @@ def main():
             # create a batch of the observations that is compatible with the network
             last_obs_batch = batchify(last_obs, env.agents, config.num_actors, not config.use_cnn)
 
-            # Compute last value based on architecture type
-            if is_decoupled:
-                # For decoupled MAPPO: Critic uses global state
-                last_global_state = create_global_state_for_critic(last_obs, env.agents, config.num_envs)
-                last_global_state_batch = jnp.repeat(last_global_state, len(env.agents), axis=0)
-                _, last_val = train_state.apply_fn(train_state.params, last_global_state_batch, env_idx=env_idx,
-                                                   network_type='critic')
-            else:
-                # For unified network: Use local observations for consistency with network initialization
-                # The network was initialized with local observation dimensions
-                # apply the network to the batch of observations to get the value of the last state
-                _, last_val = train_state.apply_fn(train_state.params, last_obs_batch, env_idx=env_idx)
+            # Compute last value for MAPPO: Critic uses global state, outputs one value per environment
+            last_global_state = create_global_state_for_critic(last_obs, env.agents, config.num_envs)
+            _, last_val_per_env = train_state.apply_fn(train_state.params, last_global_state, env_idx=env_idx,
+                                                       network_type='critic')
+            # Tile the last values to match the batch structure (one value per agent, but same value for agents in same env)
+            last_val = jnp.repeat(last_val_per_env, len(env.agents), axis=0)
 
             def _calculate_gae(traj_batch, last_val):
                 '''
@@ -931,52 +892,15 @@ def main():
                         @param traj_batch: the trajectory batch
                         @param gae: the generalized advantage estimate
                         @param targets: the targets
-                        @param network: the network
                         returns the total loss and the value loss, actor loss, and entropy
                         '''
-                        # Handle network application based on architecture type
-                        if is_decoupled:
-                            # For decoupled MAPPO: Actor uses local observations, Critic uses global state
-                            # traj_batch.obs contains local observations for actor
-                            local_obs = traj_batch.obs
+                        # MAPPO: Actor uses local observations, Critic uses stored global state
+                        local_obs = traj_batch.obs  # Local observations for actor
+                        global_state = traj_batch.global_state  # Real global state for critic (no reconstruction needed!)
 
-                            # For critic, we need to reconstruct global state from the trajectory
-                            # Since we stored local observations in traj_batch.obs, we need to create global state
-                            # This is a bit tricky - we need to reconstruct the global state from local observations
-                            batch_size = local_obs.shape[0]
-                            num_agents = len(env.agents)
-                            envs_per_agent = batch_size // num_agents
-
-                            # Reshape local observations to create global state
-                            # local_obs has shape (batch_size, local_obs_dim)
-                            # We need to create global state with shape (batch_size, global_obs_dim)
-                            local_obs_dim = local_obs.shape[1]
-
-                            # Create global state by concatenating observations from all agents
-                            global_obs_list = []
-                            for i in range(num_agents):
-                                start_idx = i * envs_per_agent
-                                end_idx = (i + 1) * envs_per_agent
-                                agent_obs = local_obs[start_idx:end_idx]  # Shape: (envs_per_agent, local_obs_dim)
-                                global_obs_list.append(agent_obs)
-
-                            # Stack and reshape to create global state
-                            # Shape: (num_agents, envs_per_agent, local_obs_dim)
-                            stacked_obs = jnp.stack(global_obs_list, axis=0)
-                            # Transpose to: (envs_per_agent, num_agents, local_obs_dim)
-                            transposed_obs = jnp.transpose(stacked_obs, (1, 0, 2))
-                            # Reshape to: (envs_per_agent, num_agents * local_obs_dim)
-                            global_state_per_env = transposed_obs.reshape(envs_per_agent, -1)
-                            # Repeat for all agents: (batch_size, num_agents * local_obs_dim)
-                            global_state = jnp.repeat(global_state_per_env, num_agents, axis=0)
-
-                            # Apply networks separately
-                            pi = actor_network.apply(params['actor'], local_obs, env_idx=env_idx)
-                            value = critic_network.apply(params['critic'], global_state, env_idx=env_idx)
-                        else:
-                            # For unified network: Use local observations for both actor and critic
-                            local_obs = traj_batch.obs
-                            pi, value = train_state.apply_fn(params, local_obs, env_idx=env_idx)
+                        # Apply networks separately
+                        pi = actor_network.apply(params['actor'], local_obs, env_idx=env_idx)
+                        value = critic_network.apply(params['critic'], global_state, env_idx=env_idx)
                         log_prob = pi.log_prob(traj_batch.action)
 
                         # calculate critic loss
