@@ -217,23 +217,28 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
                 ingredients = ['onion'] * num_onions
 
                 # Create a position tuple for the object - ADJUST FOR PADDING
-                position = (int(pot_x) - padding, int(pot_y) - padding)
+                adjusted_x = int(pot_x) - padding
+                adjusted_y = int(pot_y) - padding
 
-                # Create a mock soup object
-                is_ready = (pot_status == 0)  # Pot is ready when status is 0
-                is_cooking = (pot_status < self.pot_full_status and pot_status > 0)  # Use configurable full pot status
+                # Ensure the adjusted position is within grid bounds
+                if (0 <= adjusted_x < width and 0 <= adjusted_y < height):
+                    position = (adjusted_x, adjusted_y)
 
-                # Create a soup object with appropriate attributes
-                soup_obj = type('MockSoup', (), {
-                    'name': 'soup',
-                    'position': position,
-                    'ingredients': ingredients,
-                    'is_ready': is_ready,
-                    '_cooking_tick': pot_status if is_cooking else -1,
-                    'cook_time': self.pot_full_status  # Use configurable cook time
-                })
+                    # Create a mock soup object
+                    is_ready = (pot_status == 0)  # Pot is ready when status is 0
+                    is_cooking = (pot_status < self.pot_full_status and pot_status > 0)  # Use configurable full pot status
 
-                objects[obj_id] = soup_obj
+                    # Create a soup object with appropriate attributes
+                    soup_obj = type('MockSoup', (), {
+                        'name': 'soup',
+                        'position': position,
+                        'ingredients': ingredients,
+                        'is_ready': is_ready,
+                        '_cooking_tick': pot_status if is_cooking else -1,
+                        'cook_time': self.pot_full_status  # Use configurable cook time
+                    })
+
+                    objects[obj_id] = soup_obj
 
         # Scan the grid for individual items placed on counters (onions, plates, dishes)
         # These coordinates are already correct since they're from the cropped grid
@@ -247,7 +252,7 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
                     obj_id = f"onion_{x}_{y}"
                     onion_obj = type('MockOnion', (), {
                         'name': 'onion',
-                        'position': (int(y), int(x)),  # Fix: swap x,y to match grid coordinates
+                        'position': (int(x), int(y)),  # Use correct x,y order
                         'ingredients': None
                     })
                     objects[obj_id] = onion_obj
@@ -255,7 +260,7 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
                     obj_id = f"plate_{x}_{y}"
                     plate_obj = type('MockPlate', (), {
                         'name': 'dish',  # 'dish' is the visualization name for an empty plate
-                        'position': (int(y), int(x)),  # Fix: swap x,y to match grid coordinates
+                        'position': (int(x), int(y)),  # Use correct x,y order
                         'ingredients': None
                     })
                     objects[obj_id] = plate_obj
@@ -263,7 +268,7 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
                     obj_id = f"dish_{x}_{y}"
                     dish_obj = type('MockDish', (), {
                         'name': 'soup',  # Dish with soup
-                        'position': (int(y), int(x)),  # Fix: swap x,y to match grid coordinates
+                        'position': (int(x), int(y)),  # Use correct x,y order
                         'ingredients': ['onion', 'onion', 'onion'],
                         'is_ready': True,
                         '_cooking_tick': -1,  # Not cooking (already ready)

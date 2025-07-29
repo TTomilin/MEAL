@@ -455,12 +455,14 @@ class StateVisualizer:
     def _render_objects(self, surface, objects, grid):
         def render_soup(surface, obj, grid):
             (x_pos, y_pos) = obj.position
-            if grid[y_pos][x_pos] == POT:
+            # Add bounds checking to prevent IndexError
+            if (0 <= y_pos < len(grid) and 0 <= x_pos < len(grid[0]) and 
+                grid[y_pos][x_pos] == POT):
                 if obj.is_ready:
                     soup_status = "cooked"
                 else:
                     soup_status = "idle"
-            else:  # grid[x][y] != POT
+            else:  # grid[x][y] != POT or out of bounds
                 soup_status = "done"
             frame_name = StateVisualizer._soup_frame_name(
                 obj.ingredients, soup_status
@@ -484,7 +486,9 @@ class StateVisualizer:
     def _render_cooking_timers(self, surface, objects, grid):
         for key, obj in objects.items():
             (x_pos, y_pos) = obj.position
-            if obj.name == "soup" and grid[y_pos][x_pos] == POT:
+            # Add bounds checking to prevent IndexError
+            if (obj.name == "soup" and 0 <= y_pos < len(grid) and 0 <= x_pos < len(grid[0]) and 
+                grid[y_pos][x_pos] == POT):
                 if obj._cooking_tick != -1 and (
                         obj._cooking_tick <= obj.cook_time
                         or self.show_timer_when_cooked
