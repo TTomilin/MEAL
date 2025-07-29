@@ -437,7 +437,7 @@ class Packnet():
 
         def train_mode():
             # Training mode: mask gradients for weights from previous tasks
-            prev_mask = self.combine_masks(state.masks, state.current_task)
+            prev_mask = self.combine_masks(state.masks, jnp.maximum(state.current_task-1, 0))
 
             def mask_gradient_leaf(grad_leaf, mask_leaf):
                 """
