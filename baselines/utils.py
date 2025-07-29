@@ -26,6 +26,7 @@ class Transition(NamedTuple):
     reward: jnp.ndarray  # the reward received
     log_prob: jnp.ndarray  # the log probability of the action
     obs: jnp.ndarray  # the observation
+    global_state: jnp.ndarray  # the global state for centralized critic
     # info: jnp.ndarray # additional information
 
 
