@@ -12,7 +12,7 @@ def make(env_id: str, **env_kwargs):
         env = Overcooked(**env_kwargs)
     elif env_id == "overcooked_po":
         env = OvercookedPO(**env_kwargs)
-    elif env_id == "overcooked_n_agent":
+    elif env_id == "overcooked_n_agent" or env_kwargs.get('num_agents', 2) != 2:
         env = OvercookedNAgent(**env_kwargs)
 
     return env
