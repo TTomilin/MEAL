@@ -98,7 +98,7 @@ class Config:
     # ENVIRONMENT PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
     env_name: str = "overcooked_single"
-    num_agents: int = 2  # number of agents in the environment
+    num_agents: int = 1
     seq_length: int = 10
     repeat_sequence: int = 1
     strategy: str = "generate"
