@@ -209,7 +209,7 @@ class Packnet():
 
                     # Create new mask for the current parameter array
                     new_mask_leaf = jnp.logical_and(
-                        jnp.abs(param_array) >= cutoff, 
+                        jnp.abs(param_array) > cutoff,
                         jnp.logical_not(prev_mask_leaf)
                     )
                     # keep the fixed parameters and the parameters above the cutoff
