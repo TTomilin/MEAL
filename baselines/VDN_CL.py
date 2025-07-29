@@ -1,14 +1,19 @@
 import json
 import os
+import flashbax
 from pathlib import Path
 
+from architectures.Q_MLP import QNetwork
 from cl_methods.AGEM import AGEM
 from cl_methods.FT import FT
 from cl_methods.L2 import L2
 from cl_methods.MAS import MAS
 
 os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
+import jax
 import jax.experimental
+import jax.numpy as jnp
+import numpy as np
 from functools import partial
 from typing import Optional, Sequence, List
 from dataclasses import dataclass, field
@@ -17,7 +22,6 @@ import tyro
 import flax
 import optax
 from flax.core.frozen_dict import freeze, unfreeze
-import flashbax as fbx
 
 from jax_marl import make
 from jax_marl.wrappers.baselines import (
@@ -25,8 +29,6 @@ from jax_marl.wrappers.baselines import (
     CTRolloutManager,
 )
 from jax_marl.eval.visualizer import OvercookedVisualizer
-from architectures.mlp import QNetwork as MLPQNetwork
-from architectures.cnn import QNetwork as CNNQNetwork
 from baselines.utils_vdn import (
     Timestep,
     CustomTrainState,
@@ -69,6 +71,10 @@ class Config:
     reward_shaping: bool = True
     reward_shaping_horizon: float = 2.5e6
 
+    # Reward distribution settings
+    sparse_rewards: bool = False  # Only shared reward for soup delivery
+    individual_rewards: bool = False  # Only respective agent gets reward for their actions
+
     # ═══════════════════════════════════════════════════════════════════════════
     # NETWORK ARCHITECTURE PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
@@ -100,6 +106,7 @@ class Config:
     # AGEM specific parameters
     agem_memory_size: int = 50000
     agem_sample_size: int = 128
+    agem_gradient_scale: float = 1.0
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
@@ -120,6 +127,9 @@ class Config:
     width_min: int = 6  # minimum layout width
     width_max: int = 7  # maximum layout width
     wall_density: float = 0.15  # fraction of internal tiles that are untraversable
+
+    # Agent restriction parameters
+    complementary_restrictions: bool = False  # One agent can't pick up onions, other can't pick up plates
 
     # ═══════════════════════════════════════════════════════════════════════════
     # EVALUATION PARAMETERS
@@ -395,7 +405,7 @@ def main():
                 rng, rng_a, rng_s = jax.random.split(rng, 3)
                 q_vals = jax.vmap(network.apply, in_axes=(None, 0))(
                     train_state.params,
-                    batchify(last_obs, env.agents),  # (num_agents, num_envs, num_actions)
+                    batchify(last_obs, env.agents, config.num_actors),  # (num_agents, num_envs, num_actions)
                 )  # (num_agents, num_envs, num_actions)
                 actions = jnp.argmax(q_vals, axis=-1)
                 actions = unbatchify(actions, env.agents)
@@ -478,29 +488,37 @@ def main():
     )
 
     rew_shaping_anneal = optax.linear_schedule(
-        init_value=1.0, end_value=0.0, transition_steps=config.rew_shaping_horizon
+        init_value=1.0, end_value=0.0, transition_steps=config.reward_shaping_horizon
     )
 
     # Initialize the network
     rng = jax.random.PRNGKey(config.seed)
     init_env = train_envs[0]
 
+    # Calculate num_actors for batchify function
+    config.num_actors = init_env.num_agents * config.num_envs
+
     # Select network architecture based on config
-    if config.use_cnn:
-        network = CNNQNetwork(
-            action_dim=init_env.max_action_space,
-            hidden_size=config.hidden_size,
-        )
-    else:
-        network = MLPQNetwork(
-            action_dim=init_env.max_action_space,
-            hidden_size=config.hidden_size,
-        )
+    encoder_type = "cnn" if config.use_cnn else "mlp"
+    network = QNetwork(
+        action_dim=init_env.max_action_space,
+        hidden_size=config.hidden_size,
+        encoder_type=encoder_type,
+        activation=config.activation,
+        big_network=config.big_network,
+        use_layer_norm=config.use_layer_norm,
+        use_multihead=config.use_multihead,
+        use_task_id=config.use_task_id
+    )
 
     rng, agent_rng = jax.random.split(rng)
 
-    init_x = jnp.zeros((1, *init_env.observation_space().shape))
-    init_network_params = network.init(agent_rng, init_x)
+    # Get observation dimensions and handle CNN vs MLP initialization
+    obs_dim = init_env.observation_space().shape
+    if not config.use_cnn:
+        obs_dim = np.prod(obs_dim)
+    init_x = jnp.zeros((1, *obs_dim)) if config.use_cnn else jnp.zeros((1, obs_dim,))
+    init_network_params = network.init(agent_rng, init_x, env_idx=0)
 
     lr_scheduler = optax.linear_schedule(
         config.lr,
@@ -523,10 +541,10 @@ def main():
     )
 
     # Initialize continual learning state
-    cl_state = cl.init_state(train_state.params)
+    cl_state = cl.init_state(train_state.params, config.regularize_critic, config.regularize_heads)
 
     # Create the replay buffer
-    buffer = fbx.make_flat_buffer(
+    buffer = flashbax.make_flat_buffer(
         max_length=int(config.buffer_size),
         min_length=int(config.buffer_batch_size),
         sample_batch_size=int(config.buffer_batch_size),
@@ -608,7 +626,7 @@ def main():
                 # Compute Q-values for all agents
                 q_vals = jax.vmap(network.apply, in_axes=(None, 0))(
                     train_state.params,
-                    batchify(last_obs, env.agents),
+                    batchify(last_obs, env.agents, config.num_actors),
                 )  # (num_agents, num_envs, num_actions)
 
                 # retrieve the valid actions
@@ -618,7 +636,7 @@ def main():
                 eps = eps_scheduler(train_state.n_updates)
                 _rngs = jax.random.split(rng_action, env.num_agents)
                 new_action = jax.vmap(eps_greedy_exploration, in_axes=(0, 0, None, 0))(
-                    _rngs, q_vals, eps, batchify(avail_actions, env.agents)
+                    _rngs, q_vals, eps, batchify(avail_actions, env.agents, config.num_actors)
                 )
                 actions = unbatchify(new_action, env.agents)
 
@@ -628,12 +646,37 @@ def main():
 
                 # add shaped reward
                 shaped_reward = infos.pop("shaped_reward")
-                shaped_reward["__all__"] = batchify(shaped_reward, env.agents).sum(axis=0)
-                rewards = jax.tree.map(
-                    lambda x, y: x + y * rew_shaping_anneal(train_state.timesteps),
-                    rewards,
-                    shaped_reward,
-                )
+
+                current_timestep = train_state.timesteps
+
+                # Apply different reward settings based on configuration
+                if config.sparse_rewards:
+                    # Sparse rewards: only delivery rewards (no shaped rewards)
+                    # rewards already contains individual delivery rewards from environment
+                    pass
+                elif config.individual_rewards:
+                    # Individual rewards: delivery rewards + individual shaped rewards
+                    # Environment now provides individual delivery rewards directly
+                    rewards = jax.tree.map(
+                        lambda x, y: x + y * rew_shaping_anneal(current_timestep),
+                        rewards,
+                        shaped_reward,
+                    )
+                else:
+                    # Default behavior: shared delivery rewards + individual shaped rewards
+                    # Convert individual delivery rewards to shared rewards (both agents get total)
+                    total_delivery_reward = rewards["agent_0"] + rewards["agent_1"]
+                    shared_delivery_rewards = {"agent_0": total_delivery_reward, "agent_1": total_delivery_reward}
+
+                    rewards = jax.tree.map(
+                        lambda x, y: x + y * rew_shaping_anneal(current_timestep),
+                        shared_delivery_rewards,
+                        shaped_reward,
+                    )
+
+                # Create __all__ reward for VDN
+                shaped_reward["__all__"] = batchify(shaped_reward, env.agents, config.num_actors).sum(axis=0)
+                rewards["__all__"] = batchify(rewards, env.agents, config.num_actors).sum(axis=0)
 
                 timestep = Timestep(
                     obs=last_obs,
@@ -677,7 +720,7 @@ def main():
                                           _rng).experience  # collects a minibatch of size buffer_batch_size
 
                 q_next_target = jax.vmap(network.apply, in_axes=(None, 0))(
-                    train_state.target_network_params, batchify(minibatch.second.obs, env.agents)
+                    train_state.target_network_params, batchify(minibatch.second.obs, env.agents, config.num_actors)
                 )  # (num_agents, batch_size, ...)
                 q_next_target = jnp.max(q_next_target, axis=-1)  # (batch_size,)
 
@@ -689,13 +732,13 @@ def main():
 
                 def _loss_fn(params):
                     q_vals = jax.vmap(network.apply, in_axes=(None, 0))(
-                        params, batchify(minibatch.first.obs, env.agents)
+                        params, batchify(minibatch.first.obs, env.agents, config.num_actors)
                     )  # (num_agents, batch_size, ...)
 
                     # get logits of the chosen actions
                     chosen_action_q_vals = jnp.take_along_axis(
                         q_vals,
-                        batchify(minibatch.first.actions, env.agents)[..., jnp.newaxis],
+                        batchify(minibatch.first.actions, env.agents, config.num_actors)[..., jnp.newaxis],
                         axis=-1,
                     ).squeeze()  # (num_agents, batch_size, )
 
@@ -991,14 +1034,14 @@ def main():
             # Compute Q-values for all agents
             q_vals = jax.vmap(network.apply, in_axes=(None, 0))(
                 train_state.params,
-                batchify(obs, env.agents),
+                batchify(obs, env.agents, config.num_actors),
             )  # (num_agents, num_envs, num_actions)
 
             # Get valid actions
             avail_actions = env.get_valid_actions(state.env_state)
 
             # Use greedy action selection (no exploration for GIF recording)
-            actions = get_greedy_actions(q_vals, batchify(avail_actions, env.agents))
+            actions = get_greedy_actions(q_vals, batchify(avail_actions, env.agents, config.num_actors))
             actions = unbatchify(actions, env.agents)
 
             rng, key_step = jax.random.split(rng)
