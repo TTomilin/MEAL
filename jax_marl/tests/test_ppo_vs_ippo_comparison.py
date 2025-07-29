@@ -355,7 +355,7 @@ def test_ppo_vs_ippo_comparison(num_agents=1):
 
 if __name__ == "__main__":
     # Test with 1 agent (as specified in the issue)
-    success = test_ppo_vs_ippo_comparison(num_agents=1)
+    success = test_ppo_vs_ippo_comparison(num_agents=2)
     if success:
         print("\n🎯 All tests passed! PPO_CL and IPPO_CL are equivalent.")
     else:
