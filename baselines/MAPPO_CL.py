@@ -101,7 +101,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
-    env_name: str = "overcooked"
+    env_name: str = "overcooked_po"
     seq_length: int = 10
     repeat_sequence: int = 1
     strategy: str = "generate"
