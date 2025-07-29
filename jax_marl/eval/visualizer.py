@@ -60,8 +60,11 @@ class OvercookedVisualizer:
 
         # Initialize the new state visualizer if using new rendering
         if not self.use_old_rendering:
+            # Use colors that have corresponding hat sprites available in chefs.json
+            # Available hat colors: red, blue, green, purple, orange
+            available_hat_colors = ["red", "blue", "green", "purple", "orange"]
             self.state_visualizer = StateVisualizer(
-                player_colors=["red", "blue", "green", "purple"][:num_agents],
+                player_colors=available_hat_colors[:num_agents],
                 tile_size=TILE_PIXELS
             )
 
@@ -441,27 +444,32 @@ class OvercookedVisualizer:
             MockPlayer = namedtuple('MockPlayer', ['position', 'orientation', 'held_object'])
             players = []
 
-            # Find agent positions in the grid
-            agent_positions = []
+            # Find agent positions in the grid and extract their actual agent indices
+            agent_data = []  # List of (agent_idx, position) tuples
             for y in range(grid.shape[0]):
                 for x in range(grid.shape[1]):
                     if grid[y, x, 0] == OBJECT_TO_INDEX['agent']:
-                        agent_positions.append((x, y))
+                        color_idx = grid[y, x, 1]
+                        agent_idx = _colour_to_agent_index(color_idx)
+                        agent_data.append((agent_idx, (x, y)))
 
-            # Create players for each agent position
-            for i, pos in enumerate(agent_positions):
-                if agent_dir_idx is not None and i < len(agent_dir_idx):
+            # Sort agents by their actual agent index to ensure consistent color assignment
+            agent_data.sort(key=lambda x: x[0])
+
+            # Create players for each agent using their actual agent index
+            for agent_idx, pos in agent_data:
+                if agent_dir_idx is not None and agent_idx < len(agent_dir_idx):
                     # Convert environment direction index to visualization direction tuple
                     # Convert JAX array to int before using as dictionary key
-                    dir_idx = int(agent_dir_idx[i])
+                    dir_idx = int(agent_dir_idx[agent_idx])
                     orientation = ENV_DIR_IDX_TO_VIZ_DIR[dir_idx]
                 else:
                     orientation = Direction.SOUTH  # Default orientation (facing downwards)
 
                 # Create a player with appropriate held object based on inventory
                 held_object = None
-                if agent_inv is not None and i < len(agent_inv):
-                    held_object = self._create_held_object_from_inventory(int(agent_inv[i]))
+                if agent_inv is not None and agent_idx < len(agent_inv):
+                    held_object = self._create_held_object_from_inventory(int(agent_inv[agent_idx]))
                 players.append(MockPlayer(position=pos, orientation=orientation, held_object=held_object))
 
             # Create mock objects for pots

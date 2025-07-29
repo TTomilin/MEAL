@@ -346,7 +346,7 @@ def oc_show(layout: FrozenDict, num_agents: int = 2):
     env = Overcooked(layout=layout, layout_name="random_gen", random_reset=False, num_agents=num_agents)
     _, state = env.reset(jax.random.PRNGKey(0))
     grid = np.asarray(_crop_to_grid(state, env.agent_view_size))
-    vis = OvercookedVisualizer()
+    vis = OvercookedVisualizer(num_agents)
     vis.render_grid(grid, tile_size=TILE_PIXELS, agent_dir_idx=state.agent_dir_idx)
     vis.show(block=True)
 
@@ -440,7 +440,7 @@ def main(argv=None):
             env = Overcooked(layout=layout, layout_name="generated", random_reset=False, num_agents=args.num_agents)
             _, state = env.reset(jax.random.PRNGKey(env_seed or 0))
             grid_arr = np.asarray(_crop_to_grid(state, env.agent_view_size))
-            vis = OvercookedVisualizer()
+            vis = OvercookedVisualizer(args.num_agents)
             img = vis.render_grid(grid_arr, tile_size=TILE_PIXELS, agent_dir_idx=state.agent_dir_idx)
 
             # Create filename with auto-incrementing index

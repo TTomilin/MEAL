@@ -197,6 +197,7 @@ def main():
 
     # generate a sequence of tasks
     config.env_kwargs, layout_names = generate_sequence(
+        num_agents=config.num_agents,
         sequence_length=config.seq_length,
         strategy=config.strategy,
         layout_names=config.layouts,

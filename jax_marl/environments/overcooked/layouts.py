@@ -502,7 +502,6 @@ easy_layouts = {
     "no_cooperation": layout_grid_to_dict(no_cooperation),
     "vertical_corridors": layout_grid_to_dict(vertical_corridors),
     "horizontal_corridors": layout_grid_to_dict(horizontal_corridors),
-    # "big_kitchen" : layout_grid_to_dict(big_kitchen),  The env is too big to be considered easy
     "resource_sharing": layout_grid_to_dict(resource_sharing),
     "basic_kitchen_large": layout_grid_to_dict(basic_kitchen_large),
 }

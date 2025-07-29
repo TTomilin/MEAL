@@ -50,7 +50,7 @@ class StateVisualizer:
         "width": None,  # if None use (hud_height+grid_height)
         "tile_size": 150,  # Increased from 75 to 150 for higher resolution
         "window_fps": 30,
-        "player_colors": ["blue", "green"],
+        "player_colors": ["blue", "green", "red", "purple", "orange", "yellow"],
         "is_rendering_hud": True,
         "hud_font_size": 20,  # Increased from 10 to 20 for higher resolution
         "hud_font_path": roboto_path,
@@ -411,7 +411,12 @@ class StateVisualizer:
             return "%s-%shat" % (direction_name, player_color_name)
 
         for player_num, player in enumerate(players):
-            player_color_name = self.player_colors[player_num]
+            # Safely get player color, cycling through available colors if needed
+            if player_num < len(self.player_colors):
+                player_color_name = self.player_colors[player_num]
+            else:
+                # Cycle through available colors if we have more players than colors
+                player_color_name = self.player_colors[player_num % len(self.player_colors)]
             direction_name = Direction.DIRECTION_TO_NAME[player.orientation]
 
             held_obj = player.held_object
