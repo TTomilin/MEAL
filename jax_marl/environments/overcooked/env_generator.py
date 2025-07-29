@@ -342,8 +342,8 @@ def _crop_to_grid(state, view_size: int):
     pad = view_size - 1  # 5→4 because map has +1 outer wall
     return state.maze_map[pad:-pad, pad:-pad, :]
 
-def oc_show(layout: FrozenDict):
-    env = Overcooked(layout=layout, layout_name="random_gen", random_reset=False)
+def oc_show(layout: FrozenDict, num_agents: int = 2):
+    env = Overcooked(layout=layout, layout_name="random_gen", random_reset=False, num_agents=num_agents)
     _, state = env.reset(jax.random.PRNGKey(0))
     grid = np.asarray(_crop_to_grid(state, env.agent_view_size))
     vis = OvercookedVisualizer()
@@ -407,7 +407,7 @@ def main(argv=None):
         mpl_show(layouts[0][0], "Random kitchen")
 
     if args.oc and layouts:
-        oc_show(layouts[0][1])
+        oc_show(layouts[0][1], args.num_agents)
 
     if args.save and layouts:
         # Determine the base output directory
@@ -437,7 +437,7 @@ def main(argv=None):
 
         # Save each generated environment
         for i, (_, layout, env_seed) in enumerate(layouts):
-            env = Overcooked(layout=layout, layout_name="generated", random_reset=False)
+            env = Overcooked(layout=layout, layout_name="generated", random_reset=False, num_agents=args.num_agents)
             _, state = env.reset(jax.random.PRNGKey(env_seed or 0))
             grid_arr = np.asarray(_crop_to_grid(state, env.agent_view_size))
             vis = OvercookedVisualizer()
