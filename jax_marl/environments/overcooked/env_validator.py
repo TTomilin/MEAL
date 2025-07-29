@@ -40,7 +40,7 @@ def _dfs(i: int, j: int, grid: List[List[str]], visited: List[List[bool]], acc: 
         _dfs(i + dx, j + dy, grid, visited, acc)
 
 
-def evaluate_grid(grid_str: str) -> tuple[bool, str]:
+def evaluate_grid(grid_str: str, num_agents: int = 2) -> tuple[bool, str]:
     """
     Evaluate if a grid layout is valid and solvable for Overcooked.
 
@@ -68,8 +68,8 @@ def evaluate_grid(grid_str: str) -> tuple[bool, str]:
     if any(grid_str.count(c) == 0 for c in required):
         missing = [c for c in required if grid_str.count(c) == 0]
         return False, f"Missing required tiles: {', '.join(missing)}"
-    if grid_str.count(AGENT) != 2:
-        return False, f"Expected 2 agents, found {grid_str.count(AGENT)}"
+    if grid_str.count(AGENT) != num_agents:
+        return False, f"Expected {num_agents} agents, found {grid_str.count(AGENT)}"
 
     # 3. Proper borders (walls or interactives)
     border_ok = {WALL, GOAL, PLATE_PILE, ONION_PILE, POT}
@@ -206,26 +206,34 @@ def evaluate_grid(grid_str: str) -> tuple[bool, str]:
         return reachable_positions, interactive_adjacent
 
     # Get reachable areas for each agent
-    agent1_reachable, agent1_interactive = get_reachable_positions(agents[0][0], agents[0][1])
-    agent2_reachable, agent2_interactive = get_reachable_positions(agents[1][0], agents[1][1])
+    agent_reachable = []
+    agent_interactive = []
+    for i in range(num_agents):
+        reachable, interactive = get_reachable_positions(agents[i][0], agents[i][1])
+        agent_reachable.append(reachable)
+        agent_interactive.append(interactive)
 
     # Check if agents can cooperate (handoff items)
     def can_agents_cooperate() -> bool:
-        # Check if agents are directly adjacent (can directly pass items)
-        if is_adjacent(agents[0], agents[1]):
-            return True
+        # Check if any pair of agents are directly adjacent (can directly pass items)
+        for i in range(num_agents):
+            for j in range(i + 1, num_agents):
+                if is_adjacent(agents[i], agents[j]):
+                    return True
 
-        # Check if agents can meet at any common position
+        # Check if any pair of agents can meet at any common position
         # This is crucial for cooperation in open spaces
-        common_positions = agent1_reachable.intersection(agent2_reachable)
-        if common_positions:
-            return True
+        for i in range(num_agents):
+            for j in range(i + 1, num_agents):
+                common_positions = agent_reachable[i].intersection(agent_reachable[j])
+                if common_positions:
+                    return True
 
         # Special case for the "Long winding path" layout
         if "WA W  PW" in grid_str and "W   OW W" in grid_str:
             return True
 
-        # Check if there's a counter (wall) both agents can reach
+        # Check if there's a counter (wall) that any pair of agents can reach
         # This is for passing items across a counter
         for i, row in enumerate(grid):
             for j, ch in enumerate(row):
@@ -238,23 +246,24 @@ def evaluate_grid(grid_str: str) -> tuple[bool, str]:
                             grid[ni][nj] in (FLOOR, AGENT)):
                             adjacent_to_wall.append((ni, nj))
 
-                    # Check if agent 1 can reach at least one position adjacent to the wall
-                    agent1_can_reach_wall = any(pos in agent1_reachable for pos in adjacent_to_wall)
+                    # Check if any pair of agents can reach positions adjacent to the same wall
+                    for agent_i in range(num_agents):
+                        for agent_j in range(agent_i + 1, num_agents):
+                            agent_i_can_reach_wall = any(pos in agent_reachable[agent_i] for pos in adjacent_to_wall)
+                            agent_j_can_reach_wall = any(pos in agent_reachable[agent_j] for pos in adjacent_to_wall)
 
-                    # Check if agent 2 can reach at least one position adjacent to the wall
-                    agent2_can_reach_wall = any(pos in agent2_reachable for pos in adjacent_to_wall)
-
-                    # If both agents can reach positions adjacent to the same wall, they can cooperate
-                    if agent1_can_reach_wall and agent2_can_reach_wall:
-                        return True
+                            if agent_i_can_reach_wall and agent_j_can_reach_wall:
+                                return True
 
         # Check for floor tiles that might serve as counters/handoff points
         for i, row in enumerate(grid):
             for j, ch in enumerate(row):
                 if ch == FLOOR:
-                    # If this floor tile is reachable by both agents, they can use it for handoff
-                    if (i, j) in agent1_reachable and (i, j) in agent2_reachable:
-                        return True
+                    # If this floor tile is reachable by any pair of agents, they can use it for handoff
+                    for agent_i in range(num_agents):
+                        for agent_j in range(agent_i + 1, num_agents):
+                            if (i, j) in agent_reachable[agent_i] and (i, j) in agent_reachable[agent_j]:
+                                return True
 
         return False
 
@@ -262,46 +271,32 @@ def evaluate_grid(grid_str: str) -> tuple[bool, str]:
     # We need to check both direct reachability and adjacency
 
     # Check if agents are isolated (completely surrounded by walls)
-    agent1_isolated = True
-    for di, dj in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
-        ni, nj = agents[0][0] + di, agents[0][1] + dj
-        if 0 <= ni < height and 0 <= nj < width and grid[ni][nj] not in UNPASSABLE_TILES:
-            agent1_isolated = False
-            break
+    for agent_idx in range(num_agents):
+        agent_isolated = True
+        for di, dj in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+            ni, nj = agents[agent_idx][0] + di, agents[agent_idx][1] + dj
+            if 0 <= ni < height and 0 <= nj < width and grid[ni][nj] not in UNPASSABLE_TILES:
+                agent_isolated = False
+                break
 
-    agent2_isolated = True
-    for di, dj in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
-        ni, nj = agents[1][0] + di, agents[1][1] + dj
-        if 0 <= ni < height and 0 <= nj < width and grid[ni][nj] not in UNPASSABLE_TILES:
-            agent2_isolated = False
-            break
+        if agent_isolated:
+            return False, f"Agent {agent_idx + 1} is completely isolated and cannot move"
 
-    if agent1_isolated:
-        return False, "Agent 1 is completely isolated and cannot move"
-
-    if agent2_isolated:
-        return False, "Agent 2 is completely isolated and cannot move"
-
-    # Also check if reachable positions is empty for either agent
+    # Also check if reachable positions is empty for any agent
     # This can happen in complex mazes where agent appears trapped
-    if len(agent1_reachable) <= 1:  # Only its own position
-        return False, "Agent 1 cannot reach any other positions"
-
-    if len(agent2_reachable) <= 1:  # Only its own position
-        return False, "Agent 2 cannot reach any other positions"
+    for agent_idx in range(num_agents):
+        if len(agent_reachable[agent_idx]) <= 1:  # Only its own position
+            return False, f"Agent {agent_idx + 1} cannot reach any other positions"
 
     # Get positions adjacent to agents
-    agent1_adjacent = set()
-    for di, dj in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
-        ni, nj = agents[0][0] + di, agents[0][1] + dj
-        if 0 <= ni < height and 0 <= nj < width:
-            agent1_adjacent.add((ni, nj))
-
-    agent2_adjacent = set()
-    for di, dj in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
-        ni, nj = agents[1][0] + di, agents[1][1] + dj
-        if 0 <= ni < height and 0 <= nj < width:
-            agent2_adjacent.add((ni, nj))
+    agent_adjacent = []
+    for agent_idx in range(num_agents):
+        adjacent = set()
+        for di, dj in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+            ni, nj = agents[agent_idx][0] + di, agents[agent_idx][1] + dj
+            if 0 <= ni < height and 0 <= nj < width:
+                adjacent.add((ni, nj))
+        agent_adjacent.append(adjacent)
 
     # Check if onions are reachable by either agent
     # Check if onions are reachable
@@ -320,7 +315,7 @@ def evaluate_grid(grid_str: str) -> tuple[bool, str]:
 
             if (0 <= ni < height and 0 <= nj < width and 
                 grid[ni][nj] in (FLOOR, AGENT) and
-                ((ni, nj) in agent1_reachable or (ni, nj) in agent2_reachable)):
+                any((ni, nj) in agent_reachable[agent_idx] for agent_idx in range(num_agents))):
                 # This onion is accessible because at least one agent can reach an adjacent floor tile
                 onion_accessible = True
                 break
@@ -349,7 +344,7 @@ def evaluate_grid(grid_str: str) -> tuple[bool, str]:
 
             if (0 <= ni < height and 0 <= nj < width and 
                 grid[ni][nj] in (FLOOR, AGENT) and
-                ((ni, nj) in agent1_reachable or (ni, nj) in agent2_reachable)):
+                any((ni, nj) in agent_reachable[agent_idx] for agent_idx in range(num_agents))):
                 # This plate is accessible because at least one agent can reach an adjacent floor tile
                 plate_accessible = True
                 break
@@ -385,7 +380,7 @@ def evaluate_grid(grid_str: str) -> tuple[bool, str]:
         # Check if any agent can reach any of the adjacent floor tiles
         pot_accessible = False
         for adj_pos in adjacent_floor_tiles:
-            if adj_pos in agent1_reachable or adj_pos in agent2_reachable:
+            if any(adj_pos in agent_reachable[agent_idx] for agent_idx in range(num_agents)):
                 pot_accessible = True
                 break
 
@@ -436,7 +431,7 @@ def evaluate_grid(grid_str: str) -> tuple[bool, str]:
 
             if (0 <= ni < height and 0 <= nj < width and 
                 grid[ni][nj] in (FLOOR, AGENT) and
-                ((ni, nj) in agent1_reachable or (ni, nj) in agent2_reachable)):
+                any((ni, nj) in agent_reachable[agent_idx] for agent_idx in range(num_agents))):
                 # This delivery point is accessible because at least one agent can reach an adjacent floor tile
                 delivery_accessible = True
                 break
@@ -455,10 +450,8 @@ def evaluate_grid(grid_str: str) -> tuple[bool, str]:
     onion_to_pot_path = False
 
     # Determine which onions and pots are accessible by each agent
-    agent1_accessible_onions = []
-    agent2_accessible_onions = []
-    agent1_accessible_pots = []
-    agent2_accessible_pots = []
+    agent_accessible_onions = [[] for _ in range(num_agents)]
+    agent_accessible_pots = [[] for _ in range(num_agents)]
 
     # Check each onion
     for onion in onions:
@@ -476,15 +469,11 @@ def evaluate_grid(grid_str: str) -> tuple[bool, str]:
             continue
 
         # Check if each agent can access this onion
-        for adj_pos in adjacent_tiles:
-            if adj_pos in agent1_reachable:
-                agent1_accessible_onions.append(onion)
-                break
-
-        for adj_pos in adjacent_tiles:
-            if adj_pos in agent2_reachable:
-                agent2_accessible_onions.append(onion)
-                break
+        for agent_idx in range(num_agents):
+            for adj_pos in adjacent_tiles:
+                if adj_pos in agent_reachable[agent_idx]:
+                    agent_accessible_onions[agent_idx].append(onion)
+                    break
 
     # Check each pot
     for pot in pots:
@@ -503,30 +492,32 @@ def evaluate_grid(grid_str: str) -> tuple[bool, str]:
             continue
 
         # Check if each agent can access this pot
-        for adj_pos in adjacent_tiles:
-            if adj_pos in agent1_reachable:
-                agent1_accessible_pots.append(pot)
-                break
-
-        for adj_pos in adjacent_tiles:
-            if adj_pos in agent2_reachable:
-                agent2_accessible_pots.append(pot)
-                break
+        for agent_idx in range(num_agents):
+            for adj_pos in adjacent_tiles:
+                if adj_pos in agent_reachable[agent_idx]:
+                    agent_accessible_pots[agent_idx].append(pot)
+                    break
 
     # Check if any agent can reach both an onion and a pot
-    agent1_can_reach_onion = bool(agent1_accessible_onions)
-    agent1_can_reach_pot = bool(agent1_accessible_pots)
-    agent2_can_reach_onion = bool(agent2_accessible_onions)
-    agent2_can_reach_pot = bool(agent2_accessible_pots)
+    agent_can_reach_onion = [bool(agent_accessible_onions[i]) for i in range(num_agents)]
+    agent_can_reach_pot = [bool(agent_accessible_pots[i]) for i in range(num_agents)]
 
     # Check the onion-to-pot path:
     # 1. Same agent can reach both onion and pot
-    if (agent1_can_reach_onion and agent1_can_reach_pot) or (agent2_can_reach_onion and agent2_can_reach_pot):
-        onion_to_pot_path = True
+    for agent_idx in range(num_agents):
+        if agent_can_reach_onion[agent_idx] and agent_can_reach_pot[agent_idx]:
+            onion_to_pot_path = True
+            break
+
     # 2. Different agents can reach onion and pot, and they can cooperate
-    elif ((agent1_can_reach_onion and agent2_can_reach_pot) or 
-          (agent2_can_reach_onion and agent1_can_reach_pot)) and can_agents_cooperate():
-        onion_to_pot_path = True
+    if not onion_to_pot_path and can_agents_cooperate():
+        for i in range(num_agents):
+            for j in range(num_agents):
+                if i != j and agent_can_reach_onion[i] and agent_can_reach_pot[j]:
+                    onion_to_pot_path = True
+                    break
+            if onion_to_pot_path:
+                break
 
     if not onion_to_pot_path:
         return False, "No path from onion to pot. At least one viable path must exist."
@@ -535,8 +526,7 @@ def evaluate_grid(grid_str: str) -> tuple[bool, str]:
     pot_to_delivery_path = False
 
     # Determine which delivery points are accessible by each agent
-    agent1_accessible_delivery = []
-    agent2_accessible_delivery = []
+    agent_accessible_delivery = [[] for _ in range(num_agents)]
 
     # Check each delivery point
     for del_pos in delivery:
@@ -554,81 +544,73 @@ def evaluate_grid(grid_str: str) -> tuple[bool, str]:
             continue
 
         # Check if each agent can access this delivery point
-        for adj_pos in adjacent_tiles:
-            if adj_pos in agent1_reachable:
-                agent1_accessible_delivery.append(del_pos)
-                break
-
-        for adj_pos in adjacent_tiles:
-            if adj_pos in agent2_reachable:
-                agent2_accessible_delivery.append(del_pos)
-                break
+        for agent_idx in range(num_agents):
+            for adj_pos in adjacent_tiles:
+                if adj_pos in agent_reachable[agent_idx]:
+                    agent_accessible_delivery[agent_idx].append(del_pos)
+                    break
 
     # Check the pot-to-delivery path:
     # 1. Same agent can reach both pot and delivery
-    if (agent1_can_reach_pot and bool(agent1_accessible_delivery)) or (agent2_can_reach_pot and bool(agent2_accessible_delivery)):
-        pot_to_delivery_path = True
+    for agent_idx in range(num_agents):
+        if agent_can_reach_pot[agent_idx] and bool(agent_accessible_delivery[agent_idx]):
+            pot_to_delivery_path = True
+            break
+
     # 2. Different agents can reach pot and delivery, and they can cooperate
-    elif ((agent1_can_reach_pot and bool(agent2_accessible_delivery)) or 
-          (agent2_can_reach_pot and bool(agent1_accessible_delivery))) and can_agents_cooperate():
-        pot_to_delivery_path = True
+    if not pot_to_delivery_path and can_agents_cooperate():
+        for i in range(num_agents):
+            for j in range(num_agents):
+                if i != j and agent_can_reach_pot[i] and bool(agent_accessible_delivery[j]):
+                    pot_to_delivery_path = True
+                    break
+            if pot_to_delivery_path:
+                break
 
     if not pot_to_delivery_path:
         return False, "No path from pot to delivery. At least one viable path must exist."
 
-    # 8. Check if both agents can be useful
+    # 8. Check if all agents can be useful
     # Check if agents can reach or are adjacent to any interactive tiles
 
     # Manual check for adjacency to interactive tiles
-    agent1_can_reach_interactive = False
-    for i, j in [(agents[0][0]+di, agents[0][1]+dj) for di, dj in [(0,1), (1,0), (0,-1), (-1,0)]]:
-        if 0 <= i < height and 0 <= j < width and grid[i][j] in INTERACTIVE_TILES:
-            agent1_can_reach_interactive = True
-            break
-
-    agent2_can_reach_interactive = False
-    for i, j in [(agents[1][0]+di, agents[1][1]+dj) for di, dj in [(0,1), (1,0), (0,-1), (-1,0)]]:
-        if 0 <= i < height and 0 <= j < width and grid[i][j] in INTERACTIVE_TILES:
-            agent2_can_reach_interactive = True
-            break
+    agent_can_reach_interactive = []
+    for agent_idx in range(num_agents):
+        can_reach_interactive = False
+        for i, j in [(agents[agent_idx][0]+di, agents[agent_idx][1]+dj) for di, dj in [(0,1), (1,0), (0,-1), (-1,0)]]:
+            if 0 <= i < height and 0 <= j < width and grid[i][j] in INTERACTIVE_TILES:
+                can_reach_interactive = True
+                break
+        agent_can_reach_interactive.append(can_reach_interactive)
 
     # Check if agents can be useful in the game
-    agent1_useful = (
-        bool(agent1_accessible_onions) or
-        bool(agent1_accessible_pots) or
-        bool(agent1_accessible_delivery) or
-        bool(agent1_can_reach_interactive)
-    )
+    agent_useful = []
+    for agent_idx in range(num_agents):
+        useful = (
+            bool(agent_accessible_onions[agent_idx]) or
+            bool(agent_accessible_pots[agent_idx]) or
+            bool(agent_accessible_delivery[agent_idx]) or
+            bool(agent_can_reach_interactive[agent_idx])
+        )
+        agent_useful.append(useful)
 
-    agent2_useful = (
-        bool(agent2_accessible_onions) or
-        bool(agent2_accessible_pots) or
-        bool(agent2_accessible_delivery) or
-        bool(agent2_can_reach_interactive)
-    )
+    # If an agent isn't directly useful, it might still be useful if it can interact with other agents
+    for agent_idx in range(num_agents):
+        if not agent_useful[agent_idx]:
+            # Check if directly adjacent to any other agent
+            for other_idx in range(num_agents):
+                if other_idx != agent_idx and is_adjacent(agents[agent_idx], agents[other_idx]):
+                    agent_useful[agent_idx] = True
+                    break
 
-    # If an agent isn't directly useful, it might still be useful if it can interact with the other agent
-    if not agent1_useful:
-        # Check if directly adjacent to agent 2
-        if is_adjacent(agents[0], agents[1]):
-            agent1_useful = True
-        # Check if can cooperate through a counter
-        elif can_agents_cooperate():
-            agent1_useful = True
+            # Check if can cooperate through a counter
+            if not agent_useful[agent_idx] and can_agents_cooperate():
+                agent_useful[agent_idx] = True
 
-    if not agent2_useful:
-        # Check if directly adjacent to agent 1
-        if is_adjacent(agents[0], agents[1]):
-            agent2_useful = True
-        # Check if can cooperate through a counter
-        elif can_agents_cooperate():
-            agent2_useful = True
-
-    if not agent1_useful:
-        return False, "Agent 1 cannot be useful (can't reach any functional elements or interact with agent 2)"
-
-    if not agent2_useful:
-        return False, "Agent 2 cannot be useful (can't reach any functional elements or interact with agent 1)"
+    # Check if any agent is not useful
+    for agent_idx in range(num_agents):
+        if not agent_useful[agent_idx]:
+            return False, f"Agent {agent_idx + 1} cannot be useful (can't reach any functional elements or interact with other agents)"
 
     # If we've passed all checks, the layout is valid
     return True, ""

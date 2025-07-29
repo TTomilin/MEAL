@@ -29,7 +29,7 @@ import numpy as np
 from PIL import Image
 from flax.core.frozen_dict import FrozenDict
 
-from jax_marl.environments import Overcooked
+from jax_marl.environments import OvercookedNAgent as Overcooked
 from jax_marl.eval.visualizer import OvercookedVisualizer, TILE_PIXELS
 from jax_marl.environments.overcooked.env_validator import (
     evaluate_grid, UNPASSABLE_TILES, INTERACTIVE_TILES
@@ -290,7 +290,7 @@ def generate_random_layout(
 
             # Convert to string and validate -----------------------------------
             grid_str = "\n".join("".join(row) for row in grid)
-            is_valid, reason = evaluate_grid(grid_str)
+            is_valid, reason = evaluate_grid(grid_str, num_agents=num_agents)
             if is_valid or allow_invalid:
                 return grid_str, layout_grid_to_dict(grid_str)
 
@@ -445,7 +445,7 @@ def main(argv=None):
 
             # Create filename with auto-incrementing index
             file_index = highest_index + i + 1
-            file_name = f"gen_{file_index}.png"
+            file_name = f"{args.num_agents}_agents_gen_{file_index}.png"
 
             Image.fromarray(img).save(out_dir / file_name)
             print(f"Saved generated layout {i+1}/{len(layouts)} to {out_dir / file_name}")
