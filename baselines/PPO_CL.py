@@ -431,7 +431,7 @@ def main():
                 # Environment step
                 next_obs, next_state, reward, done_step, info = env.step(key_s, state_env, actions)
                 done = done_step["__all__"]
-                reward = reward["agent_0"]  # Common reward
+                reward = sum(reward[agent] for agent in agents)  # Sum of all agent rewards
                 soups_this_step = sum(info["soups"][agent] for agent in agents)
                 total_reward += reward
                 total_soup += soups_this_step
@@ -633,9 +633,9 @@ def main():
                                                     )
                 else:
                     # Default behavior: shared delivery rewards + individual shaped rewards
-                    # Convert individual delivery rewards to shared rewards (both agents get total)
-                    total_delivery_reward = reward["agent_0"] + reward["agent_1"]
-                    shared_delivery_rewards = {"agent_0": total_delivery_reward, "agent_1": total_delivery_reward}
+                    # Convert individual delivery rewards to shared rewards (all agents get total)
+                    total_delivery_reward = sum(reward[agent] for agent in env.agents)
+                    shared_delivery_rewards = {agent: total_delivery_reward for agent in env.agents}
 
                     reward = jax.tree_util.tree_map(lambda x, y:
                                                     x + y * rew_shaping_anneal(current_timestep),
