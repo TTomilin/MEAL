@@ -16,7 +16,7 @@ def load_series(fp: Path) -> List[float]:
     """Load a JSON series from file."""
     with open(fp, 'r') as f:
         data = json.load(f)
-    return data
+    return [float(x) for x in data]
 
 
 def _mean_ci(series: List[float]) -> ConfInt:
@@ -114,7 +114,7 @@ def compare_algorithms(
 
     for level in levels:
         row_data = {"Level": level}
-        
+
         for algo in algorithms:
             # Compute metrics for this algorithm
             metrics = compute_metrics(
@@ -127,13 +127,13 @@ def compare_algorithms(
                 end_window_evals=end_window_evals,
                 level=level,
             )
-            
+
             # Add metrics to row with algorithm prefix
             row_data[f"{algo.upper()}_AveragePerformance"] = metrics["AveragePerformance"]
             row_data[f"{algo.upper()}_AveragePerformance_CI"] = metrics["AveragePerformance_CI"]
             row_data[f"{algo.upper()}_Forgetting"] = metrics["Forgetting"]
             row_data[f"{algo.upper()}_Forgetting_CI"] = metrics["Forgetting_CI"]
-        
+
         rows.append(row_data)
 
     return pd.DataFrame(rows)
@@ -191,7 +191,7 @@ if __name__ == "__main__":
 
     for _, row in df.iterrows():
         level = row["Level"]
-        
+
         # Extract values for each algorithm
         algo_values = {}
         for algo in args.algorithms:
@@ -212,37 +212,46 @@ if __name__ == "__main__":
 
         # Create formatted row
         formatted_row = {"Level": f"Level {int(level)}"}
-        
+
+        # First add all average performance columns
         for algo in args.algorithms:
             algo_upper = algo.upper()
             values = algo_values[algo]
-            
+
             formatted_row[f"{algo_upper}_AveragePerformance"] = _fmt(
                 values['ap'], 
                 values['ap_ci'], 
                 values['ap'] == best_a, 
                 "max"
             )
+
+        # Then add all forgetting columns
+        for algo in args.algorithms:
+            algo_upper = algo.upper()
+            values = algo_values[algo]
+
             formatted_row[f"{algo_upper}_Forgetting"] = _fmt(
                 values['f'], 
                 values['f_ci'], 
                 values['f'] == best_f, 
                 "min"
             )
-        
+
         df_out_rows.append(formatted_row)
 
     df_out = pd.DataFrame(df_out_rows)
 
-    # Create column headers
+    # Create column headers - first all average performance, then all forgetting
     columns = ["Level"]
+    # Add all average performance columns first
     for algo in args.algorithms:
         algo_upper = algo.upper()
-        columns.extend([
-            rf"$\mathcal{{A}}\!\uparrow$ {algo_upper}",
-            rf"$\mathcal{{F}}\!\downarrow$ {algo_upper}",
-        ])
-    
+        columns.append(rf"$\mathcal{{A}}\!\uparrow$ {algo_upper}")
+    # Then add all forgetting columns
+    for algo in args.algorithms:
+        algo_upper = algo.upper()
+        columns.append(rf"$\mathcal{{F}}\!\downarrow$ {algo_upper}")
+
     df_out.columns = columns
 
     # Generate LaTeX table
@@ -261,7 +270,7 @@ if __name__ == "__main__":
     print("\nComparison Results:")
     print("=" * 80)
     print(df_out.to_string(index=False))
-    
+
     print(f"\nLATEX TABLE:")
     print("-" * 40)
     print(latex_table)
