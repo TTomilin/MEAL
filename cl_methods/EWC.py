@@ -2,6 +2,7 @@ import functools
 
 import jax
 import jax.numpy as jnp
+import distrax
 from flax.core.frozen_dict import FrozenDict
 
 from baselines.utils import build_reg_weights, _prep_obs
@@ -103,7 +104,17 @@ def compute_fisher(params: FrozenDict,
     # -----------------------------------------------------------------
     def _logp(p, obs, act):
         obs = jnp.expand_dims(obs, 0)
-        dists, _ = net.apply(p, obs, env_idx=env_idx)  # (A, …)
+        net_output = net.apply(p, obs, env_idx=env_idx)  # (A, …)
+
+        # Handle both policy networks (return distributions) and Q-networks (return Q-values)
+        if isinstance(net_output, tuple):
+            # Policy network case: returns (dists, values)
+            dists, _ = net_output
+        else:
+            # Q-network case: returns Q-values, convert to Categorical distribution
+            q_values = net_output  # (A, num_actions)
+            dists = distrax.Categorical(logits=q_values)
+
         return jnp.sum(dists.log_prob(act))  # scalar
 
     batched_grad = jax.vmap(jax.grad(_logp), in_axes=(None, 0, 0))  # map over steps
@@ -118,8 +129,19 @@ def compute_fisher(params: FrozenDict,
         obs_batch = _prep_obs(obs, use_cnn=use_cnn)
 
         # sample & log-prob in one forward pass (batched)
-        dists, _ = net.apply(params, obs_batch, env_idx=env_idx)
-        actions = dists.sample(seed=key_sample)  # (A,)
+        net_output = net.apply(params, obs_batch, env_idx=env_idx)
+
+        # Handle both policy networks (return distributions) and Q-networks (return Q-values)
+        if isinstance(net_output, tuple):
+            # Policy network case: returns (dists, values)
+            dists, _ = net_output
+            actions = dists.sample(seed=key_sample)  # (A,)
+        else:
+            # Q-network case: returns Q-values, convert to Categorical distribution
+            q_values = net_output  # (A, num_actions)
+            dists = distrax.Categorical(logits=q_values)
+            actions = dists.sample(seed=key_sample)  # (A,)
+
         actions = jax.lax.stop_gradient(actions)  # no grad through sample
 
         # grad(log π)²
