@@ -108,6 +108,7 @@ def main() -> None:
         strategy = cfg.get("strategy")
         seq_len = cfg.get("seq_length")
         seed = max(cfg.get("seed", 1), 1)
+        num_agents = cfg.get("num_agents", 1)  # Default to 1 agent if not specified
         experiment = experiment_suffix(cfg)
 
         # Get reward setting info for logging
@@ -142,7 +143,7 @@ def main() -> None:
                 print(f"[info] {run.name} using repeat_sequence={args.repeat_sequence}, seq_len={seq_len}")
 
         out_base = (base_workspace / args.output / algo / cl_method /
-                    experiment / exp_path / f"seed_{seed}")
+                    experiment / f"agents_{num_agents}" / exp_path / f"seed_{seed}")
 
         print(f"[info] Processing {run.name} with setting: {experiment}")
         print(f"[info] Output path: {out_base}")

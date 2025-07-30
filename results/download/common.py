@@ -19,7 +19,7 @@ def cli() -> argparse.Namespace:
     p.add_argument("--repeat_sequence", type=int, default=None, help="Repeat sequence value to multiply with seq_length")
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--wall_density", type=float, default=None, help="Wall density for the environment")
-    p.add_argument("--difficulty", type=str, default=None, help="Difficulty level for the environment")
+    p.add_argument("--difficulty", type=str, nargs="+", default=[], help="Difficulty levels for the environment")
     p.add_argument("--strategy", choices=["ordered", "random", "generate", "curriculum"], default=None)
     p.add_argument("--algos", nargs="+", default=[], help="Filter by alg_name")
     p.add_argument("--cl_methods", nargs="+", default=[], help="Filter by cl_method")
@@ -37,6 +37,9 @@ def cli() -> argparse.Namespace:
     p.add_argument("--complementary_restrictions", action="store_true", 
                    help="Filter by complementary restrictions experiments")
 
+    # Number of agents parameter
+    p.add_argument("--num_agents", type=int, default=None, help="Filter by number of agents")
+
     return p.parse_args()
 
 
@@ -52,8 +55,9 @@ def want(run: Run, args: argparse.Namespace) -> bool:
     if args.cl_methods and cfg.get("cl_method") not in args.cl_methods: return False
     if args.seq_length and cfg.get("seq_length") != args.seq_length: return False
     if args.strategy and cfg.get("strategy") != args.strategy: return False
-    if args.difficulty and cfg.get("difficulty") != args.difficulty: return False
+    if args.difficulty and cfg.get("difficulty") not in args.difficulty: return False
     if args.wall_density and cfg.get("wall_density") != args.wall_density: return False
+    if args.num_agents and cfg.get("num_agents") != args.num_agents: return False
 
     # Filter by reward settings
     if args.reward_settings:
