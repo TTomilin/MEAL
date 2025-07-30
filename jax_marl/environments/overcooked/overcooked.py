@@ -74,7 +74,7 @@ class Overcooked(MultiAgentEnv):
             self,
             layout=None,
             layout_name="cramped_room",
-            random_reset: bool = False,
+            random_reset: bool = True,
             max_steps: int = 400,
             task_id: int = 0,
             num_agents: int = 2,
