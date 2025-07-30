@@ -188,7 +188,10 @@ class OvercookedSingle(MultiAgentEnv):
                                       p=(~occupied_mask.astype(jnp.bool_)).astype(jnp.float32), replace=False)
 
         # Replace with fixed layout if applicable
-        agent_idx = random_reset * agent_idx + (1 - random_reset) * layout.get("agent_idx", agent_idx)[:1]  # Take only first agent
+        layout_agent_idx = layout.get("agent_idx", agent_idx)
+        # Ensure layout_agent_idx has the correct shape and take only first agent
+        layout_agent_idx = jnp.resize(layout_agent_idx, (1,))
+        agent_idx = random_reset * agent_idx + (1 - random_reset) * layout_agent_idx
         agent_pos = jnp.array([agent_idx[0] % w, agent_idx[0] // w], dtype=jnp.uint32).reshape(1, 2)  # Single agent
         occupied_mask = occupied_mask.at[agent_idx].set(1)
 

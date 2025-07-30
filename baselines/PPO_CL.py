@@ -673,8 +673,9 @@ def main():
                     # Individual rewards: delivery rewards + individual shaped rewards
                     # Environment now provides individual delivery rewards directly
                     if len(env.agents) == 1:
-                        # Single-agent case: reward and shaped_reward are direct values
-                        reward = reward + info["shaped_reward"] * rew_shaping_anneal(current_timestep)
+                        # Single-agent case: extract both reward and shaped_reward from dictionaries
+                        agent_key = env.agents[0]
+                        reward = reward[agent_key] + info["shaped_reward"][agent_key] * rew_shaping_anneal(current_timestep)
                     else:
                         # Multi-agent case: reward and shaped_reward are dictionaries
                         reward = jax.tree_util.tree_map(lambda x, y:
@@ -685,8 +686,9 @@ def main():
                 else:
                     # Default behavior: shared delivery rewards + individual shaped rewards
                     if len(env.agents) == 1:
-                        # Single-agent case: reward and shaped_reward are direct values
-                        reward = reward + info["shaped_reward"] * rew_shaping_anneal(current_timestep)
+                        # Single-agent case: extract both reward and shaped_reward from dictionaries
+                        agent_key = env.agents[0]
+                        reward = reward[agent_key] + info["shaped_reward"][agent_key] * rew_shaping_anneal(current_timestep)
                     else:
                         # Multi-agent case: Convert individual delivery rewards to shared rewards (all agents get total)
                         total_delivery_reward = sum(reward[agent] for agent in env.agents)
