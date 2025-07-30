@@ -9,7 +9,7 @@ from flax import struct
 from flax.core.frozen_dict import FrozenDict
 from jax import lax
 
-from jax_marl.environments import spaces
+from jax_marl.environments import spaces, MultiAgentEnv
 from jax_marl.environments.overcooked.common import (
     OBJECT_TO_INDEX,
     COLOR_TO_INDEX,
@@ -66,7 +66,7 @@ URGENCY_CUTOFF = 40  # When this many time steps remain, the urgency layer is fl
 DELIVERY_REWARD = 20
 
 
-class OvercookedSingle:
+class OvercookedSingle(MultiAgentEnv):
     """Single Agent Overcooked Environment"""
 
     def __init__(
@@ -79,8 +79,9 @@ class OvercookedSingle:
             soup_cook_time: int = DEFAULT_SOUP_COOK_TIME,
             num_agents: int = 1,
     ):
+        super().__init__(num_agents=num_agents)
         # Hardcode to single agent
-        self.num_agents = 1
+        self.num_agents = num_agents
 
         # Convert string layout to dictionary if needed
         if isinstance(layout, str):
@@ -116,12 +117,12 @@ class OvercookedSingle:
         self.pot_full_status = soup_cook_time
         self.pot_empty_status = soup_cook_time + MAX_ONIONS_IN_POT
 
-    def step(
+    def step_env(
             self,
             key: chex.PRNGKey,
             state: State,
             action,
-    ) -> Tuple[chex.Array, State, float, bool, dict]:
+    ) -> Tuple[chex.Array, State, dict, dict, dict]:
         """Perform single timestep state transition."""
 
         # Handle both direct actions and dictionary actions (for compatibility with multi-agent interfaces)
@@ -141,17 +142,22 @@ class OvercookedSingle:
         done = self.is_terminal(state)
         state = state.replace(terminal=done)
 
-        obs = self.get_obs(state)
+        obs_single = self.get_obs(state)
+
+        # Format observations, rewards, dones, and info as dictionaries for compatibility with MultiAgentEnv
+        obs = {"agent_0": obs_single}
+        rewards = {"agent_0": reward}
+        dones = {"agent_0": done, "__all__": done}
         info = {
-            'shaped_reward': shaped_reward,
-            'soups': soups_delivered,
+            "shaped_reward": {"agent_0": shaped_reward},
+            "soups": soups_delivered,
         }
 
         return (
             lax.stop_gradient(obs),
             lax.stop_gradient(state),
-            reward,
-            done,
+            rewards,
+            dones,
             info,
         )
 
@@ -257,7 +263,10 @@ class OvercookedSingle:
             task_id=self.task_id
         )
 
-        obs = self.get_obs(state)
+        obs_single = self.get_obs(state)
+
+        # Format observations as dictionary for compatibility with MultiAgentEnv
+        obs = {"agent_0": obs_single}
 
         return lax.stop_gradient(obs), lax.stop_gradient(state)
 
