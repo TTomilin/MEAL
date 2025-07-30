@@ -104,7 +104,7 @@ def compute_metrics(
         if len(env_files) != seq_len:
             print(
                 f"[warn] expected {seq_len} env files, found {len(env_files)} "
-                f"for {algo} {method} {num_agents}agents seed {seed}"
+                f"for {algo} {method} level_{level} agents_{num_agents} seed_{seed}"
             )
             continue
 
