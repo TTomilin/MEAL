@@ -107,6 +107,7 @@ class Config:
     difficulty: Optional[str] = None
     single_task_idx: Optional[int] = None
     layout_file: Optional[str] = None
+    random_reset: bool = True
 
     # Random layout generator parameters
     height_min: int = 6  # minimum layout height

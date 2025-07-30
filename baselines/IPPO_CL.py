@@ -109,6 +109,7 @@ class Config:
     difficulty: Optional[str] = None
     single_task_idx: Optional[int] = None
     layout_file: Optional[str] = None
+    random_reset: bool = True
 
     # Random layout generator parameters
     height_min: int = 6  # minimum layout height
@@ -226,6 +227,10 @@ def main():
             env_args["view_sides"] = config.view_sides
             env_args["view_behind"] = config.view_behind
 
+    # Add random_reset parameter to all environments
+    for env_args in config.env_kwargs:
+        env_args["random_reset"] = config.random_reset
+
     # ── optional single-task baseline ─────────────────────────────────────────
     if config.single_task_idx is not None:
         idx = config.single_task_idx
@@ -275,13 +280,14 @@ def main():
         Get view parameters for overcooked_po environments from config.
         Returns a dictionary with view parameters if applicable, empty dict otherwise.
         '''
+        params = {"random_reset": config.random_reset}
         if config.env_name == "overcooked_po" and difficulty:
-            return {
+            params.update({
                 "view_ahead": config.view_ahead,
                 "view_sides": config.view_sides,
                 "view_behind": config.view_behind
-            }
-        return {}
+            })
+        return params
 
     def create_environments():
         '''
