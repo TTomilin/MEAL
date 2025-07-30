@@ -241,7 +241,9 @@ def main():
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
     network = "cnn" if config.use_cnn else "mlp"
-    run_name = f'{config.alg_name}_{config.cl_method}_{network}_seq{config.seq_length}_{config.strategy}_seed_{config.seed}_{timestamp}'
+    difficulty = config.difficulty
+    difficulty_str = f"_{difficulty}" if difficulty else ""
+    run_name = f'{config.alg_name}_{config.cl_method}{difficulty_str}_{network}_seq{config.seq_length}_{config.strategy}_seed_{config.seed}_{timestamp}'
     exp_dir = os.path.join("runs", run_name)
 
     # Initialize WandB
@@ -842,7 +844,12 @@ def main():
                         metrics, update_steps, env_counter = args
                         real_step = (int(env_counter) - 1) * config.num_updates + int(update_steps)
                         for k, v in metrics.items():
-                            writer.add_scalar(k, v, real_step)
+                            # Handle dictionary values by flattening them
+                            if isinstance(v, dict):
+                                for sub_k, sub_v in v.items():
+                                    writer.add_scalar(f"{k}/{sub_k}", sub_v, real_step)
+                            else:
+                                writer.add_scalar(k, v, real_step)
 
                     jax.experimental.io_callback(callback, None, (metrics, update_steps, env_counter))
                     return None
@@ -1052,8 +1059,11 @@ def main():
             # Get valid actions
             avail_actions = env.get_valid_actions(state.env_state)
 
+            # Extract first element from batch dimension since we're recording a single episode
+            avail_actions_single = {agent: actions[0] for agent, actions in avail_actions.items()}
+
             # Use greedy action selection (no exploration for GIF recording)
-            actions = get_greedy_actions(q_vals, batchify(avail_actions, env.agents))
+            actions = get_greedy_actions(q_vals, batchify(avail_actions_single, env.agents))
             actions = unbatchify(actions, env.agents)
 
             rng, key_step = jax.random.split(rng)
