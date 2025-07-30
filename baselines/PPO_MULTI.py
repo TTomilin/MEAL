@@ -229,7 +229,9 @@ def main():
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
     network = "cnn" if cfg.use_cnn else "mlp"
-    run_name = f'{cfg.alg_name}_{cfg.cl_method}_{cfg.num_agents}agents_{network}_seq{cfg.seq_length}_{cfg.strategy}_seed_{cfg.seed}_{timestamp}'
+    difficulty = cfg.difficulty
+    difficulty_str = f"_{difficulty}" if difficulty else ""
+    run_name = f'{cfg.alg_name}_{cfg.cl_method}{difficulty_str}_{cfg.num_agents}agents_{network}_seq{cfg.seq_length}_{cfg.strategy}_seed_{cfg.seed}_{timestamp}'
     exp_dir = os.path.join("runs", run_name)
 
     # Initialize WandB

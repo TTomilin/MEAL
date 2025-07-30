@@ -319,7 +319,8 @@ def create_run_name(config, network_architecture):
     """
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     unique_id = uuid.uuid4()
-    run_name = f'{config.alg_name}_{config.cl_method}_{network_architecture}_\
+    difficulty_str = f"_{config.difficulty}" if config.difficulty else ""
+    run_name = f'{config.alg_name}_{config.cl_method}{difficulty_str}_{network_architecture}_\
         seq{config.seq_length}_{config.strategy}_seed_{config.seed}_{timestamp}_{unique_id}'
     return run_name
 
