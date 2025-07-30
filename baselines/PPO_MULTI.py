@@ -1029,12 +1029,6 @@ def main():
             metrics["Advantage_Targets/advantages"] = advantages.mean()
             metrics["Advantage_Targets/targets"] = targets.mean()
 
-            # Evaluation section
-            if cfg.evaluation:
-                for i in range(len(env_names)):
-                    metrics[f"Evaluation/{env_names[i]}"] = jnp.nan
-                    metrics[f"Scaled returns/evaluation_{env_names[i]}_scaled"] = jnp.nan
-
             def evaluate_and_log(rng, update_step):
                 rng, eval_rng = jax.random.split(rng)
                 train_state_eval = jax.tree_util.tree_map(lambda x: x.copy(), train_state)
