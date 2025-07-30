@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import flax.linen as nn
 import numpy as np
 from flax.linen.initializers import constant, orthogonal
+from .cnn import CNN
 
 
 def choose_head(t: jnp.ndarray, n_heads: int, env_idx: int):
@@ -59,12 +60,19 @@ class QNetwork(nn.Module):
         return nn.relu if self.activation == "relu" else nn.tanh
 
     def _encoder(self):
-        return MLPEncoder(
-            hidden_size=self.hidden_size,
-            activation=self.activation,
-            big_network=self.big_network,
-            use_layer_norm=self.use_layer_norm,
-        )
+        if self.encoder_type == "cnn":
+            return CNN(
+                name_prefix="q_cnn",
+                activation=self.activation,
+                use_layer_norm=self.use_layer_norm,
+            )
+        else:  # "mlp"
+            return MLPEncoder(
+                hidden_size=self.hidden_size,
+                activation=self.activation,
+                big_network=self.big_network,
+                use_layer_norm=self.use_layer_norm,
+            )
 
     @nn.compact
     def __call__(self, x: jnp.ndarray, *, env_idx: int = 0):

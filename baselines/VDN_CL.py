@@ -29,6 +29,7 @@ from jax_marl.wrappers.baselines import (
     CTRolloutManager,
 )
 from jax_marl.eval.visualizer import OvercookedVisualizer
+from baselines.utils import *
 from baselines.utils_vdn import (
     Timestep,
     CustomTrainState,
@@ -37,7 +38,6 @@ from baselines.utils_vdn import (
     eps_greedy_exploration,
     get_greedy_actions
 )
-from baselines.utils import *
 from cl_methods.EWC import EWC
 from jax_marl.environments.difficulty_config import apply_difficulty_to_config
 
@@ -405,7 +405,7 @@ def main():
                 rng, rng_a, rng_s = jax.random.split(rng, 3)
                 q_vals = jax.vmap(network.apply, in_axes=(None, 0))(
                     train_state.params,
-                    batchify(last_obs, env.agents, config.num_actors),  # (num_agents, num_envs, num_actions)
+                    batchify(last_obs, env.agents),  # (num_agents, num_envs, num_actions)
                 )  # (num_agents, num_envs, num_actions)
                 actions = jnp.argmax(q_vals, axis=-1)
                 actions = unbatchify(actions, env.agents)
@@ -495,8 +495,6 @@ def main():
     rng = jax.random.PRNGKey(config.seed)
     init_env = train_envs[0]
 
-    # Calculate num_actors for batchify function
-    config.num_actors = init_env.num_agents * config.num_envs
 
     # Select network architecture based on config
     encoder_type = "cnn" if config.use_cnn else "mlp"
@@ -626,7 +624,7 @@ def main():
                 # Compute Q-values for all agents
                 q_vals = jax.vmap(network.apply, in_axes=(None, 0))(
                     train_state.params,
-                    batchify(last_obs, env.agents, config.num_actors),
+                    batchify(last_obs, env.agents),
                 )  # (num_agents, num_envs, num_actions)
 
                 # retrieve the valid actions
@@ -636,7 +634,7 @@ def main():
                 eps = eps_scheduler(train_state.n_updates)
                 _rngs = jax.random.split(rng_action, env.num_agents)
                 new_action = jax.vmap(eps_greedy_exploration, in_axes=(0, 0, None, 0))(
-                    _rngs, q_vals, eps, batchify(avail_actions, env.agents, config.num_actors)
+                    _rngs, q_vals, eps, batchify(avail_actions, env.agents)
                 )
                 actions = unbatchify(new_action, env.agents)
 
@@ -675,8 +673,8 @@ def main():
                     )
 
                 # Create __all__ reward for VDN
-                shaped_reward["__all__"] = batchify(shaped_reward, env.agents, config.num_actors).sum(axis=0)
-                rewards["__all__"] = batchify(rewards, env.agents, config.num_actors).sum(axis=0)
+                shaped_reward["__all__"] = batchify(shaped_reward, env.agents).sum(axis=0)
+                rewards["__all__"] = batchify(rewards, env.agents).sum(axis=0)
 
                 timestep = Timestep(
                     obs=last_obs,
@@ -720,7 +718,7 @@ def main():
                                           _rng).experience  # collects a minibatch of size buffer_batch_size
 
                 q_next_target = jax.vmap(network.apply, in_axes=(None, 0))(
-                    train_state.target_network_params, batchify(minibatch.second.obs, env.agents, config.num_actors)
+                    train_state.target_network_params, batchify(minibatch.second.obs, env.agents)
                 )  # (num_agents, batch_size, ...)
                 q_next_target = jnp.max(q_next_target, axis=-1)  # (batch_size,)
 
@@ -732,13 +730,13 @@ def main():
 
                 def _loss_fn(params):
                     q_vals = jax.vmap(network.apply, in_axes=(None, 0))(
-                        params, batchify(minibatch.first.obs, env.agents, config.num_actors)
+                        params, batchify(minibatch.first.obs, env.agents)
                     )  # (num_agents, batch_size, ...)
 
                     # get logits of the chosen actions
                     chosen_action_q_vals = jnp.take_along_axis(
                         q_vals,
-                        batchify(minibatch.first.actions, env.agents, config.num_actors)[..., jnp.newaxis],
+                        batchify(minibatch.first.actions, env.agents)[..., jnp.newaxis],
                         axis=-1,
                     ).squeeze()  # (num_agents, batch_size, )
 
@@ -1031,17 +1029,31 @@ def main():
         states = [state]
 
         while not done and step_count < max_steps:
+            # Prepare observations for each agent individually
+            agent_obs = []
+            for agent in env.agents:
+                agent_ob = obs[agent]
+                # Add batch dimension and ensure proper shape for network
+                if config.use_cnn:
+                    # For CNN, keep spatial dimensions
+                    agent_ob = jnp.expand_dims(agent_ob, axis=0)  # (1, H, W, C)
+                else:
+                    # For MLP, flatten
+                    agent_ob = jnp.expand_dims(agent_ob.flatten(), axis=0)  # (1, flattened_size)
+                agent_obs.append(agent_ob)
+
             # Compute Q-values for all agents
-            q_vals = jax.vmap(network.apply, in_axes=(None, 0))(
-                train_state.params,
-                batchify(obs, env.agents, config.num_actors),
-            )  # (num_agents, num_envs, num_actions)
+            q_vals = []
+            for agent_ob in agent_obs:
+                q_val = network.apply(train_state.params, agent_ob, env_idx=env_idx)
+                q_vals.append(q_val[0])  # Remove batch dimension
+            q_vals = jnp.stack(q_vals, axis=0)  # (num_agents, num_actions)
 
             # Get valid actions
             avail_actions = env.get_valid_actions(state.env_state)
 
             # Use greedy action selection (no exploration for GIF recording)
-            actions = get_greedy_actions(q_vals, batchify(avail_actions, env.agents, config.num_actors))
+            actions = get_greedy_actions(q_vals, batchify(avail_actions, env.agents))
             actions = unbatchify(actions, env.agents)
 
             rng, key_step = jax.random.split(rng)
