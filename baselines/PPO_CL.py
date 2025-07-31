@@ -1194,8 +1194,7 @@ def main():
 
             if cfg.eval_forward_transfer:
                 # calculate the forward transfer and backward transfer
-                show_heatmap_bwt(evaluation_matrix, run_name)
-                show_heatmap_fwt(evaluation_matrix, run_name)
+                pass
 
             if cfg.single_task_idx is not None:
                 break  # stop after the first env
@@ -1299,80 +1298,6 @@ def main():
     loop_over_envs(train_rng, train_state, cl_state, envs)
 
 
-def record_gif_of_episode(config, train_state, env, network, env_idx=0, max_steps=300):
-    rng = jax.random.PRNGKey(0)
-    rng, env_rng = jax.random.split(rng)
-    obs, state = env.reset(env_rng)
-    done = False
-    step_count = 0
-    states = [state]
-
-    while not done and step_count < max_steps:
-        obs_dict = {}
-
-        # Handle both single-agent (direct array) and multi-agent (dictionary) observations
-        if isinstance(obs, dict):
-            # Multi-agent case: obs is a dictionary
-            agents = list(obs.keys())
-            for agent_id, obs_v in obs.items():
-                # Determine the expected raw shape for this agent.
-                expected_shape = env.observation_space().shape
-                # If the observation is unbatched, add a batch dimension.
-                if obs_v.ndim == len(expected_shape):
-                    obs_b = jnp.expand_dims(obs_v, axis=0)  # now (1, ...)
-                else:
-                    obs_b = obs_v
-                if not config.use_cnn:
-                    # Flatten the nonbatch dimensions.
-                    obs_b = jnp.reshape(obs_b, (obs_b.shape[0], -1))
-                obs_dict[agent_id] = obs_b
-        else:
-            # Single-agent case: obs is a direct array
-            agents = env.agents  # Get agents from environment
-            agent_id = agents[0]  # Single agent
-            obs_v = obs
-
-            # Determine the expected raw shape for this agent.
-            expected_shape = env.observation_space().shape
-            # If the observation is unbatched, add a batch dimension.
-            if obs_v.ndim == len(expected_shape):
-                obs_b = jnp.expand_dims(obs_v, axis=0)  # now (1, ...)
-            else:
-                obs_b = obs_v
-            if not config.use_cnn:
-                # Flatten the nonbatch dimensions.
-                obs_b = jnp.reshape(obs_b, (obs_b.shape[0], -1))
-            obs_dict[agent_id] = obs_b
-
-        actions = {}
-        act_keys = jax.random.split(rng, len(agents))
-        for i, agent_id in enumerate(agents):
-            pi, _ = network.apply(train_state.params, obs_dict[agent_id], env_idx=env_idx)
-            actions[agent_id] = jnp.squeeze(pi.sample(seed=act_keys[i]), axis=0)
-
-        # Handle action format for single-agent vs multi-agent environments
-        if len(agents) == 1:
-            # Single-agent case: pass action directly
-            env_actions = actions[agents[0]]
-        else:
-            # Multi-agent case: pass actions as dictionary
-            env_actions = actions
-
-        rng, key_step = jax.random.split(rng)
-        next_obs, next_state, reward, done_info, info = env.step(key_step, state, env_actions)
-
-        # Handle both single-agent (boolean) and multi-agent (dictionary) done values
-        if isinstance(done_info, dict):
-            done = done_info["__all__"]
-        else:
-            # Single-agent environment returns done as boolean directly
-            done = done_info
-
-        obs, state = next_obs, next_state
-        step_count += 1
-        states.append(state)
-
-    return states
 
 
 if __name__ == "__main__":

@@ -1126,8 +1126,7 @@ def main():
 
             if cfg.eval_forward_transfer:
                 # calculate the forward transfer and backward transfer
-                show_heatmap_bwt(evaluation_matrix, run_name)
-                show_heatmap_fwt(evaluation_matrix, run_name)
+                pass
 
             if cfg.single_task_idx is not None:
                 break  # stop after the first env
@@ -1231,45 +1230,6 @@ def main():
     loop_over_envs(train_rng, train_state, cl_state, envs)
 
 
-def record_gif_of_episode(config, train_state, env, network, env_idx=0, max_steps=300):
-    rng = jax.random.PRNGKey(0)
-    rng, env_rng = jax.random.split(rng)
-    obs, state = env.reset(env_rng)
-    done = False
-    step_count = 0
-    states = [state]
-
-    while not done and step_count < max_steps:
-        obs_dict = {}
-        for agent_id, obs_v in obs.items():
-            # Determine the expected raw shape for this agent.
-            expected_shape = env.observation_space().shape
-            # If the observation is unbatched, add a batch dimension.
-            if obs_v.ndim == len(expected_shape):
-                obs_b = jnp.expand_dims(obs_v, axis=0)  # now (1, ...)
-            else:
-                obs_b = obs_v
-            if not config.use_cnn:
-                # Flatten the nonbatch dimensions.
-                obs_b = jnp.reshape(obs_b, (obs_b.shape[0], -1))
-            obs_dict[agent_id] = obs_b
-
-        actions = {}
-        agents = list(obs.keys())  # Get agents from observation keys
-        act_keys = jax.random.split(rng, len(agents))
-        for i, agent_id in enumerate(agents):
-            pi, _ = network.apply(train_state.params, obs_dict[agent_id], env_idx=env_idx)
-            actions[agent_id] = jnp.squeeze(pi.sample(seed=act_keys[i]), axis=0)
-
-        rng, key_step = jax.random.split(rng)
-        next_obs, next_state, reward, done_info, info = env.step(key_step, state, actions)
-        done = done_info["__all__"]
-
-        obs, state = next_obs, next_state
-        step_count += 1
-        states.append(state)
-
-    return states
 
 
 if __name__ == "__main__":

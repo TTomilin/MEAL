@@ -104,111 +104,6 @@ def copy_params(params):
     return jax.tree_util.tree_map(lambda x: x.copy(), params)
 
 
-def compute_fwt(matrix):
-    """
-    Computes the forward transfer for all tasks in a sequence
-    param matrix: a 2D array of shape (num_tasks + 1, num_tasks) where each entry is the performance of the model on the task
-    """
-    # Assert that the matrix has the correct shape
-    assert matrix.shape[0] == matrix.shape[1] + 1, "Matrix must have shape (num_tasks + 1, num_tasks)"
-
-    num_tasks = matrix.shape[1]
-
-    fwt_matrix = np.full((num_tasks, num_tasks), np.nan)
-
-    for i in range(1, num_tasks):
-        for j in range(i):  # j < i
-            before_learning = matrix[0, i]
-            after_task_j = matrix[j + 1, i]
-            fwt_matrix[i, j] = after_task_j - before_learning
-
-    return fwt_matrix
-
-
-def compute_bwt(matrix):
-    """
-    Computes the backward transfer for all tasks in a sequence
-    param matrix: a 2D array of shape (num_tasks + 1, num_tasks) where each entry is the performance of the model on the task
-    """
-    assert matrix.shape[0] == matrix.shape[1] + 1, "Matrix must have shape (num_tasks + 1, num_tasks)"
-    num_tasks = matrix.shape[1]
-
-    bwt_matrix = jnp.full((num_tasks, num_tasks), jnp.nan)
-
-    for i in range(num_tasks - 1):
-        for j in range(i + 1, num_tasks):
-            after_j = matrix[j + 1, i]  # performance on task i after learning task j
-            after_i = matrix[i + 1, i]  # performance on task i after learning task i
-            bwt_matrix = bwt_matrix.at[i, j].set(after_j - after_i)
-
-    return bwt_matrix
-
-
-def show_heatmap_bwt(matrix, run_name, save_folder="heatmap_images"):
-    # Ensure the save folder exists
-    if not os.path.exists(save_folder):
-        os.makedirs(save_folder)
-
-    bwt_matrix = compute_bwt(matrix)
-    avg_bwt_per_step = np.nanmean(bwt_matrix, axis=0)
-
-    fig, ax = plt.subplots(figsize=(10, 7))
-    sns.heatmap(bwt_matrix, annot=True, cmap="coolwarm", center=0, fmt=".2f",
-                xticklabels=[f"Task {j}" for j in range(bwt_matrix.shape[1])],
-                yticklabels=[f"Task {i}" for i in range(bwt_matrix.shape[0])],
-                cbar_kws={"label": "BWT"})
-    ax.set_title("Progressive Backward Transfer Matrix")
-    ax.set_xlabel("Task B")
-    ax.set_ylabel("Task A")
-    plt.xticks(rotation=45, ha='right', rotation_mode='anchor')
-
-    # Add average BWT per step below the heatmap
-    for j, val in enumerate(avg_bwt_per_step):
-        if not np.isnan(val):
-            ax.text(j + 0.5, len(avg_bwt_per_step) + 0.2, f"{val:.2f}",
-                    ha='center', va='bottom', fontsize=9, color='black')
-    plt.text(-0.7, len(avg_bwt_per_step) + 0.2, "Avg", fontsize=10, va='bottom', weight='bold')
-
-    plt.tight_layout()
-
-    # Save the figure
-    file_path = os.path.join(save_folder, f"{run_name}_bwt_heatmap.png")
-    plt.savefig(file_path)
-    plt.close()
-
-
-def show_heatmap_fwt(matrix, run_name, save_folder="heatmap_images"):
-    if not os.path.exists(save_folder):
-        os.makedirs(save_folder)
-
-    fwt_matrix = compute_fwt(matrix)
-    avg_fwt_per_step = np.nanmean(fwt_matrix, axis=0)
-
-    fig, ax = plt.subplots(figsize=(10, 7))
-    sns.heatmap(fwt_matrix, annot=True, cmap="coolwarm", center=0, fmt=".2f",
-                xticklabels=[f"Task {j}" for j in range(fwt_matrix.shape[1])],
-                yticklabels=[f"Task {i}" for i in range(fwt_matrix.shape[0])],
-                cbar_kws={"label": "FWT"})
-    ax.set_title("Progressive Forward Transfer Matrix")
-    ax.set_xlabel("Task B")
-    ax.set_ylabel("Task A")
-
-    plt.xticks(rotation=45, ha='right', rotation_mode='anchor')
-
-    for j, val in enumerate(avg_fwt_per_step):
-        if not np.isnan(val):
-            ax.text(j + 0.5, len(avg_fwt_per_step) + 0.2, f"{val:.2f}",
-                    ha='center', va='bottom', fontsize=9, color='black')
-
-    plt.text(-0.7, len(avg_fwt_per_step) + 0.2, "Avg", fontsize=10, va='bottom', weight='bold')
-
-    plt.tight_layout()
-
-    file_path = os.path.join(save_folder, f"{run_name}_fwt_heatmap.png")
-    plt.savefig(file_path)
-    plt.close()
-
-
 def add_eval_metrics(avg_rewards, avg_soups, layout_names, max_soup_dict, metrics):
     for i, layout_name in enumerate(layout_names):
         metrics[f"Evaluation/Returns/{i}__{layout_name}"] = avg_rewards[i]
@@ -359,3 +254,59 @@ def initialize_logging_setup(config, run_name, exp_dir):
     writer.add_text("hyperparameters", markdown)
 
     return writer
+
+
+def record_gif_of_episode(config, train_state, env, network, env_idx=0, max_steps=300):
+    """
+    Records a GIF of an episode by running the trained network on the environment.
+
+    This is the centralized version from IPPO_CL.py that works reliably across all baselines.
+
+    Args:
+        config: Configuration object containing use_cnn flag
+        train_state: Training state containing network parameters
+        env: Environment to run the episode on
+        network: Network to use for action selection
+        env_idx: Environment/task index for multi-task networks (default: 0)
+        max_steps: Maximum number of steps to record (default: 300)
+
+    Returns:
+        List of environment states for visualization
+    """
+    rng = jax.random.PRNGKey(0)
+    rng, env_rng = jax.random.split(rng)
+    obs, state = env.reset(env_rng)
+    done = False
+    step_count = 0
+    states = [state]
+
+    while not done and step_count < max_steps:
+        obs_dict = {}
+        for agent_id, obs_v in obs.items():
+            # Determine the expected raw shape for this agent.
+            expected_shape = env.observation_space().shape
+            # If the observation is unbatched, add a batch dimension.
+            if obs_v.ndim == len(expected_shape):
+                obs_b = jnp.expand_dims(obs_v, axis=0)  # now (1, ...)
+            else:
+                obs_b = obs_v
+            if not config.use_cnn:
+                # Flatten the nonbatch dimensions.
+                obs_b = jnp.reshape(obs_b, (obs_b.shape[0], -1))
+            obs_dict[agent_id] = obs_b
+
+        actions = {}
+        act_keys = jax.random.split(rng, env.num_agents)
+        for i, agent_id in enumerate(env.agents):
+            pi, _ = network.apply(train_state.params, obs_dict[agent_id], env_idx=env_idx)
+            actions[agent_id] = jnp.squeeze(pi.sample(seed=act_keys[i]), axis=0)
+
+        rng, key_step = jax.random.split(rng)
+        next_obs, next_state, reward, done_info, info = env.step(key_step, state, actions)
+        done = done_info["__all__"]
+
+        obs, state = next_obs, next_state
+        step_count += 1
+        states.append(state)
+
+    return states

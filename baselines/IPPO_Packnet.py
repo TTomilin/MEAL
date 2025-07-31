@@ -1,11 +1,6 @@
 import json
 import os
 
-from cl_methods.AGEM import AGEM, init_agem_memory
-from cl_methods.FT import FT
-from cl_methods.L2 import L2
-from cl_methods.MAS import MAS
-
 os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
 from typing import Sequence, Any, Optional, List
 
@@ -19,10 +14,7 @@ from jax_marl.registration import make
 from jax_marl.eval.visualizer import OvercookedVisualizer
 from jax_marl.wrappers.baselines import LogWrapper
 from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
-from architectures.mlp import ActorCritic as MLPActorCritic
-from architectures.cnn import ActorCritic as CNNActorCritic
 from baselines.utils import *
-from cl_methods.EWC import EWC
 from jax_marl.environments.difficulty_config import apply_difficulty_to_config
 
 # Packnet specific imports
@@ -181,11 +173,9 @@ def main():
             "Please choose only one reward setting."
         )
 
-    if config.single_task_idx is not None:  # single-task baseline
-        config.cl_method = "ft"
-    if config.cl_method is None:
-        raise ValueError(
-            "cl_method is required. Please specify a continual learning method (e.g., ewc, mas, l2, ft, agem, packnet).")
+    # Validate that we're using Packnet
+    if config.cl_method is None or config.cl_method.lower() != "packnet":
+        raise ValueError("This script only supports Packnet. Please set cl_method to 'packnet'.")
 
     difficulty = config.difficulty
     seq_length = config.seq_length
@@ -196,26 +186,11 @@ def main():
     if difficulty:
         apply_difficulty_to_config(config, difficulty)
 
-    # Set default regularization coefficient based on the CL method if not specified
-    if config.reg_coef is None:
-        if config.cl_method.lower() == "ewc":
-            config.reg_coef = 1e11
-        elif config.cl_method.lower() == "mas":
-            config.reg_coef = 1e9
-        elif config.cl_method.lower() == "l2":
-            config.reg_coef = 1e7
-
-    method_map = dict(ewc=EWC(mode=config.ewc_mode, decay=config.ewc_decay),
-                      mas=MAS(),
-                      l2=L2(),
-                      ft=FT(),
-                      agem=AGEM(memory_size=config.agem_memory_size, sample_size=config.agem_sample_size),
-                      packnet=Packnet(seq_length=config.seq_length,
-                                      prune_instructions=0.4,
-                                      train_finetune_split=(config.train_epochs, config.finetune_epochs),
-                                      prunable_layers=[nn.Dense]))
-
-    cl = method_map[config.cl_method.lower()]
+    # Initialize Packnet
+    cl = Packnet(seq_length=config.seq_length,
+                 prune_instructions=0.4,
+                 train_finetune_split=(config.train_epochs, config.finetune_epochs),
+                 prunable_layers=[nn.Dense])
 
     # generate a sequence of tasks
     config.env_kwargs, layout_names = generate_sequence(
@@ -526,122 +501,68 @@ def main():
         frac = 1.0 - (count // (config.num_minibatches * config.update_epochs)) / config.num_updates
         return config.lr * frac
 
-    # Initialize the network based on the CL method
+    # Initialize Packnet architecture
     rng = jax.random.PRNGKey(config.seed)
 
-    # Initialize variables for different architectures
-    actor = None
-    network = None
+    # Use decoupled architecture for Packnet
+    actor = Actor(
+        action_dim=temp_env.action_space().n,
+        activation=config.activation,
+        num_tasks=config.seq_length,
+        use_multihead=config.use_multihead,
+        use_task_id=config.use_task_id
+    )
+    critic = Critic(
+        activation=config.activation,
+        num_tasks=config.seq_length,
+        use_multihead=config.use_multihead,
+        use_task_id=config.use_task_id
+    )
 
-    if config.cl_method.lower() == "packnet":
-        # Use decoupled architecture for Packnet
-        actor = Actor(
-            action_dim=temp_env.action_space().n,
-            activation=config.activation,
-            num_tasks=config.seq_length,
-            use_multihead=config.use_multihead,
-            use_task_id=config.use_task_id
-        )
-        critic = Critic(
-            activation=config.activation,
-            num_tasks=config.seq_length,
-            use_multihead=config.use_multihead,
-            use_task_id=config.use_task_id
-        )
+    rng, actor_rng, critic_rng = jax.random.split(rng, 3)
+    init_x = jnp.zeros(temp_env.observation_space().shape).flatten()
+    init_x = jnp.expand_dims(init_x, axis=0)  # Add batch dimension
+    actor_params = actor.init(actor_rng, init_x, env_idx=0)
+    critic_params = critic.init(critic_rng, init_x, env_idx=0)
 
-        rng, actor_rng, critic_rng = jax.random.split(rng, 3)
-        init_x = jnp.zeros(temp_env.observation_space().shape).flatten()
-        init_x = jnp.expand_dims(init_x, axis=0)  # Add batch dimension
-        actor_params = actor.init(actor_rng, init_x, env_idx=0)
-        critic_params = critic.init(critic_rng, init_x, env_idx=0)
+    # Initialize the optimizer
+    actor_tx = optax.chain(
+        optax.clip_by_global_norm(config.max_grad_norm),
+        optax.adam(learning_rate=linear_schedule if config.anneal_lr else config.lr, eps=1e-5)
+    )
+    critic_tx = optax.chain(
+        optax.clip_by_global_norm(config.max_grad_norm),
+        optax.adam(learning_rate=linear_schedule if config.anneal_lr else config.lr, eps=1e-5)
+    )
 
-        # Initialize the optimizer
-        actor_tx = optax.chain(
-            optax.clip_by_global_norm(config.max_grad_norm),
-            optax.adam(learning_rate=linear_schedule if config.anneal_lr else config.lr, eps=1e-5)
-        )
-        critic_tx = optax.chain(
-            optax.clip_by_global_norm(config.max_grad_norm),
-            optax.adam(learning_rate=linear_schedule if config.anneal_lr else config.lr, eps=1e-5)
-        )
+    # jit the apply function
+    actor.apply = jax.jit(actor.apply)
+    critic.apply = jax.jit(critic.apply)
 
-        # jit the apply function
-        actor.apply = jax.jit(actor.apply)
-        critic.apply = jax.jit(critic.apply)
+    # calculate sparsity
+    sparsity = cl.compute_sparsity(actor_params["params"])
+    print(f"Sparsity: {sparsity}")
 
-        # calculate sparsity
-        sparsity = cl.compute_sparsity(actor_params["params"])
-        print(f"Sparsity: {sparsity}")
+    # Initialize the Packnet state
+    packnet_state = PacknetState(
+        masks=cl.init_mask_tree(actor_params["params"]),
+        current_task=0,
+        train_mode=True
+    )
 
-        # Initialize the Packnet state
-        packnet_state = PacknetState(
-            masks=cl.init_mask_tree(actor_params["params"]),
-            current_task=0,
-            train_mode=True
-        )
+    # Initialize the training state      
+    actor_train_state = TrainState.create(
+        apply_fn=actor.apply,
+        params=actor_params,
+        tx=actor_tx
+    )
+    critic_train_state = TrainState.create(
+        apply_fn=critic.apply,
+        params=critic_params,
+        tx=critic_tx
+    )
 
-        # Initialize the training state      
-        actor_train_state = TrainState.create(
-            apply_fn=actor.apply,
-            params=actor_params,
-            tx=actor_tx
-        )
-        critic_train_state = TrainState.create(
-            apply_fn=critic.apply,
-            params=critic_params,
-            tx=critic_tx
-        )
-
-        train_states = (actor_train_state, critic_train_state)
-    else:
-        # Use unified architecture for other methods
-        if config.use_cnn:
-            network = CNNActorCritic(
-                action_dim=temp_env.action_space().n,
-                activation=config.activation,
-                use_layer_norm=config.use_layer_norm,
-                big_network=config.big_network,
-                use_multihead=config.use_multihead,
-                shared_backbone=config.shared_backbone,
-                num_tasks=config.seq_length,
-                use_task_id=config.use_task_id,
-                regularize_heads=config.regularize_heads
-            )
-        else:
-            network = MLPActorCritic(
-                action_dim=temp_env.action_space().n,
-                activation=config.activation,
-                use_layer_norm=config.use_layer_norm,
-                big_network=config.big_network,
-                use_multihead=config.use_multihead,
-                shared_backbone=config.shared_backbone,
-                num_tasks=config.seq_length,
-                use_task_id=config.use_task_id,
-                regularize_heads=config.regularize_heads
-            )
-
-        rng, _rng = jax.random.split(rng)
-        init_x = jnp.zeros(temp_env.observation_space().shape)
-        if not config.use_cnn:
-            init_x = init_x.flatten()
-        init_x = jnp.expand_dims(init_x, axis=0)  # Add batch dimension
-
-        network_params = network.init(_rng, init_x, env_idx=0)
-
-        tx = optax.chain(
-            optax.clip_by_global_norm(config.max_grad_norm),
-            optax.adam(learning_rate=linear_schedule if config.anneal_lr else config.lr, eps=1e-5)
-        )
-
-        train_state = TrainState.create(
-            apply_fn=network.apply,
-            params=network_params,
-            tx=tx
-        )
-
-        # For compatibility with Packnet code structure
-        train_states = train_state
-        packnet_state = None
+    train_states = (actor_train_state, critic_train_state)
 
     # def get_shape(x):
     #     return x.shape if hasattr(x, "shape") else type(x)
@@ -1010,6 +931,11 @@ def main():
                     metric["PackNet/current_task"] = packnet_state.current_task
                     metric["PackNet/train_mode"] = packnet_state.train_mode
 
+                    prev_mask = cl.combine_masks(packnet_state.masks, packnet_state.current_task)  # frozen weights
+                    cur_mask = cl.get_mask(packnet_state.masks, packnet_state.current_task)  # active weights
+                    metric["PackNet/frozen_frac"] = jnp.mean(prev_mask)
+                    metric["PackNet/active_frac"] = jnp.mean(cur_mask)
+
                     # add the general metrics to the metric dictionary
                     metric["General/update_step"] = update_step
                     metric["General/env_step"] = update_step * config.num_steps * config.num_envs
@@ -1104,10 +1030,10 @@ def main():
                                                  (metric, update_step, env_counter, actor_params, actor_grads))
                     return None
 
-                def do_not_log(metric, update_step):
-                    return None
+            def do_not_log(metric, update_step):
+                return None
 
-                jax.lax.cond((update_step % config.log_interval) == 0, log_metrics, do_not_log, metric, update_step)
+            jax.lax.cond((update_step % config.log_interval) == 0, log_metrics, do_not_log, metric, update_step)
 
             # Evaluate the model and log the metrics
             evaluate_and_log(rng=rng, update_step=update_step, train_states=train_states)
@@ -1178,21 +1104,17 @@ def main():
 
         return runner_state, metric
 
-    def loop_over_envs(rng, train_states, envs, cl_state, layout_names, network_ref=None):
+    def loop_over_envs(rng, train_states, envs, cl_state, layout_names):
         '''
-        Loops over the environments and trains the network
+        Loops over the environments and trains the network using Packnet
         @param rng: random number generator
-        @param train_states: the current state of the training
+        @param train_states: the current state of the training (tuple of actor and critic)
         @param envs: the environments
-        @param cl_state: the continual learning state
+        @param cl_state: the Packnet state
         @param layout_names: names of the layouts
-        @param network_ref: reference to the network for unified architectures
         returns the runner state and the metrics
         '''
-        # Handle both Packnet (tuple) and unified (single) architectures
-        is_packnet = isinstance(train_states, tuple)
-        if is_packnet:
-            actor_train_state, critic_train_state = train_states
+        actor_train_state, critic_train_state = train_states
 
         # split the random number generator for training on the environments
         rng, *env_rngs = jax.random.split(rng, len(envs) + 1)
@@ -1205,58 +1127,41 @@ def main():
         if config.evaluation:
             evaluation_matrix = jnp.zeros(((len(envs) + 1), len(envs)))
             rng, eval_rng = jax.random.split(rng)
-            # Use appropriate train_state for evaluation
-            eval_train_state = train_states if is_packnet else train_states
-            avg_rewards, avg_soups = evaluate_model(eval_train_state, eval_rng)
+            avg_rewards, avg_soups = evaluate_model(train_states, eval_rng)
             evaluation_matrix = evaluation_matrix.at[0, :].set(avg_rewards)
 
         for i, (env_rng, env) in enumerate(zip(env_rngs, envs)):
-            if is_packnet:
-                # Call the train_on_environment function for Packnet
-                runner_state, metrics = train_on_environment(env_rng, train_states, cl_state, env, env_counter)
-                # unpack the runner state
-                train_states, env_state, cl_state, last_obs, update_step, grads, rng = runner_state
-                current_train_state = train_states[0]  # actor_train_state
-                network_for_gif = actor
-            else:
-                # For unified architecture, we would need a different train_on_environment function
-                # This is a placeholder - the actual implementation would depend on the unified training logic
-                print(f"Training on environment {env_counter} with {config.cl_method}")
-                current_train_state = train_states
-                network_for_gif = network_ref
+            # Call the train_on_environment function for Packnet
+            runner_state, metrics = train_on_environment(env_rng, train_states, cl_state, env, env_counter)
+            # unpack the runner state
+            train_states, env_state, cl_state, last_obs, update_step, grads, rng = runner_state
+            current_train_state = train_states[0]  # actor_train_state
 
             # Generate & log a GIF after finishing task i
             env_name = layout_names[i] if i < len(layout_names) else f"env_{i}"
-            states = record_gif_of_episode(config, current_train_state, env, network_for_gif, env_idx=i,
+            states = record_gif_of_episode(config, current_train_state, env, actor, env_idx=i,
                                            max_steps=config.gif_len)
             visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir)
 
             if config.evaluation:
                 # Evaluate at the end of training to get the average performance of the task right after training
-                # For Packnet, use the full train_states tuple; for unified, use current_train_state
-                eval_state = train_states if is_packnet else current_train_state
-                avg_rewards, avg_soups = evaluate_model(eval_state, rng)
+                avg_rewards, avg_soups = evaluate_model(train_states, rng)
                 evaluation_matrix = evaluation_matrix.at[env_counter, :].set(avg_rewards)
 
             # save the model
             path = f"checkpoints/overcooked/{run_name}/model_env_{env_counter}"
-            save_params(path, train_states if is_packnet else current_train_state,
-                        env_kwargs=env.layout, layout_name=env_name, config=config)
+            save_params(path, train_states, env_kwargs=env.layout, layout_name=env_name, config=config)
 
             # update the environment counter
             env_counter += 1
 
-        if config.evaluation:
-            show_heatmap_bwt(evaluation_matrix, run_name)
-            show_heatmap_fwt(evaluation_matrix, run_name)
-
-        return runner_state if is_packnet else None
+        return runner_state
 
     def save_params(path, train_state, env_kwargs=None, layout_name=None, config=None):
         '''
-        Saves the parameters of the network along with environment configuration
+        Saves the parameters of the Packnet network along with environment configuration
         @param path: the path to save the parameters
-        @param train_state: the current state of the training
+        @param train_state: the current state of the training (tuple of actor and critic)
         @param env_kwargs: the environment kwargs used to create the environment
         @param layout_name: the name of the layout
         @param config: the configuration used for training
@@ -1264,17 +1169,12 @@ def main():
         '''
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
-        # Handle both Packnet (tuple) and unified (single) train_state
-        if isinstance(train_state, tuple):
-            # Packnet case: separate actor and critic
-            actor_train_state, critic_train_state = train_state
-            params_to_save = {
-                "actor_params": actor_train_state.params,
-                "critic_params": critic_train_state.params
-            }
-        else:
-            # Unified case: single train_state
-            params_to_save = {"params": train_state.params}
+        # Packnet case: separate actor and critic
+        actor_train_state, critic_train_state = train_state
+        params_to_save = {
+            "actor_params": actor_train_state.params,
+            "critic_params": critic_train_state.params
+        }
 
         # Save model parameters
         with open(path, "wb") as f:
@@ -1349,65 +1249,11 @@ def main():
     # Run the model
     rng, train_rng = jax.random.split(rng)
 
-    # Initialize CL state based on the method
-    if config.cl_method.lower() == "packnet":
-        cl_state = packnet_state
-    else:
-        cl_state = cl.init_state(train_states.params, config.regularize_critic, config.regularize_heads)
+    # Initialize Packnet state
+    cl_state = packnet_state
 
-        # Initialize AGEM memory if using AGEM and this is the first environment
-        if config.cl_method.lower() == "agem":
-            # Get observation dimension
-            obs_dim = envs[0].observation_space().shape
-            if not config.use_cnn:
-                obs_dim = (np.prod(obs_dim),)
-            # Initialize memory buffer
-            cl_state = init_agem_memory(config.agem_memory_size, obs_dim, max_tasks=config.seq_length)
-
-    # apply the loop_over_envs function to the environments
-    if config.cl_method.lower() == "packnet":
-        runner_state = loop_over_envs(train_rng, train_states, envs, cl_state, layout_names, actor)
-    else:
-        loop_over_envs(train_rng, train_states, envs, cl_state, layout_names, network)
-
-
-def record_gif_of_episode(config, train_state, env, network, env_idx=0, max_steps=300):
-    rng = jax.random.PRNGKey(0)
-    rng, env_rng = jax.random.split(rng)
-    obs, state = env.reset(env_rng)
-    done = False
-    step_count = 0
-    states = [state]
-
-    while not done and step_count < max_steps:
-        flat_obs = {}
-        for agent_id, obs_v in obs.items():
-            # Determine the expected raw shape for this agent.
-            expected_shape = env.observation_space().shape
-            # If the observation is unbatched, add a batch dimension.
-            if obs_v.ndim == len(expected_shape):
-                obs_b = jnp.expand_dims(obs_v, axis=0)  # now (1, ...)
-            else:
-                obs_b = obs_v
-            # Flatten the nonbatch dimensions.
-            flattened = jnp.reshape(obs_b, (obs_b.shape[0], -1))
-            flat_obs[agent_id] = flattened
-
-        actions = {}
-        act_keys = jax.random.split(rng, env.num_agents)
-        for i, agent_id in enumerate(env.agents):
-            pi = network.apply(train_state.params, flat_obs[agent_id])
-            actions[agent_id] = jnp.squeeze(pi.sample(seed=act_keys[i]), axis=0)
-
-        rng, key_step = jax.random.split(rng)
-        next_obs, next_state, reward, done_info, info = env.step(key_step, state, actions)
-        done = done_info["__all__"]
-
-        obs, state = next_obs, next_state
-        step_count += 1
-        states.append(state)
-
-    return states
+    # Apply the loop_over_envs function to the environments
+    runner_state = loop_over_envs(train_rng, train_states, envs, cl_state, layout_names)
 
 
 if __name__ == "__main__":

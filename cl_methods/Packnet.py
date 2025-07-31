@@ -521,7 +521,7 @@ class Packnet():
             for param_name, param_array in layer_dict.items():
                 if "kernel" in param_name:  # Only weight parameters
                     total_params += param_array.size
-                    zero_params += jnp.sum(jnp.abs(param_array) < 1e-5)
+                    zero_params += jnp.sum(jnp.abs(param_array) < 1e-7)
 
         # print(f"Total params: {total_params}, Zero params: {zero_params}")
 
