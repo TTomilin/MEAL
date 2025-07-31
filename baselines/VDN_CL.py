@@ -1,45 +1,44 @@
-import json
 import os
-import flashbax
-from pathlib import Path
+from dataclasses import dataclass, field
+from datetime import datetime
+from functools import partial
+from typing import Optional, Sequence, List
 
-from architectures.Q_MLP import QNetwork
-from cl_methods.AGEM import AGEM
-from cl_methods.FT import FT
-from cl_methods.L2 import L2
-from cl_methods.MAS import MAS
-
-os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
+import flashbax as fbx
+import flax
 import jax
 import jax.experimental
 import jax.numpy as jnp
 import numpy as np
-from functools import partial
-from typing import Optional, Sequence, List
-from dataclasses import dataclass, field
-import tyro
-
-import flax
 import optax
+import tyro
+import wandb
+from dotenv import load_dotenv
 from flax.core.frozen_dict import freeze, unfreeze
+from tensorboardX import SummaryWriter
 
+from architectures.Q_MLP import QNetwork
+from baselines.utils import batchify, unbatchify
+from baselines.utils_vdn import (
+    Timestep,
+    CustomTrainState,
+    eps_greedy_exploration,
+    batchify as vdn_batchify,
+    unbatchify as vdn_unbatchify
+)
+from cl_methods.AGEM import AGEM
+from cl_methods.EWC import EWC
+from cl_methods.FT import FT
+from cl_methods.L2 import L2
+from cl_methods.MAS import MAS
 from jax_marl import make
+from jax_marl.environments.difficulty_config import apply_difficulty_to_config
+from jax_marl.environments.env_selection import generate_sequence
+from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
 from jax_marl.wrappers.baselines import (
     LogWrapper,
     CTRolloutManager,
 )
-from jax_marl.eval.visualizer import OvercookedVisualizer
-from baselines.utils import *
-from baselines.utils_vdn import (
-    Timestep,
-    CustomTrainState,
-    batchify,
-    unbatchify,
-    eps_greedy_exploration,
-    get_greedy_actions
-)
-from cl_methods.EWC import EWC
-from jax_marl.environments.difficulty_config import apply_difficulty_to_config
 
 
 @dataclass
@@ -48,28 +47,31 @@ class Config:
     # TRAINING / VDN PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
     alg_name: str = "vdn"
-    lr: float = 0.00007
-    lr_linear_decay: bool = True
-    num_envs: int = 32
-    num_steps: int = 1
-    steps_per_task: float = 5e6
+    total_timesteps: float = 1e7
+    steps_per_task: float = 1e7
+    num_envs: int = 16
+    num_steps: int = 128
     hidden_size: int = 64
     eps_start: float = 1.0
     eps_finish: float = 0.05
-    eps_decay: float = 0.1
+    eps_decay: float = 0.3
     max_grad_norm: int = 1
-    num_epochs: int = 4
+    num_epochs: int = 8
+    lr: float = 0.00007
+    lr_linear_decay: bool = True
+    anneal_lr: bool = False
+    lambda_: float = 0.5
     gamma: float = 0.99
     tau: float = 1
     buffer_size: int = 1e5
     buffer_batch_size: int = 128
     learning_starts: int = 1e3
     target_update_interval: int = 10
-    lambda_: float = 0.5
 
     # Reward shaping
     reward_shaping: bool = True
     reward_shaping_horizon: float = 2.5e6
+    rew_shaping_horizon: float = 2.5e6
 
     # Reward distribution settings
     sparse_rewards: bool = False  # Only shared reward for soup delivery
@@ -78,8 +80,8 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     # NETWORK ARCHITECTURE PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
-    activation: str = "relu"
-    use_cnn: bool = True
+    activation: str = "tanh"
+    use_cnn: bool = False
     use_layer_norm: bool = True
     big_network: bool = False
 
@@ -104,17 +106,17 @@ class Config:
     ewc_decay: float = 0.9  # Only for online EWC
 
     # AGEM specific parameters
-    agem_memory_size: int = 50000
-    agem_sample_size: int = 128
+    agem_memory_size: int = 100000
+    agem_sample_size: int = 1024
     agem_gradient_scale: float = 1.0
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
     env_name: str = "overcooked"
-    seq_length: int = 2
+    seq_length: int = 10
     repeat_sequence: int = 1
-    strategy: str = "random"
+    strategy: str = "generate"
     layouts: Optional[Sequence[str]] = field(default_factory=lambda: [])
     env_kwargs: Optional[Sequence[dict]] = None
     difficulty: Optional[str] = None
@@ -138,10 +140,11 @@ class Config:
     evaluation: bool = True
     eval_forward_transfer: bool = False
     test_during_training: bool = True
-    test_interval: float = 0.05  # fraction
+    test_interval: float = 0.1  # fraction
     test_num_steps: int = 400
-    test_num_envs: int = 256  # number of episodes to average over
-    eval_num_episodes: int = 10
+    test_num_envs: int = 32
+    eval_num_steps: int = 1000
+    eval_num_episodes: int = 5
     record_gif: bool = True
     gif_len: int = 300
     log_interval: int = 75
@@ -153,6 +156,7 @@ class Config:
     entity: Optional[str] = ""
     project: str = "MEAL"
     tags: List[str] = field(default_factory=list)
+    wandb_log_all_seeds: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # EXPERIMENT PARAMETERS
@@ -160,13 +164,18 @@ class Config:
     seed: int = 30
     num_seeds: int = 1
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # RUNTIME COMPUTED PARAMETERS
-    # ═══════════════════════════════════════════════════════════════════════════
-    num_actors: int = 0
-    num_updates: int = 0
-    minibatch_size: int = 0
+    # Legacy parameters for backward compatibility
     layout_name: Optional[Sequence[str]] = None
+    network_name: str = "cnn"
+    cl_method_name: str = "none"
+    group: str = "none"
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # COMPUTED DURING RUNTIME
+    # ═══════════════════════════════════════════════════════════════════════════
+    num_updates: int = 0
+    num_actors: int = 0
+    minibatch_size: int = 0
 
 
 ###################################################
@@ -182,15 +191,27 @@ def main():
 
     config = tyro.cli(Config)
 
+    # Validate reward settings
+    if config.sparse_rewards and config.individual_rewards:
+        raise ValueError(
+            "Cannot enable both sparse_rewards and individual_rewards simultaneously. "
+            "Please choose only one reward setting."
+        )
+
     if config.single_task_idx is not None:  # single-task baseline
         config.cl_method = "ft"
     if config.cl_method is None:
         raise ValueError(
             "cl_method is required. Please specify a continual learning method (e.g., ewc, mas, l2, ft, agem).")
 
+    difficulty = config.difficulty
+    seq_length = config.seq_length
+    strategy = config.strategy
+    seed = config.seed
+
     # Set height_min, height_max, width_min, width_max, and wall_density based on difficulty
-    if config.difficulty:
-        apply_difficulty_to_config(config, config.difficulty)
+    if difficulty:
+        apply_difficulty_to_config(config, difficulty)
 
     # Set default regularization coefficient based on the CL method if not specified
     if config.reg_coef is None:
@@ -211,22 +232,16 @@ def main():
 
     # generate a sequence of tasks
     config.env_kwargs, layout_names = generate_sequence(
-        sequence_length=config.seq_length,
-        strategy=config.strategy,
+        sequence_length=seq_length,
+        strategy=strategy,
         layout_names=config.layouts,
-        seed=config.seed,
+        seed=seed,
         height_rng=(config.height_min, config.height_max),
         width_rng=(config.width_min, config.width_max),
         wall_density=config.wall_density,
         layout_file=config.layout_file,
+        complementary_restrictions=config.complementary_restrictions,
     )
-
-    # Add view parameters for PO environments when difficulty is specified
-    if config.env_name == "overcooked_po" and config.difficulty:
-        for env_args in config.env_kwargs:
-            env_args["view_ahead"] = config.view_ahead
-            env_args["view_sides"] = config.view_sides
-            env_args["view_behind"] = config.view_behind
 
     # Add random_reset parameter to all environments
     for env_args in config.env_kwargs:
@@ -242,13 +257,10 @@ def main():
     # repeat the base sequence `repeat_sequence` times
     config.env_kwargs = config.env_kwargs * config.repeat_sequence
     layout_names = layout_names * config.repeat_sequence
-    config.layout_name = layout_names
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
     network = "cnn" if config.use_cnn else "mlp"
-    difficulty = config.difficulty
-    difficulty_str = f"_{difficulty}" if difficulty else ""
-    run_name = f'{config.alg_name}_{config.cl_method}{difficulty_str}_{network}_seq{config.seq_length}_{config.strategy}_seed_{config.seed}_{timestamp}'
+    run_name = f'{config.alg_name}_{config.cl_method}_{difficulty}_{network}_seq{seq_length}_{strategy}_seed_{seed}_{timestamp}'
     exp_dir = os.path.join("runs", run_name)
 
     # Initialize WandB
@@ -268,6 +280,7 @@ def main():
 
     # Set up Tensorboard
     writer = SummaryWriter(exp_dir)
+
     # add the hyperparameters to the tensorboard
     rows = []
     for key, value in vars(config).items():
@@ -281,11 +294,10 @@ def main():
 
     def get_view_params():
         '''
-        Get view parameters for overcooked_po environments from config.
-        Returns a dictionary with view parameters if applicable, empty dict otherwise.
+        Gets view parameters for environments when difficulty is specified
         '''
         params = {"random_reset": config.random_reset}
-        if config.env_name == "overcooked_po" and config.difficulty:
+        if config.env_name == "overcooked_po" and difficulty:
             params.update({
                 "view_ahead": config.view_ahead,
                 "view_sides": config.view_sides,
@@ -293,15 +305,31 @@ def main():
             })
         return params
 
-    def pad_observation_space():
+    def create_environments():
         '''
-        Function that pads the observation space of all environments to be the same size by adding extra walls to the outside.
-        This way, the observation space of all environments is the same, and compatible with the network
-        returns the padded environments
+        Creates environments, with padding for regular Overcooked but not for PO environments
+        since PO environments have local observations that don't need padding.
+        returns the environment layouts and agent restrictions
         '''
+        agent_restrictions_list = []
+        for env_args in config.env_kwargs:
+            # Extract agent restrictions from env_args
+            agent_restrictions_list.append(env_args.get('agent_restrictions', {}))
+
+        # For PO environments, no padding is needed since observations are local
+        # PO environments naturally have consistent observation spaces based on view parameters
+        if config.env_name == "overcooked_po":
+            # Return the original layouts without modification
+            env_layouts = []
+            for env_args in config.env_kwargs:
+                temp_env = make(config.env_name, **env_args)
+                env_layouts.append(temp_env.layout)
+            return env_layouts, agent_restrictions_list
+
+        # For regular environments, apply padding as before
+        # Create environments first
         envs = []
         for env_args in config.env_kwargs:
-            # Create the environment
             env = make(config.env_name, **env_args)
             envs.append(env)
 
@@ -336,22 +364,9 @@ def main():
                 @param indices: the indices to adjust
                 returns the adjusted indices
                 '''
-                adjusted_indices = []
-
-                for idx in indices:
-                    # Compute the row and column of the index
-                    row = idx // width
-                    col = idx % width
-
-                    # Shift the row and column by the padding
-                    new_row = row + top
-                    new_col = col + left
-
-                    # Compute the new index
-                    new_idx = new_row * (width + left + right) + new_col
-                    adjusted_indices.append(new_idx)
-
-                return jnp.array(adjusted_indices)
+                indices = jnp.asarray(indices)
+                rows, cols = jnp.divmod(indices, width)
+                return (rows + top) * (width + left + right) + (cols + left)
 
             # adjust the indices of the observation space to account for the new walls
             env["wall_idx"] = adjust_indices(env["wall_idx"])
@@ -389,7 +404,7 @@ def main():
 
             padded_envs.append(freeze(env))  # Freeze the environment to prevent further modifications
 
-        return padded_envs
+        return padded_envs, agent_restrictions_list
 
     @jax.jit
     def evaluate_model(rng, train_state):
@@ -410,13 +425,24 @@ def main():
 
             def evaluation_step(step_state, unused):
                 last_obs, env_state, rng = step_state
+
                 rng, rng_a, rng_s = jax.random.split(rng, 3)
+
+                # prepare the observations for the network
+                obs_batch = batchify(last_obs, test_env.agents, test_env.num_agents * test_env.batch_size,
+                                     not config.use_cnn)
+
+                # Reshape observations for each agent: (num_agents, num_envs, obs_dim)
+                obs_batch = obs_batch.reshape(test_env.num_agents, test_env.batch_size, -1)
+
+                # Compute Q-values for all agents
                 q_vals = jax.vmap(network.apply, in_axes=(None, 0))(
                     train_state.params,
-                    batchify(last_obs, env.agents),  # (num_agents, num_envs, num_actions)
+                    obs_batch,
                 )  # (num_agents, num_envs, num_actions)
+
                 actions = jnp.argmax(q_vals, axis=-1)
-                actions = unbatchify(actions, env.agents)
+                actions = vdn_unbatchify(actions, test_env.agents)
                 new_obs, new_env_state, rewards, dones, infos = test_env.batch_step(
                     rng_s, env_state, actions
                 )
@@ -453,29 +479,27 @@ def main():
 
         return evaluation_returns
 
-    # generate the sequence of environments
-    config.env_kwargs, config.layout_name = generate_sequence(
-        sequence_length=config.seq_length,
-        strategy=config.strategy,
-        layout_names=config.layouts,
-        seed=config.seed
-    )
+    env_layouts, agent_restrictions_list = create_environments()
 
-    # Add view parameters for PO environments when difficulty is specified
-    if config.env_name == "overcooked_po" and config.difficulty:
-        for env_args in config.env_kwargs:
-            env_args["view_ahead"] = config.view_ahead
-            env_args["view_sides"] = config.view_sides
-            env_args["view_behind"] = config.view_behind
+    envs = []
+    env_names = []
+    max_soup_dict = {}
+    for i, env_layout in enumerate(env_layouts):
+        # Create the environment with agent restrictions
+        agent_restrictions = agent_restrictions_list[i]
+        view_params = get_view_params()
+        env = make(config.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i,
+                   agent_restrictions=agent_restrictions, **view_params)
+        env = LogWrapper(env, replace_info=False)
+        env_name = env.layout_name
+        envs.append(env)
+        env_names.append(env_name)
+        max_soup_dict[env_name] = estimate_max_soup(env_layout, env.max_steps, n_agents=env.num_agents)
 
-    # Create the environments
-    padded_envs = pad_observation_space()
+    # Create train and test environments
     train_envs = []
     test_envs = []
-    for env_layout in padded_envs:
-        view_params = get_view_params()
-        env = make(config.env_name, layout=env_layout, **view_params)
-        env = LogWrapper(env, replace_info=False)
+    for env in envs:
         train_env = CTRolloutManager(
             env, batch_size=config.num_envs, preprocess_obs=False
         )
@@ -485,9 +509,19 @@ def main():
         train_envs.append(train_env)
         test_envs.append(test_env)
 
-    config.num_updates = (
-            config.steps_per_task // config.num_steps // config.num_envs
-    )
+    # set extra config parameters based on the environment
+    temp_env = train_envs[0]
+    config.num_actors = temp_env.num_agents * config.num_envs
+    config.num_updates = config.steps_per_task // config.num_steps // config.num_envs
+    config.minibatch_size = (config.num_actors * config.num_steps) // config.buffer_batch_size
+
+    def linear_schedule(count):
+        '''
+        Linearly decays the learning rate depending on the number of minibatches and number of epochs
+        returns the learning rate
+        '''
+        frac = 1.0 - (count // (config.buffer_batch_size * config.num_epochs)) / config.num_updates
+        return config.lr * frac
 
     eps_scheduler = optax.linear_schedule(
         config.eps_start,
@@ -495,36 +529,30 @@ def main():
         config.eps_decay * config.num_updates,
     )
 
-    rew_shaping_anneal = optax.linear_schedule(
-        init_value=1.0, end_value=0.0, transition_steps=config.reward_shaping_horizon
-    )
-
     # Initialize the network
     rng = jax.random.PRNGKey(config.seed)
     init_env = train_envs[0]
 
-
-    # Select network architecture based on config
-    encoder_type = "cnn" if config.use_cnn else "mlp"
     network = QNetwork(
         action_dim=init_env.max_action_space,
         hidden_size=config.hidden_size,
-        encoder_type=encoder_type,
+        encoder_type=config.network_name,
         activation=config.activation,
         big_network=config.big_network,
         use_layer_norm=config.use_layer_norm,
         use_multihead=config.use_multihead,
-        use_task_id=config.use_task_id
+        use_task_id=config.use_task_id,
+        num_tasks=seq_length
     )
 
     rng, agent_rng = jax.random.split(rng)
 
-    # Get observation dimensions and handle CNN vs MLP initialization
     obs_dim = init_env.observation_space().shape
     if not config.use_cnn:
         obs_dim = np.prod(obs_dim)
+
     init_x = jnp.zeros((1, *obs_dim)) if config.use_cnn else jnp.zeros((1, obs_dim,))
-    init_network_params = network.init(agent_rng, init_x, env_idx=0)
+    init_network_params = network.init(agent_rng, init_x)
 
     lr_scheduler = optax.linear_schedule(
         config.lr,
@@ -546,11 +574,8 @@ def main():
         tx=tx,
     )
 
-    # Initialize continual learning state
-    cl_state = cl.init_state(train_state.params, config.regularize_critic, config.regularize_heads)
-
     # Create the replay buffer
-    buffer = flashbax.make_flat_buffer(
+    buffer = fbx.make_flat_buffer(
         max_length=int(config.buffer_size),
         min_length=int(config.buffer_batch_size),
         sample_batch_size=int(config.buffer_batch_size),
@@ -586,17 +611,22 @@ def main():
     )  # remove the NUM_ENV dim
     buffer_state = buffer.init(init_timestep_unbatched)
 
-    @partial(jax.jit, static_argnums=(2))
-    def train_on_environment(rng, train_state, train_env, env_counter):
+    @partial(jax.jit, static_argnums=(2, 4))
+    def train_on_environment(rng, train_state, env, cl_state, env_idx):
         '''
-        Trains the agent on a single environment
+        Trains the agent on a single environment using VDN with continual learning
         @param rng: the random number generator
         @param train_state: the current training state
-        @param train_env: the environment to train on
-        returns the updated training state
+        @param env: the environment to train on
+        @param cl_state: the continual learning state
+        @param env_idx: the environment index
+        returns the updated rng, training state, and continual learning state
         '''
 
-        print("Training on environment")
+        print(f"Training on environment: {env_idx} - {env.layout_name}")
+
+        # Create train_env from the base env
+        train_env = CTRolloutManager(env, batch_size=config.num_envs, preprocess_obs=False)
 
         # for each new environment, we want to start with a fresh buffer
         buffer_state = buffer.init(init_timestep_unbatched)
@@ -610,9 +640,12 @@ def main():
         new_optimizer = tx.init(train_state.params)
         train_state = train_state.replace(tx=tx, opt_state=new_optimizer, n_updates=0)
 
-        # # reset the entire training state
-        # train_state = train_state.replace(params=init_network_params)
-        # train_state = train_state.replace(target_network_params=init_network_params)
+        reward_shaping_horizon = config.total_timesteps / 2
+        rew_shaping_anneal = optax.linear_schedule(
+            init_value=1.,
+            end_value=0.,
+            transition_steps=reward_shaping_horizon
+        )
 
         def _update_step(runner_state, unused):
 
@@ -629,10 +662,17 @@ def main():
 
                 rng, rng_action, rng_step = jax.random.split(rng, 3)
 
+                # prepare the observations for the network
+                obs_batch = batchify(last_obs, env.agents, config.num_actors,
+                                     not config.use_cnn)
+
+                # Reshape observations for each agent: (num_agents, num_envs, obs_dim)
+                obs_batch = obs_batch.reshape(env.num_agents, config.num_envs, -1)
+
                 # Compute Q-values for all agents
                 q_vals = jax.vmap(network.apply, in_axes=(None, 0))(
                     train_state.params,
-                    batchify(last_obs, env.agents),
+                    obs_batch,
                 )  # (num_agents, num_envs, num_actions)
 
                 # retrieve the valid actions
@@ -642,9 +682,9 @@ def main():
                 eps = eps_scheduler(train_state.n_updates)
                 _rngs = jax.random.split(rng_action, env.num_agents)
                 new_action = jax.vmap(eps_greedy_exploration, in_axes=(0, 0, None, 0))(
-                    _rngs, q_vals, eps, batchify(avail_actions, env.agents)
+                    _rngs, q_vals, eps, vdn_batchify(avail_actions, env.agents)
                 )
-                actions = unbatchify(new_action, env.agents)
+                actions = unbatchify(new_action, env.agents, config.num_envs, env.num_agents)
 
                 new_obs, new_env_state, rewards, dones, infos = train_env.batch_step(
                     rng_step, env_state, actions
@@ -652,37 +692,12 @@ def main():
 
                 # add shaped reward
                 shaped_reward = infos.pop("shaped_reward")
-
-                current_timestep = train_state.timesteps
-
-                # Apply different reward settings based on configuration
-                if config.sparse_rewards:
-                    # Sparse rewards: only delivery rewards (no shaped rewards)
-                    # rewards already contains individual delivery rewards from environment
-                    pass
-                elif config.individual_rewards:
-                    # Individual rewards: delivery rewards + individual shaped rewards
-                    # Environment now provides individual delivery rewards directly
-                    rewards = jax.tree.map(
-                        lambda x, y: x + y * rew_shaping_anneal(current_timestep),
-                        rewards,
-                        shaped_reward,
-                    )
-                else:
-                    # Default behavior: shared delivery rewards + individual shaped rewards
-                    # Convert individual delivery rewards to shared rewards (both agents get total)
-                    total_delivery_reward = rewards["agent_0"] + rewards["agent_1"]
-                    shared_delivery_rewards = {"agent_0": total_delivery_reward, "agent_1": total_delivery_reward}
-
-                    rewards = jax.tree.map(
-                        lambda x, y: x + y * rew_shaping_anneal(current_timestep),
-                        shared_delivery_rewards,
-                        shaped_reward,
-                    )
-
-                # Create __all__ reward for VDN
-                shaped_reward["__all__"] = batchify(shaped_reward, env.agents).sum(axis=0)
-                rewards["__all__"] = batchify(rewards, env.agents).sum(axis=0)
+                shaped_reward["__all__"] = vdn_batchify(shaped_reward, env.agents).sum(axis=0)
+                rewards = jax.tree.map(
+                    lambda x, y: x + y * rew_shaping_anneal(train_state.timesteps),
+                    rewards,
+                    shaped_reward,
+                )
 
                 timestep = Timestep(
                     obs=last_obs,
@@ -725,10 +740,14 @@ def main():
                 minibatch = buffer.sample(buffer_state,
                                           _rng).experience  # collects a minibatch of size buffer_batch_size
 
+                batched_sample = batchify(minibatch.second.obs, env.agents, config.num_actors,
+                                          not config.use_cnn)
+                # Reshape observations for each agent: (num_agents, batch_size, obs_dim)
+                batched_sample = batched_sample.reshape(env.num_agents, config.buffer_batch_size, -1)
                 q_next_target = jax.vmap(network.apply, in_axes=(None, 0))(
-                    train_state.target_network_params, batchify(minibatch.second.obs, env.agents)
-                )  # (num_agents, batch_size, ...)
-                q_next_target = jnp.max(q_next_target, axis=-1)  # (batch_size,)
+                    train_state.target_network_params, batched_sample)
+
+                q_next_target = jnp.max(q_next_target, axis=-1)
 
                 vdn_target = minibatch.first.rewards["__all__"] + (
                         1 - minibatch.first.dones["__all__"]
@@ -737,14 +756,17 @@ def main():
                 )  # sum over agents
 
                 def _loss_fn(params):
+                    batched_obs = batchify(minibatch.first.obs, env.agents, config.num_actors,
+                                           not config.use_cnn)
+                    # Reshape observations for each agent: (num_agents, batch_size, obs_dim)
+                    batched_obs = batched_obs.reshape(env.num_agents, config.buffer_batch_size, -1)
                     q_vals = jax.vmap(network.apply, in_axes=(None, 0))(
-                        params, batchify(minibatch.first.obs, env.agents)
-                    )  # (num_agents, batch_size, ...)
+                        params, batched_obs)
 
                     # get logits of the chosen actions
                     chosen_action_q_vals = jnp.take_along_axis(
                         q_vals,
-                        batchify(minibatch.first.actions, env.agents)[..., jnp.newaxis],
+                        vdn_batchify(minibatch.first.actions, env.agents)[..., jnp.newaxis],
                         axis=-1,
                     ).squeeze()  # (num_agents, batch_size, )
 
@@ -850,12 +872,7 @@ def main():
                         metrics, update_steps, env_counter = args
                         real_step = (int(env_counter) - 1) * config.num_updates + int(update_steps)
                         for k, v in metrics.items():
-                            # Handle dictionary values by flattening them
-                            if isinstance(v, dict):
-                                for sub_k, sub_v in v.items():
-                                    writer.add_scalar(f"{k}/{sub_k}", sub_v, real_step)
-                            else:
-                                writer.add_scalar(k, v, real_step)
+                            writer.add_scalar(k, v, real_step)
 
                     jax.experimental.io_callback(callback, None, (metrics, update_steps, env_counter))
                     return None
@@ -869,7 +886,7 @@ def main():
                              do_not_log,
                              metrics, update_steps, env_counter)
 
-            # Evaluate the model and log metrics    
+            # Evaluate the model and log metrics
             evaluate_and_log(rng, train_state.n_updates, test_metrics)
 
             runner_state = (train_state, buffer_state, expl_state, test_metrics, rng)
@@ -894,76 +911,68 @@ def main():
             length=config.num_updates
         )
 
-        return runner_state, metrics
+        # Extract final train_state from runner_state
+        final_train_state = runner_state[0]
+
+        # Update continual learning state after training on this environment
+        cl_state = cl.update_state(cl_state, final_train_state.params, env_idx)
+
+        return rng, final_train_state, cl_state
 
     def loop_over_envs(rng, train_state, cl_state, envs):
         '''
-        Loops over the environments and trains the network
+        Loops over the environments and trains the network with continual learning
         @param rng: random number generator
         @param train_state: the current state of the training
         @param cl_state: the continual learning state
-        @param envs: the environments
-        returns the runner state and the metrics
+        @param envs: the environments to train on
+        returns the final train state and cl state
         '''
         # split the random number generator for training on the environments
         rng, *env_rngs = jax.random.split(rng, len(envs) + 1)
 
-        visualizer = OvercookedVisualizer(num_agents=init_env.num_agents)
+        for env_idx, (env_rng, env) in enumerate(zip(env_rngs, envs)):
+            print(f"Training on environment {env_idx + 1}/{len(envs)}: {env.layout_name}")
 
-        evaluation_matrix = None
-        if config.eval_forward_transfer:
-            evaluation_matrix = jnp.zeros(((len(envs) + 1), len(envs)))
-            rng, eval_rng = jax.random.split(rng)
-            evaluations = evaluate_model(eval_rng, train_state)
-            evaluation_matrix = evaluation_matrix.at[0, :].set(evaluations)
-
-        for i, (rng, env) in enumerate(zip(env_rngs, envs)):
-            # --- Train on environment i using the *current* cl_state ---
-            runner_state, metrics = train_on_environment(rng, train_state, env, i + 1)
-            train_state = runner_state[0]
-
-            importance = cl.compute_importance(train_state.params, env, network, i, rng, config.use_cnn,
-                                               config.importance_episodes, config.importance_steps,
-                                               config.normalize_importance)
-
-            cl_state = cl.update_state(cl_state, train_state.params, importance)
-
-            if config.record_gif:
-                # Generate & log a GIF after finishing task i
-                env_name = f"{i}__{env.layout_name}"
-                states = record_gif_of_episode(config, train_state, env, network, env_idx=i, max_steps=config.gif_len)
-                visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir)
-
-            if config.eval_forward_transfer:
-                # Evaluate at the end of training to get the average performance of the task right after training
-                evaluations = evaluate_model(train_state, rng)
-                evaluation_matrix = evaluation_matrix.at[i, :].set(evaluations)
+            # Train on this environment
+            rng, train_state, cl_state = train_on_environment(env_rng, train_state, env, cl_state, env_idx)
 
             # save the model
-            repo_root = Path(__file__).resolve().parent.parent
-            path = f"{repo_root}/checkpoints/overcooked/{config.cl_method}/{run_name}/model_env_{i + 1}"
-            save_params(path, train_state, env_kwargs=env.layout, layout_name=env.layout_name, config=config)
+            path = f"checkpoints/overcooked/{run_name}/model_env_{env_idx + 1}"
+            save_params(path, train_state, config.env_kwargs[env_idx] if config.env_kwargs else None,
+                        env.layout_name, config)
 
-            if config.eval_forward_transfer:
-                # calculate the forward transfer and backward transfer
-                show_heatmap_bwt(evaluation_matrix, run_name)
-                show_heatmap_fwt(evaluation_matrix, run_name)
-
-            if config.single_task_idx is not None:
-                break  # stop after the first env
-
-        return (train_state, cl_state)
+        return train_state, cl_state
 
     def save_params(path, train_state, env_kwargs=None, layout_name=None, config=None):
         '''
-        Saves the parameters of the network along with environment configuration
+        Saves the parameters of the network along with environment and config information
         @param path: the path to save the parameters
         @param train_state: the current state of the training
-        @param env_kwargs: the environment kwargs used to create the environment
-        @param layout_name: the name of the layout
-        @param config: the configuration used for training
+        @param env_kwargs: environment kwargs for this task
+        @param layout_name: name of the layout
+        @param config: configuration object
         returns None
         '''
+        import json
+
+        def convert_frozen_dict(obj):
+            """
+            Recursively converts FrozenDict objects to regular dictionaries for JSON serialization.
+            """
+            if isinstance(obj, flax.core.frozen_dict.FrozenDict):
+                return {k: convert_frozen_dict(v) for k, v in obj.items()}
+            elif isinstance(obj, dict):
+                return {k: convert_frozen_dict(v) for k, v in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                return [convert_frozen_dict(item) for item in obj]
+            elif isinstance(obj, jnp.ndarray):
+                return obj.tolist()
+            elif isinstance(obj, np.ndarray):
+                return obj.tolist()
+            else:
+                return obj
+
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
         # Save model parameters
@@ -974,118 +983,90 @@ def main():
                 )
             )
 
-        # Save configuration and layout information
-        if env_kwargs is not None or layout_name is not None or config is not None:
-            # Define a recursive function to convert FrozenDict to regular dict
-            def convert_frozen_dict(obj):
-                if isinstance(obj, flax.core.frozen_dict.FrozenDict):
-                    return {k: convert_frozen_dict(v) for k, v in unfreeze(obj).items()}
-                elif isinstance(obj, dict):
-                    return {k: convert_frozen_dict(v) for k, v in obj.items()}
-                elif isinstance(obj, list):
-                    return [convert_frozen_dict(item) for item in obj]
-                elif isinstance(obj, jax.Array):
-                    # Convert JAX arrays to native Python types
-                    array_obj = np.array(obj)
-                    # Handle scalar values
-                    if array_obj.size == 1:
-                        return array_obj.item()
-                    # Handle arrays
-                    return array_obj.tolist()
-                else:
-                    return obj
+        # Save environment kwargs and config if provided
+        if env_kwargs is not None:
+            env_kwargs_path = path + "_env_kwargs.json"
+            with open(env_kwargs_path, "w") as f:
+                json.dump(convert_frozen_dict(env_kwargs), f, indent=2)
 
-            # Convert env_kwargs to regular dict
-            env_kwargs = convert_frozen_dict(env_kwargs)
+        if layout_name is not None:
+            layout_path = path + "_layout_name.txt"
+            with open(layout_path, "w") as f:
+                f.write(layout_name)
 
-            config_data = {
-                "env_kwargs": env_kwargs,
-                "layout_name": layout_name
-            }
-
-            # Add relevant configuration parameters
-            if config is not None:
-                config_dict = {
-                    "use_cnn": config.use_cnn,
-                    "num_tasks": config.seq_length,
-                    "use_multihead": config.use_multihead,
-                    "cl_method": config.cl_method,
-                    "reg_coef": config.reg_coef,
-                    "seed": config.seed,
-                    "alg_name": config.alg_name,
-                }
-                config_data.update(config_dict)
-
-            # Save configuration as JSON
+        if config is not None:
             config_path = path + "_config.json"
+            config_dict = {k: v for k, v in vars(config).items()
+                           if not k.startswith('_') and not callable(v)}
             with open(config_path, "w") as f:
-                json.dump(config_data, f, indent=2)
+                json.dump(convert_frozen_dict(config_dict), f, indent=2)
 
         print('model saved to', path)
 
-    def record_gif_of_episode(config, train_state, env, network, env_idx=0, max_steps=300):
-        '''
-        Records a GIF of an episode for VDN
-        @param config: the configuration
-        @param train_state: the training state
-        @param env: the environment
-        @param network: the network
-        @param env_idx: the environment index
-        @param max_steps: the maximum number of steps
-        returns the states
-        '''
-        rng = jax.random.PRNGKey(0)
-        rng, env_rng = jax.random.split(rng)
-        obs, state = env.reset(env_rng)
-        done = False
-        step_count = 0
-        states = [state]
-
-        while not done and step_count < max_steps:
-            # Prepare observations for each agent individually
-            agent_obs = []
-            for agent in env.agents:
-                agent_ob = obs[agent]
-                # Add batch dimension and ensure proper shape for network
-                if config.use_cnn:
-                    # For CNN, keep spatial dimensions
-                    agent_ob = jnp.expand_dims(agent_ob, axis=0)  # (1, H, W, C)
-                else:
-                    # For MLP, flatten
-                    agent_ob = jnp.expand_dims(agent_ob.flatten(), axis=0)  # (1, flattened_size)
-                agent_obs.append(agent_ob)
-
-            # Compute Q-values for all agents
-            q_vals = []
-            for agent_ob in agent_obs:
-                q_val = network.apply(train_state.params, agent_ob, env_idx=env_idx)
-                q_vals.append(q_val[0])  # Remove batch dimension
-            q_vals = jnp.stack(q_vals, axis=0)  # (num_agents, num_actions)
-
-            # Get valid actions
-            avail_actions = env.get_valid_actions(state.env_state)
-
-            # Extract first element from batch dimension since we're recording a single episode
-            avail_actions_single = {agent: actions[0] for agent, actions in avail_actions.items()}
-
-            # Use greedy action selection (no exploration for GIF recording)
-            actions = get_greedy_actions(q_vals, batchify(avail_actions_single, env.agents))
-            actions = unbatchify(actions, env.agents)
-
-            rng, key_step = jax.random.split(rng)
-            next_obs, next_state, reward, done_info, info = env.step(key_step, state, actions)
-            done = done_info["__all__"]
-
-            obs, state = next_obs, next_state
-            step_count += 1
-            states.append(state)
-
-        return states
+    # Initialize continual learning state
+    cl_state = cl.init_state(train_state.params, config.regularize_critic, config.regularize_heads)
 
     # train the network
     rng, train_rng = jax.random.split(rng)
 
-    runner_state = loop_over_envs(train_rng, train_state, cl_state, train_envs)
+    final_train_state, final_cl_state = loop_over_envs(train_rng, train_state, cl_state, train_envs)
+
+
+def record_gif_of_episode(config, train_state, env, network, env_idx=0, max_steps=300):
+    rng = jax.random.PRNGKey(0)
+    rng, env_rng = jax.random.split(rng)
+    obs, state = env.reset(env_rng)
+    done = False
+    step_count = 0
+    states = [state]
+
+    while not done and step_count < max_steps:
+        obs_dict = {}
+        for agent_id, obs_v in obs.items():
+            # Determine the expected raw shape for this agent.
+            expected_shape = env.observation_space().shape
+            # If the observation is unbatched, add a batch dimension.
+            if obs_v.ndim == len(expected_shape):
+                obs_b = jnp.expand_dims(obs_v, axis=0)  # now (1, ...)
+            else:
+                obs_b = obs_v
+            if not config.use_cnn:
+                # Flatten the nonbatch dimensions.
+                obs_b = jnp.reshape(obs_b, (obs_b.shape[0], -1))
+            obs_dict[agent_id] = obs_b
+
+        actions = {}
+        act_keys = jax.random.split(rng, env.num_agents)
+        for i, agent_id in enumerate(env.agents):
+            pi, _ = network.apply(train_state.params, obs_dict[agent_id], env_idx=env_idx)
+            actions[agent_id] = jnp.squeeze(pi.sample(seed=act_keys[i]), axis=0)
+
+        # Compute Q-values for all agents
+        obs_batch = batchify(obs, env.agents, env.num_agents, not config.use_cnn)
+        # Reshape observations for each agent: (num_agents, 1, obs_dim)
+        obs_batch = obs_batch.reshape(env.num_agents, 1, -1)
+        q_vals = jax.vmap(network.apply, in_axes=(None, 0))(
+            train_state.params,
+            obs_batch,
+        )  # (num_agents, 1, num_actions)
+
+        # perform epsilon-greedy exploration
+        eps = eps_scheduler(train_state.n_updates)
+        _rngs = jax.random.split(rng_action, env.num_agents)
+        new_action = jax.vmap(eps_greedy_exploration, in_axes=(0, 0, None, 0))(
+            _rngs, q_vals, eps, batchify(avail_actions, env.agents)
+        )
+        actions = unbatchify(new_action, env.agents)
+
+        rng, key_step = jax.random.split(rng)
+        next_obs, next_state, reward, done_info, info = env.step(key_step, state, actions)
+        done = done_info["__all__"]
+
+        obs, state = next_obs, next_state
+        step_count += 1
+        states.append(state)
+
+    return states
 
 
 if __name__ == "__main__":
