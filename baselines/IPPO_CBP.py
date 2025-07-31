@@ -856,9 +856,6 @@ def main():
             # update the environment counter
             env_counter += 1
 
-        if config.evaluation:
-            pass
-
         return runner_state
 
     def save_params(path, train_state):
