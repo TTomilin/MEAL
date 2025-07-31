@@ -933,8 +933,17 @@ def main():
 
                     prev_mask = cl.combine_masks(packnet_state.masks, packnet_state.current_task)  # frozen weights
                     cur_mask = cl.get_mask(packnet_state.masks, packnet_state.current_task)  # active weights
-                    metric["PackNet/frozen_frac"] = jnp.mean(prev_mask)
-                    metric["PackNet/active_frac"] = jnp.mean(cur_mask)
+
+                    # Flatten the mask trees and compute mean
+                    prev_mask_flat, _ = jax.tree_util.tree_flatten(prev_mask)
+                    cur_mask_flat, _ = jax.tree_util.tree_flatten(cur_mask)
+
+                    # Concatenate all mask arrays and compute mean
+                    prev_mask_concat = jnp.concatenate([mask.flatten() for mask in prev_mask_flat])
+                    cur_mask_concat = jnp.concatenate([mask.flatten() for mask in cur_mask_flat])
+
+                    metric["PackNet/frozen_frac"] = jnp.mean(prev_mask_concat)
+                    metric["PackNet/active_frac"] = jnp.mean(cur_mask_concat)
 
                     # add the general metrics to the metric dictionary
                     metric["General/update_step"] = update_step
