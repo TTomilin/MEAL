@@ -80,7 +80,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     # NETWORK ARCHITECTURE PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
-    activation: str = "tanh"
+    activation: str = "relu"
     use_cnn: bool = False
     use_layer_norm: bool = True
     big_network: bool = False

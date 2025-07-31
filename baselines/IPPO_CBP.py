@@ -34,7 +34,7 @@ class Config:
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
     reward_shaping_horizon: float = 2.5e6
-    activation: str = "tanh"
+    activation: str = "relu"
     env_name: str = "overcooked"
     alg_name: str = "ippo"
     cl_method: str = "CBP"
