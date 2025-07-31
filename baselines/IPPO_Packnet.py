@@ -712,8 +712,8 @@ def main():
                 # print("obs_shape", obs_batch.shape)
 
                 # apply the policy network to the observations to get the suggested actions and their values
-                pi = actor.apply(actor_train_state.params, obs_batch)
-                value = critic.apply(critic_train_state.params, obs_batch)
+                pi = actor.apply(actor_train_state.params, obs_batch, env_idx=packnet_state.current_task)
+                value = critic.apply(critic_train_state.params, obs_batch, env_idx=packnet_state.current_task)
 
                 # sample the actions from the policy distribution 
                 action = pi.sample(seed=_rng)
@@ -773,7 +773,7 @@ def main():
             last_obs_batch = batchify(last_obs, env.agents, config.num_actors)
 
             # apply the network to the batch of observations to get the value of the last state
-            last_val = critic.apply(critic_train_state.params, last_obs_batch)
+            last_val = critic.apply(critic_train_state.params, last_obs_batch, env_idx=packnet_state.current_task)
 
             # @profile
             def _calculate_gae(traj_batch, last_val):
@@ -847,7 +847,7 @@ def main():
                         returns the actor loss
                         '''
                         # Rerun the network
-                        pi = actor.apply(actor_params, traj_batch.obs)
+                        pi = actor.apply(actor_params, traj_batch.obs, env_idx=packnet_state.current_task)
 
                         # Calculate the log probability 
                         log_prob = pi.log_prob(traj_batch.action)
@@ -888,7 +888,7 @@ def main():
                         returns the critic loss
                         '''
                         # Rerun the network
-                        value = critic.apply(critic_params, traj_batch.obs)
+                        value = critic.apply(critic_params, traj_batch.obs, env_idx=packnet_state.current_task)
 
                         # CALCULATE VALUE LOSS
                         value_pred_clipped = traj_batch.value + (
