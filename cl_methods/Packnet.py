@@ -135,10 +135,9 @@ class Packnet():
         '''
         assert self.seq_length is not None, "Sequence length not provided"
 
-        # Use the prune_instructions parameter instead of the aggressive formula
-        # The original formula was too aggressive, pruning ~91% on first task
-        # which led to 100% sparsity and inability to learn past first task
-        return self.prune_instructions
+        num_tasks_left = self.seq_length - state.current_task
+        prune_percentage = num_tasks_left/(num_tasks_left + 1)
+        return prune_percentage
 
     def layer_is_prunable(self, layer_name):
         '''
