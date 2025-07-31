@@ -194,7 +194,7 @@ class Packnet():
         cutoff = jnp.nanquantile(jnp.abs(all_prunable), prune_perc)
         jax.debug.print("cutoff: {cutoff}", cutoff=cutoff)
         # count the number of params under the cutoff
-        num_pruned = jnp.sum(jnp.abs(all_prunable) < cutoff)
+        num_pruned = jnp.sum(jnp.abs(all_prunable) <= cutoff)
         jax.debug.print("number of params to be pruned: {num_pruned}", num_pruned=num_pruned)
         mask = {}
         new_params = {}
@@ -209,7 +209,7 @@ class Packnet():
 
                     # Create new mask for the current parameter array
                     new_mask_leaf = jnp.logical_and(
-                        jnp.abs(param_array) >= cutoff, 
+                        jnp.abs(param_array) > cutoff,
                         jnp.logical_not(prev_mask_leaf)
                     )
                     # keep the fixed parameters and the parameters above the cutoff
@@ -437,7 +437,7 @@ class Packnet():
 
         def train_mode():
             # Training mode: mask gradients for weights from previous tasks
-            prev_mask = self.combine_masks(state.masks, state.current_task)
+            prev_mask = self.combine_masks(state.masks, jnp.maximum(state.current_task-1, 0))
 
             def mask_gradient_leaf(grad_leaf, mask_leaf):
                 """
