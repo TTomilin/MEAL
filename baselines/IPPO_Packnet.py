@@ -1030,10 +1030,10 @@ def main():
                                                  (metric, update_step, env_counter, actor_params, actor_grads))
                     return None
 
-            def do_not_log(metric, update_step):
-                return None
+                def do_not_log(metric, update_step):
+                    return None
 
-            jax.lax.cond((update_step % config.log_interval) == 0, log_metrics, do_not_log, metric, update_step)
+                jax.lax.cond((update_step % config.log_interval) == 0, log_metrics, do_not_log, metric, update_step)
 
             # Evaluate the model and log the metrics
             evaluate_and_log(rng=rng, update_step=update_step, train_states=train_states)
