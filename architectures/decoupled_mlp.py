@@ -16,6 +16,35 @@ def choose_head(t: jnp.ndarray, n_heads: int, env_idx: int):
     return t.reshape(b, n_heads, base)[:, env_idx, :]
 
 
+class CNN(nn.Module):
+    """Tiny 3‑layer CNN ➜ 64‑unit projection with optional LayerNorm."""
+
+    name_prefix: str  # "shared" | "actor" | "critic"
+    activation: str = "relu"
+    use_layer_norm: bool = False
+
+    @nn.compact
+    def __call__(self, x):
+        act = nn.relu if self.activation == "relu" else nn.tanh
+
+        def conv(name: str, x, kernel):
+            x = nn.Conv(32, kernel, name=f"{self.name_prefix}_{name}",
+                        kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
+            x = act(x)
+            return x
+
+        x = conv("conv1", x, (3, 3))
+        x = conv("conv2", x, (3, 3))
+
+        x = x.reshape((x.shape[0], -1))
+        x = nn.Dense(64, name=f"{self.name_prefix}_proj",
+                     kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
+        x = act(x)
+        if self.use_layer_norm:
+            x = nn.LayerNorm(name=f"{self.name_prefix}_proj_ln", epsilon=1e-5)(x)
+        return x
+
+
 class Actor(nn.Module):
     """
     Actor network for MAPPO with multitask support.
@@ -29,11 +58,17 @@ class Actor(nn.Module):
     num_tasks: int = 1
     use_multihead: bool = False
     use_task_id: bool = False
+    use_cnn: bool = False
+    use_layer_norm: bool = False
 
     @nn.compact
     def __call__(self, x, *, env_idx: int = 0):
         # Choose the activation function based on input parameter.
         act_fn = nn.relu if self.activation == "relu" else nn.tanh
+
+        # CNN feature extraction if enabled
+        if self.use_cnn:
+            x = CNN("actor", activation=self.activation, use_layer_norm=self.use_layer_norm)(x)
 
         # First hidden layer
         x = nn.Dense(
@@ -42,6 +77,8 @@ class Actor(nn.Module):
             bias_init=constant(0.0)
         )(x)
         x = act_fn(x)
+        if self.use_layer_norm:
+            x = nn.LayerNorm(name="actor_dense1_ln", epsilon=1e-5)(x)
 
         # Second hidden layer
         x = nn.Dense(
@@ -50,6 +87,8 @@ class Actor(nn.Module):
             bias_init=constant(0.0)
         )(x)
         x = act_fn(x)
+        if self.use_layer_norm:
+            x = nn.LayerNorm(name="actor_dense2_ln", epsilon=1e-5)(x)
 
         # -------- append task one-hot ----------------------------------------
         if self.use_task_id:
@@ -81,6 +120,8 @@ class Critic(nn.Module):
     num_tasks: int = 1
     use_multihead: bool = False
     use_task_id: bool = False
+    use_cnn: bool = False
+    use_layer_norm: bool = False
 
     @nn.compact
     def __call__(self, x, *, env_idx: int = 0):
@@ -90,6 +131,10 @@ class Critic(nn.Module):
         else:
             activation = nn.tanh
 
+        # CNN feature extraction if enabled
+        if self.use_cnn:
+            x = CNN("critic", activation=self.activation, use_layer_norm=self.use_layer_norm)(x)
+
         # First hidden layer
         critic = nn.Dense(
             128,
@@ -97,6 +142,8 @@ class Critic(nn.Module):
             bias_init=constant(0.0)
         )(x)
         critic = activation(critic)
+        if self.use_layer_norm:
+            critic = nn.LayerNorm(name="critic_dense1_ln", epsilon=1e-5)(critic)
 
         # Second hidden layer
         critic = nn.Dense(
@@ -105,6 +152,8 @@ class Critic(nn.Module):
             bias_init=constant(0.0)
         )(critic)
         critic = activation(critic)
+        if self.use_layer_norm:
+            critic = nn.LayerNorm(name="critic_dense2_ln", epsilon=1e-5)(critic)
 
         # -------- append task one-hot ----------------------------------------
         if self.use_task_id:

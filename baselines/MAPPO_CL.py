@@ -160,7 +160,7 @@ class Config:
 ############################
 
 
-def create_global_state_for_critic(obs_dict, agent_list, num_envs):
+def create_global_state_for_critic(obs_dict, agent_list, num_envs, use_cnn=False):
     """
     Create global state for MAPPO critic by concatenating all agents' observations.
     For MAPPO, the critic should receive concatenated observations from all agents,
@@ -170,25 +170,37 @@ def create_global_state_for_critic(obs_dict, agent_list, num_envs):
         obs_dict: Dictionary of observations for each agent
         agent_list: List of agent names
         num_envs: Number of parallel environments
+        use_cnn: Whether to use CNN mode (preserves spatial dimensions)
 
     Returns:
-        Global state with shape (num_envs, total_obs_dim) where total_obs_dim
-        is the sum of all agents' observation dimensions
+        Global state with appropriate shape for the critic network:
+        - For MLP: (num_envs, total_obs_dim) where total_obs_dim is flattened
+        - For CNN: (num_envs, height, width, total_channels) where channels are concatenated
     """
     # Stack observations from all agents: (num_agents, num_envs, ...)
     agent_obs = jnp.stack([obs_dict[agent] for agent in agent_list])
 
-    # Handle multi-dimensional observations by flattening all dimensions except the first two
-    # Original shape: (num_agents, num_envs, ...) where ... can be multiple dimensions
-    # Reshape to: (num_agents, num_envs, flattened_obs_dim)
-    agent_obs = agent_obs.reshape(agent_obs.shape[0], agent_obs.shape[1], -1)
+    if use_cnn:
+        # For CNN mode: preserve spatial dimensions and concatenate along channel dimension
+        # Expected shape: (num_agents, num_envs, height, width, channels)
+        # Transpose to: (num_envs, num_agents, height, width, channels)
+        agent_obs = jnp.transpose(agent_obs, (1, 0, 2, 3, 4))
 
-    # Transpose to (num_envs, num_agents, flattened_obs_dim)
-    agent_obs = jnp.transpose(agent_obs, (1, 0, 2))
+        # Concatenate along the channel dimension for each spatial position
+        # Shape: (num_envs, height, width, num_agents * channels)
+        global_state = jnp.concatenate([agent_obs[:, i] for i in range(agent_obs.shape[1])], axis=-1)
+    else:
+        # For MLP mode: flatten all dimensions except the first two
+        # Original shape: (num_agents, num_envs, ...) where ... can be multiple dimensions
+        # Reshape to: (num_agents, num_envs, flattened_obs_dim)
+        agent_obs = agent_obs.reshape(agent_obs.shape[0], agent_obs.shape[1], -1)
 
-    # Concatenate along the last dimension to create global state
-    # Shape: (num_envs, num_agents * flattened_obs_dim)
-    global_state = agent_obs.reshape(num_envs, -1)
+        # Transpose to (num_envs, num_agents, flattened_obs_dim)
+        agent_obs = jnp.transpose(agent_obs, (1, 0, 2))
+
+        # Concatenate along the last dimension to create global state
+        # Shape: (num_envs, num_agents * flattened_obs_dim)
+        global_state = agent_obs.reshape(num_envs, -1)
 
     return global_state
 
@@ -584,8 +596,12 @@ def main():
 
     # MAPPO always uses decoupled Actor and Critic networks
     obs_dim = temp_env.observation_space().shape
-    local_obs_dim = np.prod(obs_dim)  # Individual agent observation dimension
-    global_obs_dim = local_obs_dim * temp_env.num_agents  # Global state dimension
+    if not config.use_cnn:
+        local_obs_dim = np.prod(obs_dim)  # Individual agent observation dimension
+        global_obs_dim = local_obs_dim * temp_env.num_agents  # Global state dimension
+    else:
+        local_obs_dim = obs_dim  # Keep original shape for CNN
+        global_obs_dim = (obs_dim[0], obs_dim[1], obs_dim[2] * temp_env.num_agents)  # Stack channels for CNN
 
     # Create separate actor and critic networks
     actor_network = Actor(
@@ -593,14 +609,18 @@ def main():
         activation=config.activation,
         num_tasks=seq_length,
         use_multihead=config.use_multihead,
-        use_task_id=config.use_task_id
+        use_task_id=config.use_task_id,
+        use_cnn=config.use_cnn,
+        use_layer_norm=config.use_layer_norm
     )
 
     critic_network = Critic(
         activation=config.activation,
         num_tasks=seq_length,
         use_multihead=config.use_multihead,
-        use_task_id=config.use_task_id
+        use_task_id=config.use_task_id,
+        use_cnn=config.use_cnn,
+        use_layer_norm=config.use_layer_norm
     )
 
     # Initialize both networks
@@ -608,11 +628,17 @@ def main():
     rng, actor_rng, critic_rng = jax.random.split(rng, 3)
 
     # Actor uses local observations
-    actor_init_x = jnp.zeros((1, local_obs_dim))
+    if config.use_cnn:
+        actor_init_x = jnp.zeros((1, *local_obs_dim))
+    else:
+        actor_init_x = jnp.zeros((1, local_obs_dim))
     actor_params = actor_network.init(actor_rng, actor_init_x, env_idx=0)
 
     # Critic uses global state (concatenated observations from all agents)
-    critic_init_x = jnp.zeros((1, global_obs_dim))
+    if config.use_cnn:
+        critic_init_x = jnp.zeros((1, *global_obs_dim))
+    else:
+        critic_init_x = jnp.zeros((1, global_obs_dim))
     critic_params = critic_network.init(critic_rng, critic_init_x, env_idx=0)
 
     # Combine parameters into a single structure for compatibility
@@ -736,7 +762,7 @@ def main():
 
                 # For MAPPO: Create global state for centralized critic
                 # The critic should receive concatenated observations from all agents
-                global_state = create_global_state_for_critic(last_obs, env.agents, config.num_envs)
+                global_state = create_global_state_for_critic(last_obs, env.agents, config.num_envs, config.use_cnn)
 
                 # MAPPO: Actor uses local observations, Critic uses global state
                 pi = train_state.apply_fn(train_state.params, obs_batch, env_idx=env_idx, network_type='actor')[0]
@@ -825,7 +851,7 @@ def main():
             last_obs_batch = batchify(last_obs, env.agents, config.num_actors, not config.use_cnn)
 
             # Compute last value for MAPPO: Critic uses global state, outputs one value per environment
-            last_global_state = create_global_state_for_critic(last_obs, env.agents, config.num_envs)
+            last_global_state = create_global_state_for_critic(last_obs, env.agents, config.num_envs, config.use_cnn)
             _, last_val_per_env = train_state.apply_fn(train_state.params, last_global_state, env_idx=env_idx,
                                                        network_type='critic')
             # Tile the last values to match the batch structure (one value per agent, but same value for agents in same env)
