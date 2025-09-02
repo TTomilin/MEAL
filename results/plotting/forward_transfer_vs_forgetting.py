@@ -142,24 +142,59 @@ def compute_metrics_simplified(
                 else:
                     auc_cl = cl_task_curve[0] if len(cl_task_curve) == 1 else 0.0
 
+                # Check if CL AUC is NaN or inf/-inf
+                if np.isnan(auc_cl) or np.isinf(auc_cl):
+                    print(f"[warn] CL AUC is NaN/inf/-inf for task {i}, seed {seed}, method {method}")
+                    continue  # Skip this task
+
                 # Calculate AUC for baseline method (task i)
                 baseline_task_curve = baseline_data[seed][i]
                 if baseline_task_curve is not None:
+                    # Check if baseline data contains all NaN or inf/-inf values
+                    if np.all(np.isnan(baseline_task_curve)):
+                        print(f"[warn] baseline data contains all NaN for task {i}, seed {seed}")
+                        continue  # Skip this task
+                    elif np.all(np.isinf(baseline_task_curve)):
+                        print(f"[warn] baseline data contains all inf/-inf for task {i}, seed {seed}")
+                        continue  # Skip this task
+                    elif np.all(np.isnan(baseline_task_curve) | np.isinf(baseline_task_curve)):
+                        print(f"[warn] baseline data contains all NaN/inf/-inf for task {i}, seed {seed}")
+                        continue  # Skip this task
+
                     if len(baseline_task_curve) > 1:
                         auc_baseline = np.trapz(baseline_task_curve) / len(baseline_task_curve)
                     else:
                         auc_baseline = baseline_task_curve[0] if len(baseline_task_curve) == 1 else 0.0
 
-                    # Calculate Forward Transfer: FTi = (AUCi - AUCb_i) / (1 - AUCb_i)
-                    denominator = 1.0 - auc_baseline
-                    if abs(denominator) > 1e-8:  # Avoid division by zero
-                        ft_i = (auc_cl - auc_baseline) / denominator
-                        ft_vals.append(ft_i)
+                    # Check if calculated AUC is NaN or inf/-inf
+                    if np.isnan(auc_baseline):
+                        print(f"[warn] baseline AUC is NaN for task {i}, seed {seed}")
+                        continue  # Skip this task
+                    elif np.isinf(auc_baseline):
+                        print(f"[warn] baseline AUC is inf/-inf for task {i}, seed {seed}")
+                        continue  # Skip this task
+
+                    # Check if baseline performance is effectively 0
+                    if abs(auc_baseline) < 1e-8:
+                        print(f"[info] baseline AUC is effectively 0 ({auc_baseline}) for task {i}, seed {seed}, method {method} - skipping forward transfer calculation")
+                        continue  # Skip this task
+
+                    # Use direct ratio approach for forward transfer calculation
+                    # FT_i = (AUC_CL - AUC_baseline) / max(|AUC_baseline|, ε)
+                    epsilon = 1e-8
+                    denominator = max(abs(auc_baseline), epsilon)
+                    ft_i = (auc_cl - auc_baseline) / denominator
+
+                    # Check if the final ft_i is inf/-inf or NaN
+                    if np.isnan(ft_i) or np.isinf(ft_i):
+                        print(f"[warn] Forward Transfer result is NaN/inf/-inf for task {i}, seed {seed}, method {method}")
+                        # Skip this task - don't append to ft_vals
                     else:
-                        # If baseline AUC is 1.0, forward transfer is undefined
-                        print(f"[warn] baseline AUC = 1.0 for task {i}, seed {seed}, method {method}")
+                        ft_vals.append(ft_i)
+
                 else:
                     print(f"[warn] missing baseline data for task {i}, seed {seed}")
+                    # Don't append anything to ft_vals - skip this task
 
             if ft_vals:
                 FT_seeds.append(float(np.nanmean(ft_vals)))
@@ -242,7 +277,7 @@ def main():
     df["Method"] = df["Method"].replace({"Online_EWC": "Online EWC"})
 
     # Create the scatter plot
-    fig, ax = plt.subplots(figsize=(4.5, 3.25))
+    fig, ax = plt.subplots(figsize=(4, 3.25))
 
     # Plot each method as a dot
     for _, row in df.iterrows():
@@ -267,7 +302,7 @@ def main():
         ax.scatter(ft, forgetting, color=color, s=150, alpha=0.8, label=method, edgecolors='black', linewidth=1)
 
         # Add method name as text annotation
-        ax.annotate(method, (ft, forgetting), xytext=(5, 5), textcoords='offset points', fontsize=10, alpha=0.8)
+        ax.annotate(method, (ft, forgetting), xytext=(0, 8), textcoords='offset points', fontsize=10, alpha=0.8, ha='center')
 
     # Customize the plot
     ax.set_xlabel('Forward Transfer ↑', fontsize=12)

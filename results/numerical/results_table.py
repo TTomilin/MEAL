@@ -225,28 +225,24 @@ def compute_metrics(
                         print(f"[warn] baseline AUC is inf/-inf for task {i}, seed {seed}")
                         continue  # Skip this task
 
-                    # Calculate Forward Transfer: FTi = (AUCi - AUCb_i) / (1 - AUCb_i)
-                    denominator = 1.0 - auc_baseline
+                    # Check if baseline performance is effectively 0
+                    if abs(auc_baseline) < 1e-8:
+                        print(f"[info] baseline AUC is effectively 0 ({auc_baseline}) for task {i}, seed {seed}, method {method} - skipping forward transfer calculation")
+                        continue  # Skip this task
 
-                    # More robust checks for problematic denominators
-                    if np.isnan(denominator) or np.isinf(denominator) or abs(denominator) < 1e-8:
-                        if abs(auc_baseline - 1.0) < 1e-8:
-                            print(f"[warn] baseline AUC ≈ 1.0 for task {i}, seed {seed}, method {method}")
-                        elif np.isnan(auc_baseline):
-                            print(f"[warn] baseline AUC is NaN for task {i}, seed {seed}, method {method}")
-                        elif np.isinf(denominator):
-                            print(f"[warn] denominator is inf/-inf ({denominator}) for task {i}, seed {seed}, method {method}")
-                        else:
-                            print(f"[warn] denominator too small ({denominator}) for task {i}, seed {seed}, method {method}")
+                    # Use direct ratio approach for forward transfer calculation
+                    # FT_i = (AUC_CL - AUC_baseline) / max(|AUC_baseline|, ε)
+                    epsilon = 1e-8
+                    denominator = max(abs(auc_baseline), epsilon)
+                    ft_i = (auc_cl - auc_baseline) / denominator
+
+                    # Check if the final ft_i is inf/-inf or NaN
+                    if np.isnan(ft_i) or np.isinf(ft_i):
+                        print(f"[warn] Forward Transfer result is NaN/inf/-inf for task {i}, seed {seed}, method {method}")
                         # Skip this task - don't append to ft_vals
                     else:
-                        ft_i = (auc_cl - auc_baseline) / denominator
-                        # Check if the final ft_i is inf/-inf
-                        if np.isinf(ft_i):
-                            print(f"[warn] Forward Transfer result is inf/-inf for task {i}, seed {seed}, method {method}")
-                            # Skip this task - don't append to ft_vals
-                        else:
-                            ft_vals.append(ft_i)
+                        ft_vals.append(ft_i)
+
                 else:
                     print(f"[warn] missing baseline data for task {i}, seed {seed}")
                     # Don't append anything to ft_vals - skip this task
