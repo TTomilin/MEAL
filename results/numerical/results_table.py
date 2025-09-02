@@ -291,14 +291,14 @@ def compute_metrics(
 # LaTeX formatting helpers
 # -----------------------------------------------------------------------------
 
-def _fmt(mean: float, ci: float, best: bool, better: str = "max") -> str:
+def _fmt(mean: float, ci: float, best: bool, better: str = "max", show_confidence_intervals: bool = True) -> str:
     """Return *mean ±CI* formatted for LaTeX, with CI in \scriptsize."""
     if np.isnan(mean):
         return "--"
     main = f"{mean:.3f}"
     if best:
         main = rf"\textbf{{{main}}}"
-    ci_part = rf"{{\scriptsize$\pm{ci:.2f}$}}" if not np.isnan(ci) and ci > 0 else ""
+    ci_part = rf"{{\scriptsize$\pm{ci:.2f}$}}" if show_confidence_intervals and not np.isnan(ci) and ci > 0 else ""
     return main + ci_part
 
 
@@ -316,6 +316,18 @@ if __name__ == "__main__":
         type=int,
         default=10,
         help="How many final eval points to average for F (Forgetting)",
+    )
+    p.add_argument(
+        "--confidence-intervals",
+        action="store_true",
+        default=True,
+        help="Show confidence intervals in table (default: True).",
+    )
+    p.add_argument(
+        "--no-confidence-intervals",
+        dest="confidence_intervals",
+        action="store_false",
+        help="Hide confidence intervals in table.",
     )
     args = p.parse_args()
 
@@ -388,15 +400,15 @@ if __name__ == "__main__":
         df_out = pd.DataFrame()
         df_out["Method"] = df["Method"]
         df_out["AveragePerformance"] = df.apply(
-            lambda r: _fmt(r.AveragePerformance, r.AveragePerformance_CI, r.AveragePerformance == best_A, "max"),
+            lambda r: _fmt(r.AveragePerformance, r.AveragePerformance_CI, r.AveragePerformance == best_A, "max", args.confidence_intervals),
             axis=1,
         )
         df_out["Forgetting"] = df.apply(
-            lambda r: _fmt(r.Forgetting, r.Forgetting_CI, r.Forgetting == best_F, "min"),
+            lambda r: _fmt(r.Forgetting, r.Forgetting_CI, r.Forgetting == best_F, "min", args.confidence_intervals),
             axis=1,
         )
         df_out["ForwardTransfer"] = df.apply(
-            lambda r: _fmt(r.ForwardTransfer, r.ForwardTransfer_CI, r.ForwardTransfer == best_FT, "max"),
+            lambda r: _fmt(r.ForwardTransfer, r.ForwardTransfer_CI, r.ForwardTransfer == best_FT, "max", args.confidence_intervals),
             axis=1,
         )
 
@@ -430,7 +442,8 @@ if __name__ == "__main__":
                     r[f"AveragePerformance_L{level}"], 
                     r[f"AveragePerformance_CI_L{level}"], 
                     r[f"AveragePerformance_L{level}"] == best_values[f"A_L{level}"], 
-                    "max"
+                    "max",
+                    args.confidence_intervals
                 ),
                 axis=1,
             )
@@ -442,7 +455,8 @@ if __name__ == "__main__":
                     r[f"Forgetting_L{level}"], 
                     r[f"Forgetting_CI_L{level}"], 
                     r[f"Forgetting_L{level}"] == best_values[f"F_L{level}"], 
-                    "min"
+                    "min",
+                    args.confidence_intervals
                 ),
                 axis=1,
             )
@@ -454,7 +468,8 @@ if __name__ == "__main__":
                     r[f"ForwardTransfer_L{level}"], 
                     r[f"ForwardTransfer_CI_L{level}"], 
                     r[f"ForwardTransfer_L{level}"] == best_values[f"FT_L{level}"], 
-                    "max"
+                    "max",
+                    args.confidence_intervals
                 ),
                 axis=1,
             )
