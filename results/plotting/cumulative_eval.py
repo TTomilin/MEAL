@@ -220,7 +220,7 @@ def plot():
             "avg_cumulative_" + ("methods" if args.compare_by == "method" else "levels")
     )
     # Add level suffix if not already present
-    if "_level_" not in stem:
+    if "_level" not in stem:
         stem += f"_level_{args.level}"
     save_plot(fig, out_dir, stem)
 
