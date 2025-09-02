@@ -242,7 +242,7 @@ def main():
     df["Method"] = df["Method"].replace({"Online_EWC": "Online EWC"})
 
     # Create the scatter plot
-    fig, ax = plt.subplots(figsize=(5.5, 3.25))
+    fig, ax = plt.subplots(figsize=(4.5, 3.25))
 
     # Plot each method as a dot
     for _, row in df.iterrows():
@@ -264,15 +264,14 @@ def main():
         color = METHOD_COLORS.get(color_key, '#333333')
 
         # Plot the point
-        ax.scatter(ft, forgetting, color=color, s=100, alpha=0.8, label=method, edgecolors='black', linewidth=1)
+        ax.scatter(ft, forgetting, color=color, s=150, alpha=0.8, label=method, edgecolors='black', linewidth=1)
 
         # Add method name as text annotation
-        ax.annotate(method, (ft, forgetting), xytext=(5, 5), textcoords='offset points', 
-                   fontsize=10, alpha=0.8)
+        ax.annotate(method, (ft, forgetting), xytext=(5, 5), textcoords='offset points', fontsize=10, alpha=0.8)
 
     # Customize the plot
-    ax.set_xlabel('Forward Transfer (↑)', fontsize=12)
-    ax.set_ylabel('Forgetting (↓)', fontsize=12)
+    ax.set_xlabel('Forward Transfer ↑', fontsize=12)
+    ax.set_ylabel('Forgetting ↓', fontsize=12)
 
     # Add grid for better readability
     ax.grid(True, alpha=0.3)
@@ -280,9 +279,6 @@ def main():
     # Add reference lines at zero
     ax.axhline(y=0, color='black', linestyle='--', alpha=0.5, linewidth=1)
     ax.axvline(x=0, color='black', linestyle='--', alpha=0.5, linewidth=1)
-
-    # Add legend outside the plot on the right
-    ax.legend(bbox_to_anchor=(1.05, 1), loc='best')
 
     # Adjust layout to prevent legend cutoff
     plt.tight_layout()

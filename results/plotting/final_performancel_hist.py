@@ -199,8 +199,6 @@ def plot():
         title=None,
         xlabel="",
         ylabel="Final Average Score",
-        legend_loc="best",
-        legend_ncol=1,
     )
 
     out_dir = Path(__file__).resolve().parent.parent / "plots"
@@ -208,7 +206,7 @@ def plot():
             "bar_final_" + ("methods" if args.compare_by == "method" else "levels")
     )
     # Add level suffix if not already present
-    if "_level_" not in stem:
+    if "_level" not in stem:
         stem += f"_level_{args.level}"
     save_plot(fig, out_dir, stem)
     plt.show()

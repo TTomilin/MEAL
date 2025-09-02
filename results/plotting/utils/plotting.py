@@ -151,9 +151,11 @@ def finalize_plot(ax: plt.Axes, title: Optional[str] = None,
     if ylim:
         ax.set_ylim(ylim)
 
-    if legend_bbox_to_anchor:
-        ax.legend(loc=legend_loc, bbox_to_anchor=legend_bbox_to_anchor, ncol=legend_ncol)
-    else:
-        ax.legend(loc=legend_loc, ncol=legend_ncol)
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:  # Only create legend if there are handles
+        if legend_bbox_to_anchor:
+            ax.legend(loc=legend_loc, bbox_to_anchor=legend_bbox_to_anchor, ncol=legend_ncol)
+        else:
+            ax.legend(loc=legend_loc, ncol=legend_ncol)
 
     plt.tight_layout()
