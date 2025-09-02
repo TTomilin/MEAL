@@ -434,9 +434,9 @@ if __name__ == "__main__":
         df_out = pd.DataFrame()
         df_out["Method"] = df["Method"]
 
-        # Add formatted columns grouped by metric type: first all A, then all F, then all FT
-        # Average Performance columns for all levels
+        # Add formatted columns grouped by level: for each level, add A, F, FT columns
         for level in [1, 2, 3]:
+            # Average Performance column for this level
             df_out[f"AveragePerformance_L{level}"] = df.apply(
                 lambda r: _fmt(
                     r[f"AveragePerformance_L{level}"], 
@@ -448,8 +448,7 @@ if __name__ == "__main__":
                 axis=1,
             )
 
-        # Forgetting columns for all levels
-        for level in [1, 2, 3]:
+            # Forgetting column for this level
             df_out[f"Forgetting_L{level}"] = df.apply(
                 lambda r: _fmt(
                     r[f"Forgetting_L{level}"], 
@@ -461,8 +460,7 @@ if __name__ == "__main__":
                 axis=1,
             )
 
-        # Forward Transfer columns for all levels
-        for level in [1, 2, 3]:
+            # Forward Transfer column for this level
             df_out[f"ForwardTransfer_L{level}"] = df.apply(
                 lambda r: _fmt(
                     r[f"ForwardTransfer_L{level}"], 
@@ -474,31 +472,64 @@ if __name__ == "__main__":
                 axis=1,
             )
 
-        # Rename columns to mathy headers with level indicators
-        # Group headers by metric type: first all A, then all F, then all FT
+        # Rename columns to mathy headers grouped by level
         new_columns = ["Method"]
-
-        # Average Performance headers for all levels
         for level in [1, 2, 3]:
-            new_columns.append(rf"$\mathcal{{A}}_{{{level}}}\!\uparrow$")
-
-        # Forgetting headers for all levels
-        for level in [1, 2, 3]:
-            new_columns.append(rf"$\mathcal{{F}}_{{{level}}}\!\downarrow$")
-
-        # Forward Transfer headers for all levels
-        for level in [1, 2, 3]:
-            new_columns.append(rf"$\mathcal{{FT}}_{{{level}}}\!\uparrow$")
+            new_columns.extend([
+                rf"$\mathcal{{A}}\!\uparrow$",
+                rf"$\mathcal{{F}}\!\downarrow$", 
+                rf"$\mathcal{{FT}}\!\uparrow$"
+            ])
         df_out.columns = new_columns
 
-        # Column format: Method + 3 A columns + 3 F columns + 3 FT columns = 10 columns
+        # Column format: Method + 3 levels × 3 metrics = 10 columns
         column_format = "l" + "c" * 9
 
-    latex_table = df_out.to_latex(
-        index=False,
-        escape=False,
-        column_format=column_format,
-        label="tab:cmarl_metrics",
-    )
+    if args.level is not None:
+        # Single level case - use standard LaTeX table
+        latex_table = df_out.to_latex(
+            index=False,
+            escape=False,
+            column_format=column_format,
+            label="tab:cmarl_metrics",
+        )
+    else:
+        # All levels case - custom LaTeX table with multicolumn headers
+        latex_table = df_out.to_latex(
+            index=False,
+            escape=False,
+            column_format=column_format,
+            label="tab:cmarl_metrics",
+            caption="Continual learning metrics across three difficulty levels.",
+        )
+
+        # Replace the header to add multicolumn structure
+        lines = latex_table.split('\n')
+
+        # Find the header line (contains the column names)
+        header_line_idx = None
+        for i, line in enumerate(lines):
+            if '$\\mathcal{A}' in line:
+                header_line_idx = i
+                break
+
+        if header_line_idx is not None:
+            # Create the multicolumn header
+            multicolumn_header = (
+                "\\multirow{2}{*}{Method} &\n"
+                "\\multicolumn{3}{c}{Level 1} &\n"
+                "\\multicolumn{3}{c}{Level 2} &\n"
+                "\\multicolumn{3}{c}{Level 3} \\\\\n"
+                "\\cmidrule(lr){2-4} \\cmidrule(lr){5-7} \\cmidrule(lr){8-10}\n"
+                " & $\\mathcal{A}\\!\\uparrow$ & $\\mathcal{F}\\!\\downarrow$ & $\\mathcal{FT}\\!\\uparrow$ "
+                " & $\\mathcal{A}\\!\\uparrow$ & $\\mathcal{F}\\!\\downarrow$ & $\\mathcal{FT}\\!\\uparrow$"
+                " & $\\mathcal{A}\\!\\uparrow$ & $\\mathcal{F}\\!\\downarrow$ & $\\mathcal{FT}\\!\\uparrow$ \\\\"
+            )
+
+            # Replace the original header line
+            lines[header_line_idx] = multicolumn_header
+
+            # Reconstruct the table
+            latex_table = '\n'.join(lines)
 
     print(latex_table)
