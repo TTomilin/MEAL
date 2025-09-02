@@ -87,7 +87,9 @@ def plot():
         ax.set_xlim(0, total_steps)
         ax.set_ylim(0, 1)
         ax.set_ylabel(f"Normalized Score")
-        ax.set_title(method, fontsize=11)
+        # Only set title if there are multiple methods
+        if len(methods) > 1:
+            ax.set_title(method, fontsize=11)
 
         # Set up secondary x-axis with task labels
         twin = ax.twiny()
@@ -108,8 +110,11 @@ def plot():
     plt.tight_layout()
     out_dir = Path(__file__).resolve().parent.parent / 'plots'
     name = args.plot_name or f"per_task_norm_score"
+    # Add method name to filename if only a single method is given
+    if len(methods) == 1:
+        name += f"_{methods[0]}"
     # Add level suffix if not already present
-    if "_level_" not in name:
+    if "_level" not in name:
         name += f"_level_{args.level}"
     save_plot(fig, out_dir, name)
 
