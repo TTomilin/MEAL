@@ -244,7 +244,7 @@ def parse_args():
     parser.add_argument("--strategy", required=True, help="Strategy name (e.g., 'generate')")
     parser.add_argument("--seq_len", type=int, default=10, help="Sequence length")
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5], help="List of seeds")
-    parser.add_argument("--level", type=int, default=1, help="Difficulty level of the benchmark")
+    parser.add_argument("--levels", type=int, nargs="+", default=[1], help="Difficulty levels of the benchmark (can specify multiple levels)")
     parser.add_argument(
         "--end_window_evals",
         type=int,
@@ -261,48 +261,114 @@ def main():
     """Main function to create the scatter plot."""
     args = parse_args()
 
-    # Compute metrics using simplified logic for available data structure
-    df = compute_metrics_simplified(
-        data_root=Path(args.data_root),
-        algo=args.algo,
-        methods=args.methods,
-        strategy=args.strategy,
-        seq_len=args.seq_len,
-        seeds=args.seeds,
-        end_window_evals=args.end_window_evals,
-        level=args.level,
-    )
-
-    # Pretty-print method names (same as in results_table.py)
-    df["Method"] = df["Method"].replace({"Online_EWC": "Online EWC"})
+    # Define marker shapes for different levels
+    level_markers = ['o', '^', 's', 'D', 'v', '<', '>', 'p', '*', 'h']  # circle, triangle_up, square, diamond, etc.
 
     # Create the scatter plot
-    fig, ax = plt.subplots(figsize=(4, 3.25))
+    width = 4 if len(args.levels) == 1 else 5.25  # Increased width for multiple levels to accommodate legends
+    fig, ax = plt.subplots(figsize=(width, 3.25))
 
-    # Plot each method as a dot
-    for _, row in df.iterrows():
-        method = row["Method"]
-        ft = row["ForwardTransfer"]
-        forgetting = row["Forgetting"]
+    # Collect all data for summary statistics
+    all_dfs = []
 
-        # Skip if either metric is NaN
-        if np.isnan(ft) or np.isnan(forgetting):
-            print(f"Warning: Skipping {method} due to NaN values (FT: {ft}, F: {forgetting})")
-            continue
+    # Keep track of unique methods and levels for legend creation
+    unique_methods = set()
+    plotted_method_level_combinations = set()
 
-        # Get color for the method
-        # Handle special case for Online EWC to match METHOD_COLORS key
-        if method == "Online EWC":
-            color_key = "Online_EWC"
-        else:
-            color_key = method.upper().replace(" ", "_")
-        color = METHOD_COLORS.get(color_key, '#333333')
+    # Process each level
+    for level_idx, level in enumerate(args.levels):
+        # Compute metrics using simplified logic for available data structure
+        df = compute_metrics_simplified(
+            data_root=Path(args.data_root),
+            algo=args.algo,
+            methods=args.methods,
+            strategy=args.strategy,
+            seq_len=args.seq_len,
+            seeds=args.seeds,
+            end_window_evals=args.end_window_evals,
+            level=level,
+        )
 
-        # Plot the point
-        ax.scatter(ft, forgetting, color=color, s=150, alpha=0.8, label=method, edgecolors='black', linewidth=1)
+        # Pretty-print method names (same as in results_table.py)
+        df["Method"] = df["Method"].replace({"Online_EWC": "Online EWC"})
+        df["Level"] = level  # Add level information to the dataframe
+        all_dfs.append(df)
 
-        # Add method name as text annotation
-        ax.annotate(method, (ft, forgetting), xytext=(0, 8), textcoords='offset points', fontsize=10, alpha=0.8, ha='center')
+        # Get marker shape for this level
+        marker = level_markers[level_idx % len(level_markers)]
+
+        # Plot each method as a dot
+        for _, row in df.iterrows():
+            method = row["Method"]
+            ft = row["ForwardTransfer"]
+            forgetting = row["Forgetting"]
+
+            # Skip if either metric is NaN
+            if np.isnan(ft) or np.isnan(forgetting):
+                print(f"Warning: Skipping {method} level {level} due to NaN values (FT: {ft}, F: {forgetting})")
+                continue
+
+            # Get color for the method
+            # Handle special case for Online EWC to match METHOD_COLORS key
+            if method == "Online EWC":
+                color_key = "Online_EWC"
+            else:
+                color_key = method.upper().replace(" ", "_")
+            color = METHOD_COLORS.get(color_key, '#333333')
+
+            # Track unique methods for legend
+            unique_methods.add(method)
+            plotted_method_level_combinations.add((method, level))
+
+            # For single level, use method name as label; for multiple levels, don't use label (we'll create custom legend)
+            if len(args.levels) == 1:
+                label = method
+            else:
+                label = None  # No label - we'll create custom legend
+
+            # Plot the point with level-specific marker
+            ax.scatter(ft, forgetting, color=color, s=150, alpha=0.8, label=label, 
+                      edgecolors='black', linewidth=1, marker=marker)
+
+            # Add method name as text annotation only for single level
+            if len(args.levels) == 1:
+                ax.annotate(method, (ft, forgetting), xytext=(0, 8), textcoords='offset points', 
+                           fontsize=10, alpha=0.8, ha='center')
+
+    # Create custom legend for multiple levels
+    if len(args.levels) > 1:
+        # Create legend handles for methods (colors)
+        method_handles = []
+        for method in sorted(unique_methods):
+            # Get color for the method
+            if method == "Online EWC":
+                color_key = "Online_EWC"
+            else:
+                color_key = method.upper().replace(" ", "_")
+            color = METHOD_COLORS.get(color_key, '#333333')
+
+            # Create a dummy scatter point for the legend
+            handle = ax.scatter([], [], color=color, s=150, alpha=0.8, 
+                              edgecolors='black', linewidth=1, marker='o', label=method)
+            method_handles.append(handle)
+
+        # Create legend handles for levels (shapes)
+        level_handles = []
+        for level_idx, level in enumerate(sorted(args.levels)):
+            marker = level_markers[level_idx % len(level_markers)]
+            # Use a neutral gray color for shape legend
+            handle = ax.scatter([], [], color='gray', s=150, alpha=0.8,
+                              edgecolors='black', linewidth=1, marker=marker, label=f'Level {level}')
+            level_handles.append(handle)
+
+        # Create the legend with two columns
+        method_legend = ax.legend(handles=method_handles, title='Methods', 
+                                loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True)
+        level_legend = ax.legend(handles=level_handles, title='Levels',
+                               loc='upper left', bbox_to_anchor=(1.02, 0.6), frameon=True)
+
+        # Add both legends to the plot
+        ax.add_artist(method_legend)  # Add the first legend back since the second one replaces it
 
     # Customize the plot
     ax.set_xlabel('Forward Transfer ↑', fontsize=12)
@@ -316,32 +382,69 @@ def main():
     ax.axvline(x=0, color='black', linestyle='--', alpha=0.5, linewidth=1)
 
     # Adjust layout to prevent legend cutoff
-    plt.tight_layout()
+    if len(args.levels) > 1:
+        # For multiple levels with external legends, manually adjust subplot to make room
+        # plt.subplots_adjust(right=0.6)  # Leave space on the right for legends
+        plt.tight_layout(rect=[0, 0, 0.95, 1])
+    else:
+        # For single level, use tight_layout as normal
+        plt.tight_layout()
 
     # Save the plot
     out_dir, plot_name = get_output_path(args.plot_name, "forward_transfer_vs_forgetting")
 
-    plt.savefig(out_dir / f"{plot_name}_level{args.level}.png", dpi=300, bbox_inches='tight')
-    plt.savefig(out_dir / f"{plot_name}_level{args.level}.pdf", bbox_inches='tight')
+    # Create filename suffix based on levels
+    if len(args.levels) == 1:
+        level_suffix = f"_level{args.levels[0]}"
+    else:
+        level_suffix = f"_levels{'_'.join(map(str, args.levels))}"
 
-    print(f"Plot saved to {out_dir / plot_name}.png and {out_dir / plot_name}.pdf")
+    # Save with different bbox_inches settings depending on layout
+    if len(args.levels) > 1:
+        # For multiple levels, don't use bbox_inches='tight' to preserve manual layout adjustments
+        plt.savefig(out_dir / f"{plot_name}{level_suffix}.png", dpi=300)
+        plt.savefig(out_dir / f"{plot_name}{level_suffix}.pdf")
+    else:
+        # For single level, use bbox_inches='tight' for optimal cropping
+        plt.savefig(out_dir / f"{plot_name}{level_suffix}.png", dpi=300, bbox_inches='tight')
+        plt.savefig(out_dir / f"{plot_name}{level_suffix}.pdf", bbox_inches='tight')
+
+    print(f"Plot saved to {out_dir / plot_name}{level_suffix}.png and {out_dir / plot_name}{level_suffix}.pdf")
 
     # Display summary statistics
     print("\nSummary Statistics:")
-    print("=" * 50)
-    print(f"{'Method':<15} {'Forward Transfer':<18} {'Forgetting':<12}")
-    print("-" * 50)
-    for _, row in df.iterrows():
-        method = row["Method"]
-        ft = row["ForwardTransfer"]
-        ft_ci = row["ForwardTransfer_CI"]
-        forgetting = row["Forgetting"]
-        forgetting_ci = row["Forgetting_CI"]
+    print("=" * 70)
+    if len(args.levels) > 1:
+        print(f"{'Method':<15} {'Level':<6} {'Forward Transfer':<18} {'Forgetting':<12}")
+        print("-" * 70)
+        for df in all_dfs:
+            level = df['Level'].iloc[0]  # All rows in df have the same level
+            for _, row in df.iterrows():
+                method = row["Method"]
+                ft = row["ForwardTransfer"]
+                ft_ci = row["ForwardTransfer_CI"]
+                forgetting = row["Forgetting"]
+                forgetting_ci = row["Forgetting_CI"]
 
-        ft_str = f"{ft:.3f} ± {ft_ci:.3f}" if not np.isnan(ft) and not np.isnan(ft_ci) else "N/A"
-        f_str = f"{forgetting:.3f} ± {forgetting_ci:.3f}" if not np.isnan(forgetting) and not np.isnan(forgetting_ci) else "N/A"
+                ft_str = f"{ft:.3f} ± {ft_ci:.3f}" if not np.isnan(ft) and not np.isnan(ft_ci) else "N/A"
+                f_str = f"{forgetting:.3f} ± {forgetting_ci:.3f}" if not np.isnan(forgetting) and not np.isnan(forgetting_ci) else "N/A"
 
-        print(f"{method:<15} {ft_str:<18} {f_str:<12}")
+                print(f"{method:<15} {level:<6} {ft_str:<18} {f_str:<12}")
+    else:
+        print(f"{'Method':<15} {'Forward Transfer':<18} {'Forgetting':<12}")
+        print("-" * 70)
+        df = all_dfs[0]  # Only one level
+        for _, row in df.iterrows():
+            method = row["Method"]
+            ft = row["ForwardTransfer"]
+            ft_ci = row["ForwardTransfer_CI"]
+            forgetting = row["Forgetting"]
+            forgetting_ci = row["Forgetting_CI"]
+
+            ft_str = f"{ft:.3f} ± {ft_ci:.3f}" if not np.isnan(ft) and not np.isnan(ft_ci) else "N/A"
+            f_str = f"{forgetting:.3f} ± {forgetting_ci:.3f}" if not np.isnan(forgetting) and not np.isnan(forgetting_ci) else "N/A"
+
+            print(f"{method:<15} {ft_str:<18} {f_str:<12}")
 
     plt.show()
 
