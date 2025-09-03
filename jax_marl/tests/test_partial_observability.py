@@ -4,6 +4,9 @@ Example usage of the Partially Observable Overcooked environment.
 This demonstrates how to create and use the environment with different view settings.
 """
 
+import os
+os.environ['JAX_PLATFORM_NAME'] = 'cpu'
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -233,6 +236,7 @@ def create_simple_visualization(state, env, width=200, height=160):
 
 def create_episode_gif(num_steps=50, gif_filename="overcooked_po_episode.gif", tile_size=32, seed=None):
     """Create a GIF showing a short episode with agents moving and their field of view
+    Also saves individual frame images to the images directory.
 
     Args:
         num_steps: Number of steps to run the episode
@@ -254,6 +258,12 @@ def create_episode_gif(num_steps=50, gif_filename="overcooked_po_episode.gif", t
     except ImportError:
         MATPLOTLIB_AVAILABLE = False
         print("Warning: matplotlib not available for fallback rendering")
+
+    # Create images directory for saving individual frames
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    images_dir = os.path.join(script_dir, "images")
+    os.makedirs(images_dir, exist_ok=True)
+    print(f"Individual frame images will be saved to: {images_dir}")
 
     # Generate a random seed if not provided
     if seed is None:
@@ -312,10 +322,24 @@ def create_episode_gif(num_steps=50, gif_filename="overcooked_po_episode.gif", t
         )
         if img is not None:
             frames.append(Image.fromarray(img))
+            # Save initial frame as individual image
+            try:
+                filename = f"{images_dir}/gif_frame_{0:03d}.png"
+                plt.imsave(filename, img)
+                print(f"Saved initial frame: {filename}")
+            except Exception as e:
+                print(f"Failed to save initial frame image: {e}")
         elif MATPLOTLIB_AVAILABLE:
             print("Using fallback rendering for initial frame")
             img = create_simple_visualization(state, env)
             frames.append(Image.fromarray(img))
+            # Save fallback initial frame as individual image
+            try:
+                filename = f"{images_dir}/gif_frame_{0:03d}.png"
+                plt.imsave(filename, img)
+                print(f"Saved initial fallback frame: {filename}")
+            except Exception as e:
+                print(f"Failed to save initial fallback frame image: {e}")
         else:
             print("Warning: Initial frame rendering failed and no fallback available")
 
@@ -359,12 +383,28 @@ def create_episode_gif(num_steps=50, gif_filename="overcooked_po_episode.gif", t
             )
             if img is not None:
                 frames.append(Image.fromarray(img))
+                # Save frame as individual image
+                try:
+                    filename = f"{images_dir}/gif_frame_{step + 1:03d}.png"
+                    plt.imsave(filename, img)
+                    if step < 5 or (step + 1) % 10 == 0:  # Print progress for first few frames and every 10th frame
+                        print(f"Saved frame {step + 1}: {filename}")
+                except Exception as e:
+                    if step < 5:  # Only print error for first few frames to avoid spam
+                        print(f"Failed to save frame {step + 1} image: {e}")
             elif MATPLOTLIB_AVAILABLE:
                 # Use fallback rendering only occasionally to avoid spam
                 if step < 5 or step % 10 == 0:
                     print(f"Using fallback rendering for frame {step + 1}")
                 img = create_simple_visualization(state, env)
                 frames.append(Image.fromarray(img))
+                # Save fallback frame as individual image
+                try:
+                    filename = f"{images_dir}/gif_frame_{step + 1:03d}.png"
+                    plt.imsave(filename, img)
+                    print(f"Saved fallback frame {step + 1}: {filename}")
+                except Exception as e:
+                    print(f"Failed to save fallback frame {step + 1} image: {e}")
             else:
                 if step < 5:  # Only print warning for first few frames
                     print(f"Warning: Frame {step + 1} rendering failed and no fallback available")
@@ -396,6 +436,7 @@ def create_episode_gif(num_steps=50, gif_filename="overcooked_po_episode.gif", t
 
             print(f"Successfully created GIF: {gif_filename}")
             print(f"GIF contains {len(frames)} frames showing agents' field of view")
+            print(f"Individual frame images also saved to: {images_dir}")
             print("View areas are highlighted with:")
             print("- Light red for agent 0's field of view")
             print("- Light blue for agent 1's field of view")
