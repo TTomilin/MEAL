@@ -178,28 +178,23 @@ def compute_metrics(
                             print(f"[warn] baseline AUC is inf/-inf for task {i}, seed {seed}")
                             continue  # Skip this task
 
-                        # Calculate Forward Transfer: FTi = (AUCi - AUCb_i) / (1 - AUCb_i)
-                        denominator = 1.0 - auc_baseline
+                        # Check if baseline performance is effectively 0
+                        if abs(auc_baseline) < 1e-8:
+                            print(f"[info] baseline AUC is effectively 0 ({auc_baseline}) for task {i}, seed {seed}, method {method} - skipping forward transfer calculation")
+                            continue  # Skip this task
 
-                        # More robust checks for problematic denominators
-                        if np.isnan(denominator) or np.isinf(denominator) or abs(denominator) < 1e-8:
-                            if abs(auc_baseline - 1.0) < 1e-8:
-                                print(f"[warn] baseline AUC ≈ 1.0 for task {i}, seed {seed}, method {method}")
-                            elif np.isnan(auc_baseline):
-                                print(f"[warn] baseline AUC is NaN for task {i}, seed {seed}, method {method}")
-                            elif np.isinf(denominator):
-                                print(f"[warn] denominator is inf/-inf ({denominator}) for task {i}, seed {seed}, method {method}")
-                            else:
-                                print(f"[warn] denominator too small ({denominator}) for task {i}, seed {seed}, method {method}")
+                        # Use direct ratio approach for forward transfer calculation
+                        # FT_i = (AUC_CL - AUC_baseline) / max(|AUC_baseline|, ε)
+                        epsilon = 1e-8
+                        denominator = max(abs(auc_baseline), epsilon)
+                        ft_i = (auc_cl - auc_baseline) / denominator
+
+                        # Check if the final ft_i is inf/-inf or NaN
+                        if np.isnan(ft_i) or np.isinf(ft_i):
+                            print(f"[warn] Forward Transfer result is NaN/inf/-inf for task {i}, seed {seed}, method {method}")
                             # Skip this task - don't append to ft_vals
                         else:
-                            ft_i = (auc_cl - auc_baseline) / denominator
-                            # Check if the final ft_i is inf/-inf
-                            if np.isinf(ft_i):
-                                print(f"[warn] Forward Transfer result is inf/-inf for task {i}, seed {seed}, method {method}")
-                                # Skip this task - don't append to ft_vals
-                            else:
-                                ft_vals.append(ft_i)
+                            ft_vals.append(ft_i)
                     else:
                         print(f"[warn] missing baseline data for task {i}, seed {seed}")
                         # Don't append anything to ft_vals - skip this task
@@ -248,11 +243,11 @@ def compare_agents(
     """Compare results between different numbers of agents."""
     rows = []
 
-    for level in levels:
-        row_data = {"Level": level}
+    for num_agents in num_agents_list:
+        row_data = {"NumAgents": num_agents}
 
-        for num_agents in num_agents_list:
-            # Compute metrics for this num_agents
+        for level in levels:
+            # Compute metrics for this level
             metrics = compute_metrics(
                 data_root=data_root,
                 algo=algorithm,
@@ -265,27 +260,27 @@ def compare_agents(
                 level=level,
             )
 
-            # Add metrics to row with num_agents prefix
-            row_data[f"{num_agents}AGENTS_AveragePerformance"] = metrics["AveragePerformance"]
-            row_data[f"{num_agents}AGENTS_AveragePerformance_CI"] = metrics["AveragePerformance_CI"]
-            row_data[f"{num_agents}AGENTS_Forgetting"] = metrics["Forgetting"]
-            row_data[f"{num_agents}AGENTS_Forgetting_CI"] = metrics["Forgetting_CI"]
-            row_data[f"{num_agents}AGENTS_ForwardTransfer"] = metrics["ForwardTransfer"]
-            row_data[f"{num_agents}AGENTS_ForwardTransfer_CI"] = metrics["ForwardTransfer_CI"]
+            # Add metrics to row with level prefix
+            row_data[f"LEVEL{level}_AveragePerformance"] = metrics["AveragePerformance"]
+            row_data[f"LEVEL{level}_AveragePerformance_CI"] = metrics["AveragePerformance_CI"]
+            row_data[f"LEVEL{level}_Forgetting"] = metrics["Forgetting"]
+            row_data[f"LEVEL{level}_Forgetting_CI"] = metrics["Forgetting_CI"]
+            row_data[f"LEVEL{level}_ForwardTransfer"] = metrics["ForwardTransfer"]
+            row_data[f"LEVEL{level}_ForwardTransfer_CI"] = metrics["ForwardTransfer_CI"]
 
         rows.append(row_data)
 
     return pd.DataFrame(rows)
 
 
-def _fmt(mean: float, ci: float, best: bool, better: str = "max") -> str:
+def _fmt(mean: float, ci: float, best: bool, better: str = "max", show_ci: bool = True) -> str:
     """Return *mean ±CI* formatted for LaTeX, with CI in \scriptsize."""
     if np.isnan(mean) or np.isinf(mean):
         return "--"
     main = f"{mean:.3f}"
     if best:
         main = rf"\textbf{{{main}}}"
-    ci_part = rf"{{\scriptsize$\pm{ci:.2f}$}}" if not np.isnan(ci) and ci > 0 else ""
+    ci_part = rf"{{\scriptsize$\pm{ci:.2f}$}}" if show_ci and not np.isnan(ci) and ci > 0 else ""
     return main + ci_part
 
 
@@ -304,6 +299,11 @@ if __name__ == "__main__":
         type=int,
         default=10,
         help="How many final eval points to average for F (Forgetting)",
+    )
+    p.add_argument(
+        "--confidence_intervals",
+        action="store_true",
+        help="Include confidence intervals in the output table",
     )
     args = p.parse_args()
 
@@ -328,101 +328,154 @@ if __name__ == "__main__":
         end_window_evals=args.end_window_evals,
     )
 
-    # For each level, identify best performance and format the table
+    # Find best values per column (across all agent configurations)
+    best_values = {}
+    for level in args.levels:
+        # Get all values for this level across all agent configurations
+        ap_values = [row[f"LEVEL{level}_AveragePerformance"] for _, row in df.iterrows() 
+                     if not (np.isnan(row[f"LEVEL{level}_AveragePerformance"]) or np.isinf(row[f"LEVEL{level}_AveragePerformance"]))]
+        f_values = [row[f"LEVEL{level}_Forgetting"] for _, row in df.iterrows() 
+                    if not (np.isnan(row[f"LEVEL{level}_Forgetting"]) or np.isinf(row[f"LEVEL{level}_Forgetting"]))]
+        ft_values = [row[f"LEVEL{level}_ForwardTransfer"] for _, row in df.iterrows() 
+                     if not (np.isnan(row[f"LEVEL{level}_ForwardTransfer"]) or np.isinf(row[f"LEVEL{level}_ForwardTransfer"]))]
+
+        best_values[f"A_L{level}"] = max(ap_values) if ap_values else np.nan
+        best_values[f"F_L{level}"] = min(f_values) if f_values else np.nan
+        best_values[f"FT_L{level}"] = max(ft_values) if ft_values else np.nan
+
+    # For each num_agents, format the table
     df_out_rows = []
 
     for _, row in df.iterrows():
-        level = row["Level"]
+        num_agents = row["NumAgents"]
 
-        # Extract values for each num_agents
-        agents_values = {}
-        for num_agents in args.num_agents:
-            agents_values[num_agents] = {
-                'ap': row[f"{num_agents}AGENTS_AveragePerformance"],
-                'ap_ci': row[f"{num_agents}AGENTS_AveragePerformance_CI"],
-                'f': row[f"{num_agents}AGENTS_Forgetting"],
-                'f_ci': row[f"{num_agents}AGENTS_Forgetting_CI"],
-                'ft': row[f"{num_agents}AGENTS_ForwardTransfer"],
-                'ft_ci': row[f"{num_agents}AGENTS_ForwardTransfer_CI"],
+        # Extract values for each level
+        levels_values = {}
+        for level in args.levels:
+            levels_values[level] = {
+                'ap': row[f"LEVEL{level}_AveragePerformance"],
+                'ap_ci': row[f"LEVEL{level}_AveragePerformance_CI"],
+                'f': row[f"LEVEL{level}_Forgetting"],
+                'f_ci': row[f"LEVEL{level}_Forgetting_CI"],
+                'ft': row[f"LEVEL{level}_ForwardTransfer"],
+                'ft_ci': row[f"LEVEL{level}_ForwardTransfer_CI"],
             }
 
-        # Find best values across num_agents for this level
-        valid_a_values = [v['ap'] for v in agents_values.values() if not (np.isnan(v['ap']) or np.isinf(v['ap']))]
-        valid_f_values = [v['f'] for v in agents_values.values() if not (np.isnan(v['f']) or np.isinf(v['f']))]
-        valid_ft_values = [v['ft'] for v in agents_values.values() if not (np.isnan(v['ft']) or np.isinf(v['ft']))]
-
-        best_a = max(valid_a_values) if valid_a_values else np.nan
-        best_f = min(valid_f_values) if valid_f_values else np.nan
-        best_ft = max(valid_ft_values) if valid_ft_values else np.nan
-
         # Create formatted row
-        formatted_row = {"Level": f"Level {int(level)}"}
+        agent_text = f"{int(num_agents)} Agent" + ("s" if num_agents > 1 else "")
+        formatted_row = {"Agents": agent_text}
 
-        # First add all average performance columns
-        for num_agents in args.num_agents:
-            values = agents_values[num_agents]
+        # Add formatted columns grouped by level: for each level, add A, F, FT columns
+        for level in args.levels:
+            values = levels_values[level]
 
-            formatted_row[f"{num_agents}AGENTS_AveragePerformance"] = _fmt(
+            # Average Performance column for this level
+            formatted_row[f"AveragePerformance_L{level}"] = _fmt(
                 values['ap'], 
                 values['ap_ci'], 
-                values['ap'] == best_a, 
-                "max"
+                values['ap'] == best_values[f"A_L{level}"], 
+                "max",
+                args.confidence_intervals
             )
 
-        # Then add all forgetting columns
-        for num_agents in args.num_agents:
-            values = agents_values[num_agents]
-
-            formatted_row[f"{num_agents}AGENTS_Forgetting"] = _fmt(
+            # Forgetting column for this level
+            formatted_row[f"Forgetting_L{level}"] = _fmt(
                 values['f'], 
                 values['f_ci'], 
-                values['f'] == best_f, 
-                "min"
+                values['f'] == best_values[f"F_L{level}"], 
+                "min",
+                args.confidence_intervals
             )
 
-        # Finally add all forward transfer columns
-        for num_agents in args.num_agents:
-            values = agents_values[num_agents]
-
-            formatted_row[f"{num_agents}AGENTS_ForwardTransfer"] = _fmt(
+            # Forward Transfer column for this level
+            formatted_row[f"ForwardTransfer_L{level}"] = _fmt(
                 values['ft'], 
                 values['ft_ci'], 
-                values['ft'] == best_ft, 
-                "max"
+                values['ft'] == best_values[f"FT_L{level}"], 
+                "max",
+                args.confidence_intervals
             )
 
         df_out_rows.append(formatted_row)
 
     df_out = pd.DataFrame(df_out_rows)
 
-    # Create column headers - first all average performance, then all forgetting, then all forward transfer
-    columns = ["Level"]
-    # Add all average performance columns first
-    for num_agents in args.num_agents:
-        columns.append(rf"$\mathcal{{A}}\!\uparrow$ {num_agents} Agents")
-    # Then add all forgetting columns
-    for num_agents in args.num_agents:
-        columns.append(rf"$\mathcal{{F}}\!\downarrow$ {num_agents} Agents")
-    # Finally add all forward transfer columns
-    for num_agents in args.num_agents:
-        columns.append(rf"$\mathcal{{FT}}\!\uparrow$ {num_agents} Agents")
+    # Rename columns to mathy headers grouped by levels
+    new_columns = ["Agents"]
+    for level in args.levels:
+        new_columns.extend([
+            rf"$\mathcal{{A}}\!\uparrow$",
+            rf"$\mathcal{{F}}\!\downarrow$", 
+            rf"$\mathcal{{FT}}\!\uparrow$"
+        ])
+    df_out.columns = new_columns
 
-    df_out.columns = columns
+    # Column format: Agents + levels × 3 metrics
+    column_format = "l" + "c" * (len(args.levels) * 3)
 
-    # Generate LaTeX table
-    column_format = "l" + "ccc" * len(args.num_agents)
-    latex_table = df_out.to_latex(
-        index=False,
-        escape=False,
-        column_format=column_format,
-        label="tab:agents_comparison",
-        caption=f"Comparison of {args.method} with {args.algorithm.upper()} between "
-                f"{' and '.join([f'{n} agent' + ('s' if n > 1 else '') for n in args.num_agents])}. "
-                f"Bold values indicate the best performance for each metric. "
-                f"$\\mathcal{{A}}$ represents Average Performance (higher is better), "
-                f"$\\mathcal{{F}}$ represents Forgetting (lower is better), "
-                f"$\\mathcal{{FT}}$ represents Forward Transfer (higher is better).",
-    )
+    # Generate LaTeX table with proper structure following results_table.py format
+    caption_text = (f"Comparison of {args.method} with {args.algorithm.upper()} across "
+                   f"{' and '.join([f'Level {level}' for level in args.levels])} "
+                   f"for {' and '.join([f'{n} agent' + ('s' if n > 1 else '') for n in args.num_agents])}. "
+                   f"Bold values indicate the best performance for each metric. "
+                   f"$\\mathcal{{A}}$ represents Average Performance (higher is better), "
+                   f"$\\mathcal{{F}}$ represents Forgetting (lower is better), "
+                   f"$\\mathcal{{FT}}$ represents Forward Transfer (higher is better).")
+
+    # Build the LaTeX table manually with correct structure
+    latex_lines = []
+    latex_lines.append("\\begin{table}")
+    latex_lines.append("\\centering")
+    latex_lines.append(f"\\caption{{{caption_text}}}")
+    latex_lines.append("\\label{tab:agents_comparison}")
+    latex_lines.append(f"\\begin{{tabular}}{{{column_format}}}")
+    latex_lines.append("\\toprule")
+
+    # Create the multicolumn header following the format from results_table.py
+    multicolumn_header = "\\multirow{2}{*}[-0.7ex]{Agents} &"
+
+    # Add multicolumn headers for each level
+    for i, level in enumerate(args.levels):
+        level_text = f"Level {level}"
+        if i < len(args.levels) - 1:
+            multicolumn_header += f"\n\\multicolumn{{3}}{{c}}{{{level_text}}} &"
+        else:
+            multicolumn_header += f"\n\\multicolumn{{3}}{{c}}{{{level_text}}} \\\\"
+
+    latex_lines.append(multicolumn_header)
+
+    # Add cmidrule parts
+    cmidrule_parts = []
+    for i, _ in enumerate(args.levels):
+        start_col = 2 + i * 3
+        end_col = start_col + 2
+        cmidrule_parts.append(f"\\cmidrule(lr){{{start_col}-{end_col}}}")
+
+    latex_lines.append(" ".join(cmidrule_parts))
+
+    # Add the metric symbols row
+    metric_row = " & "
+    for i, _ in enumerate(args.levels):
+        if i < len(args.levels) - 1:
+            metric_row += "$\\mathcal{A}\\!\\uparrow$ & $\\mathcal{F}\\!\\downarrow$ & $\\mathcal{FT}\\!\\uparrow$ & "
+        else:
+            metric_row += "$\\mathcal{A}\\!\\uparrow$ & $\\mathcal{F}\\!\\downarrow$ & $\\mathcal{FT}\\!\\uparrow$ \\\\"
+
+    latex_lines.append(metric_row)
+    latex_lines.append("\\midrule")
+
+    # Add data rows
+    for _, row in df_out.iterrows():
+        row_data = []
+        for i in range(len(df_out.columns)):
+            row_data.append(str(row.iloc[i]))
+        latex_lines.append(" & ".join(row_data) + " \\\\")
+
+    latex_lines.append("\\bottomrule")
+    latex_lines.append("\\end{tabular}")
+    latex_lines.append("\\end{table}")
+
+    latex_table = "\n".join(latex_lines)
 
     print("\nComparison Results:")
     print("=" * 80)
