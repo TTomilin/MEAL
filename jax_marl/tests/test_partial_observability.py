@@ -7,6 +7,7 @@ This demonstrates how to create and use the environment with different view sett
 import os
 os.environ['JAX_PLATFORM_NAME'] = 'cpu'
 
+import argparse
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -234,7 +235,7 @@ def create_simple_visualization(state, env, width=200, height=160):
 
     return buf
 
-def create_episode_gif(num_steps=50, gif_filename="overcooked_po_episode.gif", tile_size=32, seed=None):
+def create_episode_gif(num_steps=50, gif_filename="overcooked_po_episode.gif", tile_size=32, seed=None, difficulty="hard"):
     """Create a GIF showing a short episode with agents moving and their field of view
     Also saves individual frame images to the images directory.
 
@@ -271,35 +272,38 @@ def create_episode_gif(num_steps=50, gif_filename="overcooked_po_episode.gif", t
 
     print(f"Using seed: {seed}")
 
-    # Get hard difficulty parameters
-    hard_params = get_difficulty_params("hard")
+    # Get difficulty parameters
+    params = get_difficulty_params(difficulty)
 
-    # Generate a hard random layout
-    print("Generating hard difficulty environment...")
+    # Generate random layout with specified difficulty
+    print(f"Generating {difficulty} difficulty environment...")
     try:
         grid_str, layout = generate_random_layout(
             num_agents=2,
-            height_rng=hard_params["height_rng"],
-            width_rng=hard_params["width_rng"],
-            wall_density=hard_params["wall_density"],
+            height_rng=params["height_rng"],
+            width_rng=params["width_rng"],
+            wall_density=params["wall_density"],
             seed=seed,
             max_attempts=100
         )
-        print(f"Generated layout: {layout['width']}x{layout['height']} with {hard_params['wall_density']} wall density")
+        print(f"Generated layout: {layout['width']}x{layout['height']} with {params['wall_density']} wall density")
     except Exception as e:
-        print(f"Failed to generate hard environment: {e}")
+        print(f"Failed to generate {difficulty} environment: {e}")
         print("Falling back to cramped_room layout")
         layout = None
 
-    # Create environment with moderate view settings for good visibility
+    # Create environment with difficulty-based view settings
     env = OvercookedPO(
         layout=layout,
-        layout_name="generated_hard",
-        view_ahead=3,
-        view_behind=1,
-        view_sides=1,
+        layout_name=f"generated_{difficulty}",
+        view_ahead=params["view_ahead"],
+        view_behind=params["view_behind"],
+        view_sides=params["view_sides"],
         max_steps=num_steps + 10  # Add buffer
     )
+
+    print(f"Using {difficulty} difficulty view settings:")
+    print(f"  view_ahead={params['view_ahead']}, view_behind={params['view_behind']}, view_sides={params['view_sides']}")
 
     visualizer = OvercookedVisualizerPO(use_old_rendering=False)
 
@@ -469,7 +473,8 @@ def main():
             num_steps=30,  # Shorter episode for faster generation
             gif_filename="gifs/overcooked_po_episode.gif",
             tile_size=32,
-            seed=random_seed
+            seed=random_seed,
+            difficulty="medium"
         )
 
         print("\n" + "=" * 60)
@@ -487,5 +492,105 @@ def main():
         import traceback
         traceback.print_exc()
 
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(
+        description="Test Partially Observable Overcooked environment with configurable difficulty"
+    )
+
+    parser.add_argument(
+        "--difficulty", 
+        type=str, 
+        choices=["easy", "medium", "hard"], 
+        default="medium",
+        help="Difficulty level that determines both environment complexity and partial view size (default: medium)"
+    )
+
+    parser.add_argument(
+        "--num-steps", 
+        type=int, 
+        default=30,
+        help="Number of steps to run in the episode (default: 30)"
+    )
+
+    parser.add_argument(
+        "--gif-filename", 
+        type=str, 
+        default="gifs/overcooked_po_episode.gif",
+        help="Output filename for the GIF (default: gifs/overcooked_po_episode.gif)"
+    )
+
+    parser.add_argument(
+        "--tile-size", 
+        type=int, 
+        default=32,
+        help="Size of each tile in pixels for rendering (default: 32)"
+    )
+
+    parser.add_argument(
+        "--seed", 
+        type=int, 
+        default=None,
+        help="Random seed for environment generation (default: random)"
+    )
+
+    parser.add_argument(
+        "--run-examples", 
+        action="store_true",
+        help="Run all example functions before creating the GIF"
+    )
+
+    return parser.parse_args()
+
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+
+    print("Partially Observable Overcooked Environment")
+    print("=" * 60)
+    print(f"Difficulty: {args.difficulty}")
+
+    # Show difficulty parameters
+    try:
+        params = get_difficulty_params(args.difficulty)
+        print(f"Environment size: {params['height_rng'][0]}-{params['height_rng'][1]} x {params['width_rng'][0]}-{params['width_rng'][1]}")
+        print(f"Wall density: {params['wall_density']}")
+        print(f"View settings: ahead={params['view_ahead']}, behind={params['view_behind']}, sides={params['view_sides']}")
+    except Exception as e:
+        print(f"Error getting difficulty parameters: {e}")
+        exit(1)
+
+    print("=" * 60)
+
+    try:
+        # Run examples if requested
+        if args.run_examples:
+            example_basic_usage()
+            example_different_view_settings()
+            example_visualization()
+            example_observation_analysis()
+
+        # Create episode GIF with specified difficulty
+        create_episode_gif(
+            num_steps=args.num_steps,
+            gif_filename=args.gif_filename,
+            tile_size=args.tile_size,
+            seed=args.seed,
+            difficulty=args.difficulty
+        )
+
+        print("\n" + "=" * 60)
+        print("GIF creation completed successfully!")
+        print(f"Difficulty: {args.difficulty}")
+        print(f"Output: {args.gif_filename}")
+        print("\nKey Features:")
+        print("- Difficulty-based environment complexity and partial view size")
+        print("- Direction-aware partial observability")
+        print("- View area visualization with highlighting")
+        print("- JAX-compatible implementation")
+        print("- Episode GIF generation showing field of view changes")
+
+    except Exception as e:
+        print(f"\nScript failed with error: {e}")
+        import traceback
+        traceback.print_exc()
+        exit(1)
