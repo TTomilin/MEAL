@@ -11,8 +11,8 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
 
         # Colors for highlighting view areas
         self.view_colors = [
-            np.array([255, 200, 200, 100]),  # Light red for agent 0
-            np.array([200, 200, 255, 100]),  # Light blue for agent 1
+            np.array([255, 150, 150, 100]),  # Light red for agent 0
+            np.array([150, 150, 255, 100]),  # Light blue for agent 1
         ]
 
     def render(self, agent_view_size, state, env=None, highlight_views=True, tile_size=32):
