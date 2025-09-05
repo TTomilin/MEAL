@@ -1044,6 +1044,7 @@ def main():
             updates_left = int(config.num_updates)
             while updates_left > 0:
                 k = int(min(config.log_interval, updates_left))
+                prev_update = int(runner_state[3])  # previous update_step
                 runner_state, metrics_last = _train_chunk(rng_i, runner_state, env, cl_state, i, k)
 
                 # Unpack new states
