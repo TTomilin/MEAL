@@ -532,7 +532,7 @@ def main():
         keys = jax.random.split(key, len(eval_envs))
         for idx, (ev, k) in enumerate(zip(eval_envs, keys)):
             r, s = _eval_one_env(train_state.params, k, ev, idx)
-            rs.append(r);
+            rs.append(r)
             ss.append(s)
         return rs, ss
 
@@ -548,29 +548,13 @@ def main():
 
     @partial(jax.jit, static_argnums=(2, 4, 5))
     def _train_chunk(rng, runner_state, env, cl_state, env_idx, num_updates_chunk):
-        '''
-        Trains the network using IPPO
-        @param rng: random number generator
-        returns the runner state and the metrics
-        '''
-
-        print(f"Training on environment: {env.task_id} - {env.layout_name}")
-
-        # Initialize and reset the environment
-        rng, env_rng = jax.random.split(rng)
-        reset_rng = jax.random.split(env_rng, config.num_envs)
-        obsv, env_state = jax.vmap(env.reset, in_axes=(0,))(reset_rng)
+        """
+        Trains for `num_updates_chunk` update steps, *continuing* from runner_state.
+        Returns (new_runner_state, last_step_metrics) where metrics are scalars.
+        """
 
         # Bring local copies from runner_state for readability
         train_state, env_state, _, update_step, steps_for_env, rng, cl_state = runner_state
-
-        # reset the optimizer lr schedulers each chunk
-        tx = optax.chain(
-            optax.clip_by_global_norm(config.max_grad_norm),
-            optax.adam(learning_rate=linear_schedule if config.anneal_lr else config.lr, eps=1e-5)
-        )
-        new_optimizer = tx.init(train_state.params)
-        train_state = train_state.replace(tx=tx, opt_state=new_optimizer)
 
         reward_shaping_horizon = config.steps_per_task / 2
         rew_shaping_anneal = optax.linear_schedule(init_value=1., end_value=0., transition_steps=reward_shaping_horizon)
@@ -1025,18 +1009,16 @@ def main():
 
             return runner_state, metrics
 
-        rng, train_rng = jax.random.split(rng)
-
-        # initialize a carrier that keeps track of the states and observations of the agents
-        runner_state = (train_state, env_state, obsv, 0, 0, train_rng, cl_state)
-
         runner_state, metrics = jax.lax.scan(
             f=_update_step,
             init=runner_state,
             xs=None,
             length=num_updates_chunk
         )
-        return runner_state, metrics
+
+        # Return only the *last* step’s metrics for host logging (scalars).
+        metrics_last = jax.tree_util.tree_map(lambda x: x[-1], metrics)
+        return runner_state, metrics_last
 
     def loop_over_envs(rng, train_state, cl_state, envs):
         '''
@@ -1062,24 +1044,35 @@ def main():
             updates_left = int(config.num_updates)
             while updates_left > 0:
                 k = int(min(config.log_interval, updates_left))
-                runner_state, metrics = _train_chunk(rng_i, runner_state, env, cl_state, i, k)
+                runner_state, metrics_last = _train_chunk(rng_i, runner_state, env, cl_state, i, k)
 
                 # Unpack new states
                 train_state, env_state, obsv, update_step, steps_for_env, rng_i, cl_state = runner_state
+                new_update = int(update_step)
+                real_step = i * int(config.num_updates) + new_update
 
-                # === Evaluate all envs on GPU (JAX) between chunks ===
-                if config.evaluation:
+                # --- TRAINING LOGS (host-side) ---
+                from jax import device_get
+                tm = device_get(metrics_last)
+                for key, value in tm.items():
+                    try:
+                        writer.add_scalar(key, float(np.asarray(value)), int(real_step))
+                    except Exception:
+                        # skip non-scalars just in case
+                        pass
+
+                # --- EVAL only when crossing a log boundary ---
+                crossed = (prev_update // int(config.log_interval)) < (new_update // int(config.log_interval))
+                if config.evaluation and crossed:
                     rng_i, eval_rng = jax.random.split(rng_i)
                     avg_rewards, avg_soups = evaluate_model(train_state, eval_rng)
                     episode_frac = config.eval_num_steps / env.max_steps
                     avg_soups = [s * episode_frac for s in avg_soups]
-                    # Add eval metrics into your dict and log (host-side is fine here)
                     eval_metrics = add_eval_metrics(avg_rewards, avg_soups, env_names, max_soup_dict, {})
-                    real_step = i * config.num_updates + update_step
-                    for key, value in {**eval_metrics}.items():
-                        writer.add_scalar(key, float(value), int(real_step))
+                    for key, value in eval_metrics.items():
+                        writer.add_scalar(key, float(np.asarray(value)), int(real_step))
 
-                updates_left -= k
+            updates_left -= k
 
             # === After finishing the env, do importance / CL update ===
             importance = cl.compute_importance(
