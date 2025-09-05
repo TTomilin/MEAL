@@ -1073,7 +1073,7 @@ def main():
                     for key, value in eval_metrics.items():
                         writer.add_scalar(key, float(np.asarray(value)), int(real_step))
 
-            updates_left -= k
+                updates_left -= k
 
             # === After finishing the env, do importance / CL update ===
             importance = cl.compute_importance(
