@@ -125,7 +125,6 @@ class Config:
     # EVALUATION PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
     evaluation: bool = True
-    eval_forward_transfer: bool = False
     eval_num_steps: int = 1000
     eval_num_episodes: int = 5
     record_gif: bool = True
@@ -1119,13 +1118,6 @@ def main():
         else:
             visualizer = OvercookedVisualizer(num_agents=temp_env.num_agents)
 
-        evaluation_matrix = None
-        if config.eval_forward_transfer:
-            evaluation_matrix = jnp.zeros(((len(envs) + 1), len(envs)))
-            rng, eval_rng = jax.random.split(rng)
-            evaluations = evaluate_model(train_state, eval_rng)
-            evaluation_matrix = evaluation_matrix.at[0, :].set(evaluations)
-
         for i, (rng, env) in enumerate(zip(env_rngs, envs)):
             # --- Train on environment i using the *current* ewc_state ---
             runner_state, metrics = train_on_environment(rng, train_state, env, cl_state, i)
@@ -1149,19 +1141,10 @@ def main():
                 else:
                     visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir)
 
-            if config.eval_forward_transfer:
-                # Evaluate at the end of training to get the average performance of the task right after training
-                evaluations = evaluate_model(train_state, rng)
-                evaluation_matrix = evaluation_matrix.at[i, :].set(evaluations)
-
             # save the model
             repo_root = Path(__file__).resolve().parent.parent
             path = f"{repo_root}/checkpoints/overcooked/{config.cl_method}/{run_name}/model_env_{i + 1}"
             save_params(path, train_state, env_kwargs=env.layout, layout_name=env.layout_name, config=config)
-
-            if config.eval_forward_transfer:
-                # calculate the forward transfer and backward transfer
-                pass
 
             if config.single_task_idx is not None:
                 break  # stop after the first env
