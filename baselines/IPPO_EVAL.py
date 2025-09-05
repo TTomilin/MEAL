@@ -1016,9 +1016,8 @@ def main():
             length=num_updates_chunk
         )
 
-        # Return only the *last* step’s metrics for host logging (scalars).
-        metrics_last = jax.tree_util.tree_map(lambda x: x[-1], metrics)
-        return runner_state, metrics_last
+        metrics = jax.tree_util.tree_map(lambda x: jnp.mean(x, axis=0), metrics)
+        return runner_state, metrics
 
     def loop_over_envs(rng, train_state, cl_state, envs):
         '''
@@ -1041,6 +1040,17 @@ def main():
             # --- Init runner state once per env ---
             runner_state = _init_runner_state(rng_i, train_state, env, cl_state, i)
 
+            # Reset LR schedule / optimizer at the start of this task
+            tx = optax.chain(
+                optax.clip_by_global_norm(config.max_grad_norm),
+                optax.adam(learning_rate=linear_schedule if config.anneal_lr else config.lr, eps=1e-5)
+            )
+            train_state = train_state.replace(tx=tx, opt_state=tx.init(train_state.params))
+
+            # put the updated train_state back in the runner_state tuple
+            runner_state = (train_state, runner_state[1], runner_state[2],
+                            runner_state[3], runner_state[4], runner_state[5], runner_state[6])
+
             updates_left = int(config.num_updates)
             while updates_left > 0:
                 k = int(min(config.log_interval, updates_left))
@@ -1056,11 +1066,7 @@ def main():
                 from jax import device_get
                 tm = device_get(metrics_last)
                 for key, value in tm.items():
-                    try:
-                        writer.add_scalar(key, float(np.asarray(value)), int(real_step))
-                    except Exception:
-                        # skip non-scalars just in case
-                        pass
+                    writer.add_scalar(key, float(np.asarray(value)), int(real_step))
 
                 # --- EVAL only when crossing a log boundary ---
                 crossed = (prev_update // int(config.log_interval)) < (new_update // int(config.log_interval))
