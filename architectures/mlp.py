@@ -38,7 +38,7 @@ class ActorCritic(nn.Module):
 
     # ------------------------------------------------------------------ forward
     @nn.compact
-    def __call__(self, x, *, env_idx):
+    def __call__(self, x, *, env_idx: int = 0):
         act = self._act()
         hid = 256 if self.big_network else 128
 

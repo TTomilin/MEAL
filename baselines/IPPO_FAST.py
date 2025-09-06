@@ -529,11 +529,29 @@ def main():
         env_names.append(env_name)
         max_soup_dict[env_name] = estimate_max_soup(env_layout, env.max_steps, n_agents=env.num_agents)
 
+    max_steps_by_task = jnp.array([e.max_steps for e in envs], dtype=jnp.int32)
+    max_soup_by_task = jnp.array([max_soup_dict[name] for name in env_names], dtype=jnp.float32)
+
+    # Prebind reset/step branches so we never pass env into jit:
+    _reset_branches = tuple((lambda e: (lambda k: e.reset(k)))(e) for e in envs)
+    _step_branches = tuple((lambda e: (lambda k, s, a: e.step(k, s, a)))(e) for e in envs)
+
+    def env_reset(key, env_idx):
+        env_idx = jnp.asarray(env_idx, jnp.int32)
+        return jax.lax.switch(env_idx, _reset_branches, key)
+
+    def env_step(key, state, actions, env_idx):
+        env_idx = jnp.asarray(env_idx, jnp.int32)
+        return jax.lax.switch(env_idx, _step_branches, key, state, actions)
+
     # set extra config parameters based on the environment
     temp_env = envs[0]
     config.num_actors = temp_env.num_agents * config.num_envs
     config.num_updates = config.steps_per_task // config.num_steps // config.num_envs
     config.minibatch_size = (config.num_actors * config.num_steps) // config.num_minibatches
+
+    agents = temp_env.agents
+    num_agents = temp_env.num_agents
 
     def linear_schedule(count):
         '''
@@ -557,7 +575,7 @@ def main():
     rng = jax.random.PRNGKey(seed)
     rng, network_rng = jax.random.split(rng)
     init_x = jnp.zeros((1, *obs_dim)) if config.use_cnn else jnp.zeros((1, obs_dim,))
-    network_params = network.init(network_rng, init_x)
+    network_params = network.init(network_rng, init_x, env_idx=jnp.array(0, jnp.int32))
 
     # Initialize the optimizer
     tx = optax.chain(
@@ -575,15 +593,13 @@ def main():
         tx=tx
     )
 
-    @partial(jax.jit, static_argnums=(2, 4))
-    def train_on_environment(rng, train_state, env, cl_state, env_idx):
+    @jax.jit
+    def train_on_environment(rng, train_state, cl_state, env_idx):
         '''
         Trains the network using IPPO
         @param rng: random number generator
         returns the runner state and the metrics
         '''
-
-        print(f"Training on environment: {env.task_id} - {env.layout_name}")
 
         # reset the learning rate and the optimizer
         tx = optax.chain(
@@ -596,7 +612,7 @@ def main():
         # Initialize and reset the environment
         rng, env_rng = jax.random.split(rng)
         reset_rng = jax.random.split(env_rng, config.num_envs)
-        obsv, env_state = jax.vmap(env.reset, in_axes=(0,))(reset_rng)
+        obsv, env_state = jax.vmap(lambda k: env_reset(k, env_idx), in_axes=(0,))(reset_rng)
 
         reward_shaping_horizon = config.steps_per_task / 2
         rew_shaping_anneal = optax.linear_schedule(
@@ -628,7 +644,7 @@ def main():
                 rng, _rng = jax.random.split(rng)
 
                 # prepare the observations for the network
-                obs_batch = batchify(last_obs, env.agents, config.num_actors,
+                obs_batch = batchify(last_obs, agents, config.num_actors,
                                      not config.use_cnn)  # (num_actors, obs_dim)
                 # print("obs_shape", obs_batch.shape)
 
@@ -641,7 +657,7 @@ def main():
                 log_prob = pi.log_prob(action)
 
                 # format the actions to be compatible with the environment
-                env_act = unbatchify(action, env.agents, config.num_envs, env.num_agents)
+                env_act = unbatchify(action, agents, config.num_envs, num_agents)
                 env_act = {k: v.flatten() for k, v in env_act.items()}
 
                 # STEP ENV
@@ -650,9 +666,9 @@ def main():
                 rng_step = jax.random.split(_rng, config.num_envs)
 
                 # simultaniously step all environments with the selected actions (parallelized over the number of environments with vmap)
-                obsv, env_state, reward, done, info = jax.vmap(env.step, in_axes=(0, 0, 0))(
-                    rng_step, env_state, env_act
-                )
+                obsv_next, env_state_next, reward, done, info = jax.vmap(
+                    lambda kk, st, ac: env_step(kk, st, ac, env_idx), in_axes=(0, 0, 0)
+                )(rng_step, env_state, env_act)
 
                 current_timestep = update_step * config.num_steps * config.num_envs
 
@@ -682,10 +698,10 @@ def main():
                                                     )
 
                 transition = Transition(
-                    batchify(done, env.agents, config.num_actors, not config.use_cnn).squeeze(),
+                    batchify(done, agents, config.num_actors, not config.use_cnn).squeeze(),
                     action,
                     value,
-                    batchify(reward, env.agents, config.num_actors).squeeze(),
+                    batchify(reward, agents, config.num_actors).squeeze(),
                     log_prob,
                     obs_batch
                 )
@@ -708,7 +724,7 @@ def main():
             train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
 
             # create a batch of the observations that is compatible with the network
-            last_obs_batch = batchify(last_obs, env.agents, config.num_actors, not config.use_cnn)
+            last_obs_batch = batchify(last_obs, agents, config.num_actors, not config.use_cnn)
 
             # apply the network to the batch of observations to get the value of the last state
             _, last_val = network.apply(train_state.params, last_obs_batch, env_idx=env_idx)
@@ -1035,7 +1051,7 @@ def main():
             metrics["Soup/agent_0_soup"] = agent_0_soup
             metrics["Soup/agent_1_soup"] = agent_1_soup
             metrics["Soup/total"] = soup_delivered
-            metrics["Soup/scaled"] = soup_delivered / (max_soup_dict[env_names[env_idx]] * episode_frac)
+            metrics["Soup/scaled"] = soup_delivered / (jnp.take(max_soup_by_task, env_idx) * episode_frac)
             metrics.pop('soups', None)
 
             # Rewards section
@@ -1121,8 +1137,10 @@ def main():
         for i, (rng, env) in enumerate(zip(env_rngs, envs)):
             # --- Train on environment i using the *current* ewc_state ---
 
+            print(f"Training on environment: {i}")
+
             env_idx = jnp.asarray(i, jnp.int32)
-            runner_state, metrics = train_on_environment(rng, train_state, env, cl_state, env_idx)
+            runner_state, metrics = train_on_environment(rng, train_state, cl_state, env_idx)
             train_state = runner_state[0]
             cl_state = runner_state[6]
 
@@ -1135,7 +1153,8 @@ def main():
             if config.record_gif:
                 # Generate & log a GIF after finishing task i
                 env_name = f"{i}__{env.layout_name}"
-                states = record_gif_of_episode(config, train_state, env, network, env_idx=env_idx , max_steps=config.gif_len)
+                states = record_gif_of_episode(config, train_state, env, network, env_idx=env_idx,
+                                               max_steps=config.gif_len)
                 # Pass environment instance to PO visualizer for view highlighting
                 if config.env_name == "overcooked_po":
                     visualizer.animate(states, agent_view_size=5, task_idx=env_idx, task_name=env_name, exp_dir=exp_dir,
@@ -1248,8 +1267,6 @@ def main():
 
     # apply the loop_over_envs function to the environments
     loop_over_envs(train_rng, train_state, cl_state, envs)
-
-
 
 
 if __name__ == "__main__":
