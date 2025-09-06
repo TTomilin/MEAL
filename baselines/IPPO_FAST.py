@@ -532,6 +532,37 @@ def main():
     max_steps_by_task = jnp.array([e.max_steps for e in envs], dtype=jnp.int32)
     max_soup_by_task = jnp.array([max_soup_dict[name] for name in env_names], dtype=jnp.float32)
 
+    # --- FIX: normalize variable-length fields across tasks (goals, pots) ---
+    # compute maxima across tasks
+    MAX_GOALS = max(int(np.array(e.layout["goal_idx"]).shape[0]) for e in envs)
+    MAX_POTS  = max(int(np.array(e.layout["pot_idx"]).shape[0])  for e in envs)
+
+    def _pad_pos(pos, target_len):
+        # pos: (k, 2) with k >= 1 in Overcooked; pad by repeating last row
+        k = pos.shape[0]
+        pad = target_len - k
+        if pad <= 0:
+            return pos
+        last = pos[-1]                              # (2,)
+        pad_block = jnp.repeat(last[None, :], pad, axis=0)  # (pad,2)
+        return jnp.concatenate([pos, pad_block], axis=0)    # (target_len, 2)
+
+    # Prebind reset/step branches (never pass env into jit)
+    def _make_reset_fn(e):
+        def _f(key):
+            obs, st = e.reset(key)  # st is LogEnvState(env_state=State(...))
+            es = st.env_state
+            es = es.replace(
+                goal_pos=_pad_pos(es.goal_pos, MAX_GOALS),
+                pot_pos =_pad_pos(es.pot_pos,  MAX_POTS),
+            )
+            st = st.replace(env_state=es)
+            return obs, st
+        return _f
+
+    _reset_branches = tuple(_make_reset_fn(e) for e in envs)
+    _step_branches  = tuple((lambda e: (lambda k, s, a: e.step(k, s, a)))(e) for e in envs)
+
     # Prebind reset/step branches so we never pass env into jit:
     _reset_branches = tuple((lambda e: (lambda k: e.reset(k)))(e) for e in envs)
     _step_branches = tuple((lambda e: (lambda k, s, a: e.step(k, s, a)))(e) for e in envs)
@@ -644,9 +675,7 @@ def main():
                 rng, _rng = jax.random.split(rng)
 
                 # prepare the observations for the network
-                obs_batch = batchify(last_obs, agents, config.num_actors,
-                                     not config.use_cnn)  # (num_actors, obs_dim)
-                # print("obs_shape", obs_batch.shape)
+                obs_batch = batchify(last_obs, agents, config.num_actors, not config.use_cnn)  # (num_actors, obs_dim)
 
                 # apply the policy network to the observations to get the suggested actions and their values
                 pi, value = network.apply(train_state.params, obs_batch, env_idx=env_idx)
@@ -814,17 +843,9 @@ def main():
                         ratio = jnp.exp(log_prob - traj_batch.log_prob)
                         gae = (gae - gae.mean()) / (gae.std() + 1e-8)
                         loss_actor_unclipped = ratio * gae
-                        loss_actor_clipped = (
-                                jnp.clip(
-                                    ratio,
-                                    1.0 - config.clip_eps,
-                                    1.0 + config.clip_eps,
-                                )
-                                * gae
-                        )
+                        loss_actor_clipped = (jnp.clip(ratio, 1.0 - config.clip_eps, 1.0 + config.clip_eps) * gae)
 
-                        loss_actor = -jnp.minimum(loss_actor_unclipped,
-                                                  loss_actor_clipped)
+                        loss_actor = -jnp.minimum(loss_actor_unclipped, loss_actor_clipped)
                         loss_actor = loss_actor.mean()
                         entropy = pi.entropy().mean()
 
