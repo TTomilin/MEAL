@@ -6,10 +6,12 @@ import numpy as np
 from flax.linen.initializers import orthogonal, constant
 
 
-def choose_head(t: jnp.ndarray, n_heads: int, env_idx: int):
+def choose_head(t: jnp.ndarray, n_heads: int, env_idx):
+    env_idx = jnp.asarray(env_idx, jnp.int32)          # dynamic
     b, tot = t.shape
     base = tot // n_heads
-    return t.reshape(b, n_heads, base)[:, env_idx, :]
+    t3 = t.reshape(b, n_heads, base)
+    return jnp.take(t3, env_idx, axis=1)
 
 
 class ActorCritic(nn.Module):
@@ -36,7 +38,7 @@ class ActorCritic(nn.Module):
 
     # ------------------------------------------------------------------ forward
     @nn.compact
-    def __call__(self, x, *, env_idx: int = 0):
+    def __call__(self, x, *, env_idx):
         act = self._act()
         hid = 256 if self.big_network else 128
 
