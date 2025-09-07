@@ -236,16 +236,9 @@ def main():
         # Replace underscores with spaces in legend labels
         formatted_legend_labels = [label.replace('_', ' ') for label in legend_labels]
         axes[0].legend(legend_handles, formatted_legend_labels, loc='best', frameon=True, fontsize=12)
-    elif len(args.methods) > 1:
-        # Add single legend at the bottom for multiple methods
-        if legend_handles and legend_labels:
-            # Replace underscores with spaces in legend labels
-            formatted_legend_labels = [label.replace('_', ' ') for label in legend_labels]
-            fig.legend(legend_handles, formatted_legend_labels, loc='lower center', 
-                      bbox_to_anchor=(0.5, 0.0), ncol=len(formatted_legend_labels),
-                      frameon=True, fontsize=12)
 
-    fig.text(0.5, 0.06, "Environment steps", ha="center", fontsize=14)
+    y_offset = 0.06 if len(args.methods) == 1 else 0.01
+    fig.text(0.5, y_offset, "Environment steps", ha="center", fontsize=14)
     fig.tight_layout(rect=[0, 0, 1, 1])
 
     # Modify filename for single method case
