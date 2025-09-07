@@ -614,9 +614,6 @@ def main():
         optax.adam(learning_rate=linear_schedule if config.anneal_lr else config.lr, eps=1e-5)
     )
 
-    # jit the apply function
-    network.apply = jax.jit(network.apply)
-
     # Initialize the training state
     train_state = TrainState.create(
         apply_fn=network.apply,
