@@ -614,7 +614,8 @@ def main():
         use_cnn=config.use_cnn,
         use_layer_norm=config.use_layer_norm,
         use_agent_id=config.use_agent_id,
-        num_agents=temp_env.num_agents
+        num_agents=temp_env.num_agents,
+        num_envs=config.num_envs
     )
 
     critic_network = Critic(
