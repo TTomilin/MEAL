@@ -79,6 +79,7 @@ class Config:
     cl_method: Optional[str] = None
     reg_coef: Optional[float] = None
     use_task_id: bool = True
+    use_agent_id: bool = True
     use_multihead: bool = True
     shared_backbone: bool = False
     normalize_importance: bool = False
@@ -611,7 +612,9 @@ def main():
         use_multihead=config.use_multihead,
         use_task_id=config.use_task_id,
         use_cnn=config.use_cnn,
-        use_layer_norm=config.use_layer_norm
+        use_layer_norm=config.use_layer_norm,
+        use_agent_id=config.use_agent_id,
+        num_agents=temp_env.num_agents
     )
 
     critic_network = Critic(

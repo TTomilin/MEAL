@@ -60,6 +60,9 @@ class Actor(nn.Module):
     use_task_id: bool = False
     use_cnn: bool = False
     use_layer_norm: bool = False
+    # agent ID one-hot encoding
+    use_agent_id: bool = False
+    num_agents: int = 2
 
     @nn.compact
     def __call__(self, x, *, env_idx: int = 0):
@@ -95,6 +98,15 @@ class Actor(nn.Module):
             ids = jnp.full((x.shape[0],), env_idx)
             task_onehot = jax.nn.one_hot(ids, self.num_tasks)
             x = jnp.concatenate([x, task_onehot], axis=-1)
+
+        # -------- append agent ID one-hot ------------------------------------
+        if self.use_agent_id:
+            # Create agent IDs based on batch position
+            # In MAPPO, observations are batched with agents in order
+            batch_size = x.shape[0]
+            agent_ids = jnp.arange(batch_size) % self.num_agents
+            agent_onehot = jax.nn.one_hot(agent_ids, self.num_agents)
+            x = jnp.concatenate([x, agent_onehot], axis=-1)
 
         # -------- actor head --------------------------------------------------
         logits_dim = self.action_dim * (self.num_tasks if self.use_multihead else 1)
