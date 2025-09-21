@@ -64,11 +64,17 @@ class Actor(nn.Module):
     use_agent_id: bool = False
     num_agents: int = 2
     num_envs: int = 16  # Number of parallel environments
+    # dormant neuron tracking
+    track_dormant_ratio: bool = True
+    dormant_threshold: float = 0.01
 
     @nn.compact
     def __call__(self, x, *, env_idx: int = 0):
         # Choose the activation function based on input parameter.
         act_fn = nn.relu if self.activation == "relu" else nn.tanh
+
+        # Initialize list to collect activations for dormant ratio calculation
+        activations = [] if self.track_dormant_ratio else None
 
         # CNN feature extraction if enabled
         if self.use_cnn:
@@ -97,6 +103,8 @@ class Actor(nn.Module):
             bias_init=constant(0.0)
         )(x)
         x = act_fn(x)
+        if self.track_dormant_ratio:
+            activations.append(x)
         if self.use_layer_norm:
             x = nn.LayerNorm(name="actor_dense1_ln", epsilon=1e-5)(x)
 
@@ -107,6 +115,8 @@ class Actor(nn.Module):
             bias_init=constant(0.0)
         )(x)
         x = act_fn(x)
+        if self.track_dormant_ratio:
+            activations.append(x)
         if self.use_layer_norm:
             x = nn.LayerNorm(name="actor_dense2_ln", epsilon=1e-5)(x)
 
@@ -122,7 +132,18 @@ class Actor(nn.Module):
 
         # Create a categorical distribution using the logits
         pi = distrax.Categorical(logits=logits)
-        return pi
+
+        # -------- calculate dormant neuron ratio ------------------------------
+        dormant_ratio = 0.0
+        if self.track_dormant_ratio and activations:
+            # Concatenate all activations and calculate dormant ratio
+            all_activations = jnp.concatenate([act_layer.flatten() for act_layer in activations])
+            # Count neurons with activation below threshold
+            dormant_count = jnp.sum(jnp.abs(all_activations) < self.dormant_threshold)
+            total_count = all_activations.size
+            dormant_ratio = dormant_count / total_count
+
+        return pi, dormant_ratio
 
 
 class Critic(nn.Module):
@@ -136,6 +157,9 @@ class Critic(nn.Module):
     use_task_id: bool = False
     use_cnn: bool = False
     use_layer_norm: bool = False
+    # dormant neuron tracking
+    track_dormant_ratio: bool = True
+    dormant_threshold: float = 0.01
 
     @nn.compact
     def __call__(self, x, *, env_idx: int = 0):
@@ -144,6 +168,9 @@ class Critic(nn.Module):
             activation = nn.relu
         else:
             activation = nn.tanh
+
+        # Initialize list to collect activations for dormant ratio calculation
+        activations = [] if self.track_dormant_ratio else None
 
         # CNN feature extraction if enabled
         if self.use_cnn:
@@ -162,6 +189,8 @@ class Critic(nn.Module):
             bias_init=constant(0.0)
         )(x)
         critic = activation(critic)
+        if self.track_dormant_ratio:
+            activations.append(critic)
         if self.use_layer_norm:
             critic = nn.LayerNorm(name="critic_dense1_ln", epsilon=1e-5)(critic)
 
@@ -172,6 +201,8 @@ class Critic(nn.Module):
             bias_init=constant(0.0)
         )(critic)
         critic = activation(critic)
+        if self.track_dormant_ratio:
+            activations.append(critic)
         if self.use_layer_norm:
             critic = nn.LayerNorm(name="critic_dense2_ln", epsilon=1e-5)(critic)
 
@@ -186,4 +217,14 @@ class Critic(nn.Module):
         v = choose_head(all_v, self.num_tasks, env_idx) if self.use_multihead else all_v
         value = jnp.squeeze(v, axis=-1)
 
-        return value
+        # -------- calculate dormant neuron ratio ------------------------------
+        dormant_ratio = 0.0
+        if self.track_dormant_ratio and activations:
+            # Concatenate all activations and calculate dormant ratio
+            all_activations = jnp.concatenate([act_layer.flatten() for act_layer in activations])
+            # Count neurons with activation below threshold
+            dormant_count = jnp.sum(jnp.abs(all_activations) < self.dormant_threshold)
+            total_count = all_activations.size
+            dormant_ratio = dormant_count / total_count
+
+        return value, dormant_ratio

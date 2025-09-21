@@ -131,7 +131,7 @@ def run_identical_episode(env, network, train_state, config, rng):
         obs_batch = batchify(obs, env.agents, config.num_actors, not config.use_cnn)
 
         # Get actions and values
-        pi, value = network.apply(train_state.params, obs_batch, env_idx=0)
+        pi, value, _ = network.apply(train_state.params, obs_batch, env_idx=0)
 
         # Sample actions
         rng, action_rng = jax.random.split(rng)

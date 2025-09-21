@@ -502,9 +502,9 @@ def main():
                     batched[agent] = v_b
 
                 # Sample actions
-                pi0, _ = network.apply(params, batched["agent_0"], env_idx=env_idx)
+                pi0, _, _ = network.apply(params, batched["agent_0"], env_idx=env_idx)
                 a0 = jnp.squeeze(pi0.sample(seed=key_a0), 0)
-                pi1, _ = network.apply(params, batched["agent_1"], env_idx=env_idx)
+                pi1, _, _ = network.apply(params, batched["agent_1"], env_idx=env_idx)
                 a1 = jnp.squeeze(pi1.sample(seed=key_a1), 0)
 
                 actions = {"agent_0": a0, "agent_1": a1}
@@ -586,7 +586,7 @@ def main():
                 # print("obs_shape", obs_batch.shape)
 
                 # apply the policy network to the observations to get the suggested actions and their values
-                pi, value = network.apply(train_state.params, obs_batch, env_idx=env_idx)
+                pi, value, _ = network.apply(train_state.params, obs_batch, env_idx=env_idx)
 
                 # Sample and action from the policy
                 action = pi.sample(seed=_rng)
@@ -663,7 +663,7 @@ def main():
             last_obs_batch = batchify(last_obs, env.agents, config.num_actors, not config.use_cnn)
 
             # apply the network to the batch of observations to get the value of the last state
-            _, last_val = network.apply(train_state.params, last_obs_batch, env_idx=env_idx)
+            _, last_val, _ = network.apply(train_state.params, last_obs_batch, env_idx=env_idx)
 
             def _calculate_gae(traj_batch, last_val):
                 '''
@@ -736,7 +736,7 @@ def main():
                         returns the total loss and the value loss, actor loss, and entropy
                         '''
                         # apply the network to the observations in the trajectory batch
-                        pi, value = network.apply(params, traj_batch.obs, env_idx=env_idx)
+                        pi, value, _ = network.apply(params, traj_batch.obs, env_idx=env_idx)
                         log_prob = pi.log_prob(traj_batch.action)
 
                         # calculate critic loss

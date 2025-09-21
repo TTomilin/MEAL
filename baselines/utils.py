@@ -298,7 +298,7 @@ def record_gif_of_episode(config, train_state, env, network, env_idx=0, max_step
         actions = {}
         act_keys = jax.random.split(rng, env.num_agents)
         for i, agent_id in enumerate(env.agents):
-            pi, _ = network.apply(train_state.params, obs_dict[agent_id], env_idx=env_idx)
+            pi, _, _ = network.apply(train_state.params, obs_dict[agent_id], env_idx=env_idx)
             actions[agent_id] = jnp.squeeze(pi.sample(seed=act_keys[i]), axis=0)
 
         rng, key_step = jax.random.split(rng)

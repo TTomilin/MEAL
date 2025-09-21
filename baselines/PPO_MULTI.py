@@ -423,7 +423,7 @@ def main():
                     '''
                     network_apply = train_state.apply_fn
                     params = train_state.params
-                    pi, value = network_apply(params, obs, env_idx=eval_idx)
+                    pi, value, _ = network_apply(params, obs, env_idx=eval_idx)
                     action = jnp.squeeze(pi.sample(seed=rng), axis=0)
                     return action, value
 
@@ -604,7 +604,7 @@ def main():
                 obs_batch = batchify(last_obs, env.agents, cfg.num_actors, not cfg.use_cnn)  # (num_actors, obs_dim)
 
                 # apply the policy network to the observations to get the suggested actions and their values
-                pi, value = network.apply(train_state.params, obs_batch, env_idx=env_idx)
+                pi, value, _ = network.apply(train_state.params, obs_batch, env_idx=env_idx)
 
                 # Sample and action from the policy
                 action = pi.sample(seed=_rng)
@@ -682,7 +682,7 @@ def main():
             last_obs_batch = batchify(last_obs, env.agents, cfg.num_actors, not cfg.use_cnn)
 
             # apply the network to the batch of observations to get the value of the last state
-            _, last_val = network.apply(train_state.params, last_obs_batch, env_idx=env_idx)
+            _, last_val, _ = network.apply(train_state.params, last_obs_batch, env_idx=env_idx)
 
             # this returns the value network for the last observation batch
 
@@ -759,7 +759,7 @@ def main():
                         returns the total loss and the value loss, actor loss, and entropy
                         '''
                         # apply the network to the observations in the trajectory batch
-                        pi, value = network.apply(params, traj_batch.obs, env_idx=env_idx)
+                        pi, value, _ = network.apply(params, traj_batch.obs, env_idx=env_idx)
                         log_prob = pi.log_prob(traj_batch.action)
 
                         # calculate critic loss

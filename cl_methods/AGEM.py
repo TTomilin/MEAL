@@ -246,7 +246,7 @@ def compute_memory_gradient(network, params,
     mem_values = jax.lax.stop_gradient(mem_values)
 
     def loss_fn(params):
-        pi, value = network.apply(params, mem_obs, env_idx=env_idx)  # shapes: [B]
+        pi, value, _ = network.apply(params, mem_obs, env_idx=env_idx)  # shapes: [B]
         log_prob = pi.log_prob(mem_actions)
 
         ratio = jnp.exp(log_prob - mem_log_probs)

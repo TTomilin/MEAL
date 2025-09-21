@@ -249,7 +249,7 @@ def main():
                     returns the action
                     '''
                     vars_all = {"params": train_state.params, "cbp": train_state.cbp_state}
-                    pi, value = train_state.apply_fn(vars_all, obs, train=False)
+                    pi, value, _ = train_state.apply_fn(vars_all, obs, train=False)
                     return pi.sample(seed=rng), value
 
                 # Get action distributions
@@ -422,8 +422,8 @@ def main():
                 # print("obs_shape", obs_batch.shape)
 
                 # fwd-pass the network on the observations to get the suggested actions and their values
-                # pi, value = network.apply(train_state.params, obs_batch)
-                train_state, pi, value = apply_net(train_state, obs_batch, train_flag=True)
+                # pi, value, _ = network.apply(train_state.params, obs_batch)
+                train_state, pi, value, _ = apply_net(train_state, obs_batch, train_flag=True)
 
                 # sample the actions from the policy distribution
                 action = pi.sample(seed=_rng)
@@ -565,9 +565,9 @@ def main():
                         returns the total loss and the value loss, actor loss, and entropy
                         '''
                         # fwd-pass the network on the observations in the trajectory batch
-                        # pi, value = network.apply(params, traj_batch.obs)
+                        # pi, value, _ = network.apply(params, traj_batch.obs)
                         vars_all = {"params": params, "cbp": train_state.cbp_state}
-                        pi, value = train_state.apply_fn(vars_all, traj_batch.obs, train=False)
+                        pi, value, _ = train_state.apply_fn(vars_all, traj_batch.obs, train=False)
                         log_prob = pi.log_prob(traj_batch.action)
 
                         # calculate critic loss

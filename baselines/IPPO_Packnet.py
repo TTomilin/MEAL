@@ -405,7 +405,7 @@ def main():
                         # For unified architecture
                         network_apply = train_state.apply_fn
                         params = train_state.params
-                        pi, value = network_apply(params, obs, env_idx=eval_idx)
+                        pi, value, _ = network_apply(params, obs, env_idx=eval_idx)
 
                     action = jnp.squeeze(pi.sample(seed=rng), axis=0)
                     return action, value

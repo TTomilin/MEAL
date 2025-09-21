@@ -449,7 +449,7 @@ def main():
                     '''
                     network_apply = train_state.apply_fn
                     params = train_state.params
-                    pi, value = network_apply(params, obs, env_idx=eval_idx)
+                    pi, value, _ = network_apply(params, obs, env_idx=eval_idx)
                     action = jnp.squeeze(pi.sample(seed=rng), axis=0)
                     return action, value
 
@@ -633,7 +633,7 @@ def main():
                 # print("obs_shape", obs_batch.shape)
 
                 # apply the policy network to the observations to get the suggested actions and their values
-                pi, value = network.apply(train_state.params, obs_batch, env_idx=env_idx)
+                pi, value, dormant_ratio = network.apply(train_state.params, obs_batch, env_idx=env_idx)
 
                 # Sample and action from the policy
                 action = pi.sample(seed=_rng)
@@ -711,7 +711,7 @@ def main():
             last_obs_batch = batchify(last_obs, env.agents, config.num_actors, not config.use_cnn)
 
             # apply the network to the batch of observations to get the value of the last state
-            _, last_val = network.apply(train_state.params, last_obs_batch, env_idx=env_idx)
+            _, last_val, _ = network.apply(train_state.params, last_obs_batch, env_idx=env_idx)
 
             def _calculate_gae(traj_batch, last_val):
                 '''
@@ -784,7 +784,7 @@ def main():
                         returns the total loss and the value loss, actor loss, and entropy
                         '''
                         # apply the network to the observations in the trajectory batch
-                        pi, value = network.apply(params, traj_batch.obs, env_idx=env_idx)
+                        pi, value, _ = network.apply(params, traj_batch.obs, env_idx=env_idx)
                         log_prob = pi.log_prob(traj_batch.action)
 
                         # calculate critic loss
@@ -1052,6 +1052,11 @@ def main():
             # Advantages and Targets section
             metrics["Advantage_Targets/advantages"] = advantages.mean()
             metrics["Advantage_Targets/targets"] = targets.mean()
+
+            # Dormant neuron ratio - calculate from current batch
+            obs_batch = batchify(last_obs, env.agents, config.num_actors, not config.use_cnn)
+            _, _, current_dormant_ratio = network.apply(train_state.params, obs_batch, env_idx=env_idx)
+            metrics["Neural_Activity/dormant_ratio"] = current_dormant_ratio
 
             def evaluate_and_log(rng, update_step):
                 rng, eval_rng = jax.random.split(rng)

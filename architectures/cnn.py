@@ -32,15 +32,22 @@ class CNN(nn.Module):
     name_prefix: str  # "shared" | "actor" | "critic"
     activation: str = "relu"
     use_layer_norm: bool = False
+    track_dormant_ratio: bool = True
+    dormant_threshold: float = 0.01
 
     @nn.compact
     def __call__(self, x):
         act = nn.relu if self.activation == "relu" else nn.tanh
 
+        # Initialize list to collect activations for dormant ratio calculation
+        activations = [] if self.track_dormant_ratio else None
+
         def conv(name: str, x, kernel):
             x = nn.Conv(32, kernel, name=f"{self.name_prefix}_{name}",
                         kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
             x = act(x)
+            if self.track_dormant_ratio:
+                activations.append(x)
             return x
 
         x = conv("conv1", x, (3, 3))
@@ -50,9 +57,11 @@ class CNN(nn.Module):
         x = nn.Dense(64, name=f"{self.name_prefix}_proj",
                      kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
         x = act(x)
+        if self.track_dormant_ratio:
+            activations.append(x)
         if self.use_layer_norm:
             x = nn.LayerNorm(name=f"{self.name_prefix}_proj_ln", epsilon=1e-5)(x)
-        return x
+        return x, activations
 
 
 # ─────────────────────────────── Actor‑Critic ────────────────────────────────
@@ -71,19 +80,32 @@ class ActorCritic(nn.Module):
     use_task_id: bool = False
     regularize_heads: bool = True
     use_layer_norm: bool = False
+    track_dormant_ratio: bool = True
+    dormant_threshold: float = 0.01
 
     @nn.compact
     def __call__(self, obs, *, env_idx: int = 0):
         act_fn = nn.relu if self.activation == "relu" else nn.tanh
 
+        # Initialize list to collect activations for dormant ratio calculation
+        all_activations = [] if self.track_dormant_ratio else None
+
         # ─── encoders ────────────────────────────────────────────────────
-        cnn_kwargs = dict(activation=self.activation, use_layer_norm=self.use_layer_norm)
+        cnn_kwargs = dict(activation=self.activation, use_layer_norm=self.use_layer_norm,
+                         track_dormant_ratio=self.track_dormant_ratio, dormant_threshold=self.dormant_threshold)
         if self.shared_backbone:
-            trunk = CNN("shared", **cnn_kwargs)(obs)
+            trunk, trunk_activations = CNN("shared", **cnn_kwargs)(obs)
             actor_emb = critic_emb = trunk
+            if self.track_dormant_ratio and trunk_activations:
+                all_activations.extend(trunk_activations)
         else:
-            actor_emb = CNN("actor", **cnn_kwargs)(obs)
-            critic_emb = CNN("critic", **cnn_kwargs)(obs)
+            actor_emb, actor_cnn_activations = CNN("actor", **cnn_kwargs)(obs)
+            critic_emb, critic_cnn_activations = CNN("critic", **cnn_kwargs)(obs)
+            if self.track_dormant_ratio:
+                if actor_cnn_activations:
+                    all_activations.extend(actor_cnn_activations)
+                if critic_cnn_activations:
+                    all_activations.extend(critic_cnn_activations)
 
         # ─── task one‑hot concat ─────────────────────────────────────────
         if self.use_task_id:
@@ -96,6 +118,8 @@ class ActorCritic(nn.Module):
         a = nn.Dense(128, name="actor_dense1",
                      kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(actor_emb)
         a = act_fn(a)
+        if self.track_dormant_ratio:
+            all_activations.append(a)
         if self.use_layer_norm:
             a = nn.LayerNorm(name="actor_dense1_ln", epsilon=1e-5)(a)
 
@@ -109,6 +133,8 @@ class ActorCritic(nn.Module):
         c = nn.Dense(128, name="critic_dense1",
                      kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(critic_emb)
         c = act_fn(c)
+        if self.track_dormant_ratio:
+            all_activations.append(c)
         if self.use_layer_norm:
             c = nn.LayerNorm(name="critic_dense1_ln", epsilon=1e-5)(c)
 
@@ -118,4 +144,14 @@ class ActorCritic(nn.Module):
         v = choose_head(v_all, self.num_tasks, env_idx) if self.use_multihead else v_all
         v = jnp.squeeze(v, axis=-1)
 
-        return pi, v
+        # ─── calculate dormant neuron ratio ──────────────────────────────
+        dormant_ratio = 0.0
+        if self.track_dormant_ratio and all_activations:
+            # Concatenate all activations and calculate dormant ratio
+            all_activations_flat = jnp.concatenate([act_layer.flatten() for act_layer in all_activations])
+            # Count neurons with activation below threshold
+            dormant_count = jnp.sum(jnp.abs(all_activations_flat) < self.dormant_threshold)
+            total_count = all_activations_flat.size
+            dormant_ratio = dormant_count / total_count
+
+        return pi, v, dormant_ratio
