@@ -17,7 +17,6 @@ def choose_head(t: jnp.ndarray, n_heads: int, env_idx):
 class ActorCritic(nn.Module):
     action_dim: int
     activation: str = "relu"
-    # continual-learning bells & whistles
     num_tasks: int = 1
     use_multihead: bool = False
     shared_backbone: bool = False
@@ -42,6 +41,12 @@ class ActorCritic(nn.Module):
         act = self._act()
         hid = 256 if self.big_network else 128
 
+        # -------- append task one-hot ----------------------------------------
+        if self.use_task_id:
+            ids = jnp.full((x.shape[0],), env_idx)
+            task_onehot = jax.nn.one_hot(ids, self.num_tasks)
+            x = jnp.concatenate([x, task_onehot], axis=-1)
+
         # -------- shared trunk ------------------------------------------------
         if self.shared_backbone:
             for i in range(2 + self.big_network):  # 2 or 3 layers
@@ -63,13 +68,6 @@ class ActorCritic(nn.Module):
 
             actor_in = branch("actor", x)
             critic_in = branch("critic", x)
-
-        # -------- append task one-hot ----------------------------------------
-        if self.use_task_id:
-            ids = jnp.full((x.shape[0],), env_idx)
-            task_onehot = jax.nn.one_hot(ids, self.num_tasks)
-            actor_in = jnp.concatenate([actor_in, task_onehot], axis=-1)
-            critic_in = jnp.concatenate([critic_in, task_onehot], axis=-1)
 
         # -------- actor head --------------------------------------------------
         logits_dim = self.action_dim * (self.num_tasks if self.use_multihead else 1)

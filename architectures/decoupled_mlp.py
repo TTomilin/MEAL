@@ -74,6 +74,12 @@ class Actor(nn.Module):
         if self.use_cnn:
             x = CNN("actor", activation=self.activation, use_layer_norm=self.use_layer_norm)(x)
 
+        # -------- append task one-hot ----------------------------------------
+        if self.use_task_id:
+            ids = jnp.full((x.shape[0],), env_idx)
+            task_onehot = jax.nn.one_hot(ids, self.num_tasks)
+            x = jnp.concatenate([x, task_onehot], axis=-1)
+
         # -------- append agent ID one-hot ------------------------------------
         if self.use_agent_id:
             # Create agent IDs based on batch position
@@ -103,12 +109,6 @@ class Actor(nn.Module):
         x = act_fn(x)
         if self.use_layer_norm:
             x = nn.LayerNorm(name="actor_dense2_ln", epsilon=1e-5)(x)
-
-        # -------- append task one-hot ----------------------------------------
-        if self.use_task_id:
-            ids = jnp.full((x.shape[0],), env_idx)
-            task_onehot = jax.nn.one_hot(ids, self.num_tasks)
-            x = jnp.concatenate([x, task_onehot], axis=-1)
 
         # -------- actor head --------------------------------------------------
         logits_dim = self.action_dim * (self.num_tasks if self.use_multihead else 1)
@@ -149,6 +149,12 @@ class Critic(nn.Module):
         if self.use_cnn:
             x = CNN("critic", activation=self.activation, use_layer_norm=self.use_layer_norm)(x)
 
+        # -------- append task one-hot ----------------------------------------
+        if self.use_task_id:
+            ids = jnp.full((x.shape[0],), env_idx)
+            task_onehot = jax.nn.one_hot(ids, self.num_tasks)
+            x = jnp.concatenate([x, task_onehot], axis=-1)
+
         # First hidden layer
         critic = nn.Dense(
             128,
@@ -168,12 +174,6 @@ class Critic(nn.Module):
         critic = activation(critic)
         if self.use_layer_norm:
             critic = nn.LayerNorm(name="critic_dense2_ln", epsilon=1e-5)(critic)
-
-        # -------- append task one-hot ----------------------------------------
-        if self.use_task_id:
-            ids = jnp.full((x.shape[0],), env_idx)
-            task_onehot = jax.nn.one_hot(ids, self.num_tasks)
-            critic = jnp.concatenate([critic, task_onehot], axis=-1)
 
         # -------- critic head -------------------------------------------------
         vdim = 1 * (self.num_tasks if self.use_multihead else 1)
