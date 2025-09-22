@@ -34,14 +34,24 @@ class ActorCritic(nn.Module):
     def _dense(self, n, name, gain):
         return nn.Dense(n, kernel_init=orthogonal(gain), bias_init=constant(0.0), name=name)
 
+    def _layer_dormant_ratio(self, h: jnp.ndarray, tag: str):
+        """h: (batch, hidden). Implements Sokar et al.'s τ-dormant metric."""
+        # mean |activation| per unit over the batch
+        m = jnp.mean(jnp.abs(h), axis=0)             # shape: (H,)
+        denom = jnp.mean(m) + 1e-12
+        s = m / denom                                # normalized score
+        ratio = jnp.mean(s <= self.dormant_threshold)
+        # stash per-layer ratio for logging
+        self.sow("metrics", "dormant_layer", {tag: ratio})
+        return ratio
+
     # ------------------------------------------------------------------ forward
     @nn.compact
     def __call__(self, x, *, env_idx: int = 0):
         act = self._act()
         hid = 256 if self.big_network else 128
 
-        # Initialize list to collect activations for dormant ratio calculation
-        alive_masks = [] if self.track_dormant_ratio else None
+        per_layer_ratios = []  # collect to average later
 
         # -------- append task one-hot ----------------------------------------
         if self.use_task_id:
@@ -53,9 +63,9 @@ class ActorCritic(nn.Module):
         if self.shared_backbone:
             for i in range(2 + self.big_network):  # 2 or 3 layers
                 x = self._dense(hid, f"common_dense{i + 1}", np.sqrt(2))(x)
-                if self.track_dormant_ratio:
-                    alive_masks.append(jnp.any(jnp.abs(x) > self.dormant_threshold, axis=0))
                 x = act(x)
+                if self.track_dormant_ratio:
+                    per_layer_ratios.append(self._layer_dormant_ratio(x, f"shared_{i+1}"))
                 if self.use_layer_norm:
                     x = nn.LayerNorm(name=f"common_ln{i + 1}", epsilon=1e-5)(x)
             trunk = x
@@ -63,22 +73,21 @@ class ActorCritic(nn.Module):
         else:
             # separate trunks – duplicate code for actor / critic
             def branch(prefix, inp):
-                masks = []
+                ratios = []
                 for i in range(2 + self.big_network):
                     inp = self._dense(hid, f"{prefix}_dense{i + 1}", np.sqrt(2))(inp)
-                    if self.track_dormant_ratio:
-                        masks.append(jnp.any(jnp.abs(inp) > self.dormant_threshold, axis=0))
                     inp = act(inp)
+                    if self.track_dormant_ratio:
+                        ratios.append(self._layer_dormant_ratio(inp, f"{prefix}_{i+1}"))
                     if self.use_layer_norm:
                         inp = nn.LayerNorm(name=f"{prefix}_ln{i + 1}", epsilon=1e-5)(inp)
-                return inp, masks
+                return inp, ratios
 
-            actor_in, actor_masks = branch("actor", x)
-            critic_in, critic_masks = branch("critic", x)
-
+            actor_in, actor_ratios = branch("actor", x)
+            critic_in, critic_ratios = branch("critic", x)
             if self.track_dormant_ratio:
-                alive_masks.extend(actor_masks)
-                alive_masks.extend(critic_masks)
+                per_layer_ratios.extend(actor_ratios)
+                per_layer_ratios.extend(critic_ratios)
 
         # -------- actor head --------------------------------------------------
         logits_dim = self.action_dim * (self.num_tasks if self.use_multihead else 1)
@@ -93,10 +102,10 @@ class ActorCritic(nn.Module):
         v = jnp.squeeze(v, -1)
 
         # -------- calculate dormant neuron ratio ------------------------------
-        dormant_ratio = 0.0
-        if self.track_dormant_ratio and alive_masks:
-            # each mask is (hidden,), True = alive
-            all_alive = jnp.concatenate([m.astype(jnp.float32) for m in alive_masks])  # (sum_hidden,)
-            dormant_ratio = 1.0 - jnp.mean(all_alive)
+        if self.track_dormant_ratio and per_layer_ratios:
+            # average of per-layer dormant ratios
+            dormant_ratio = jnp.mean(jnp.array(per_layer_ratios))
+        else:
+            dormant_ratio = jnp.array(0.0, dtype=jnp.float32)
 
         return pi, v, dormant_ratio
