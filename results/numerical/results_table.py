@@ -39,6 +39,73 @@ def _mean_ci(series: List[float]) -> ConfInt:
     return mean, float(ci)
 
 
+def _calculate_curve_based_forgetting(task_curve: np.ndarray, training_end_idx: int = None) -> float:
+    """
+    Calculate normalized forgetting where 0 = no forgetting and 1 = complete forgetting.
+
+    Forgetting is normalized such that:
+    - 0 means performance never drops below the end-of-training performance
+    - 1 means performance drops to 0 right after training finishes and stays there
+
+    Args:
+        task_curve: Performance curve for a single task over time
+        training_end_idx: Index where training for this task ends. If None, uses the last index.
+
+    Returns:
+        Normalized forgetting score between 0 and 1
+    """
+    if len(task_curve) <= 1:
+        return 0.0
+
+    # Determine the end-of-training index
+    if training_end_idx is None or training_end_idx >= len(task_curve):
+        training_end_idx = len(task_curve) - 1
+
+    # Use the performance at the end of training as the baseline reference
+    end_of_training_performance = task_curve[training_end_idx - 1]
+
+    # Only consider performance after the end of training for forgetting calculation
+    if training_end_idx >= len(task_curve) - 1:
+        # Training ends at the last point, so no forgetting can be measured
+        return 0.0
+
+    post_training_curve = task_curve[training_end_idx + 1:]
+
+    # Calculate forgetting at each time step after training ends
+    # Forgetting = max(0, end_of_training_performance - current_performance)
+    forgetting_at_each_step = np.maximum(end_of_training_performance - post_training_curve, 0.0)
+
+    # Normalize forgetting by end_of_training_performance to get values between 0 and 1
+    # This makes 1.0 represent complete forgetting (performance drops to 0)
+    normalized_forgetting_at_each_step = forgetting_at_each_step / end_of_training_performance
+
+    # Weight forgetting by how early it occurs (earlier forgetting gets higher weight)
+    # Use exponential decay: weight = exp(-λ * (t / T)) where t is time step, T is total time
+    lambda_decay = 2.0  # Higher values penalize early forgetting more
+    time_steps = np.arange(len(post_training_curve))
+    total_time = len(post_training_curve) - 1
+
+    if total_time > 0:
+        # Normalize time to [0, 1] and apply exponential decay
+        normalized_time = time_steps / total_time
+        weights = np.exp(-lambda_decay * normalized_time)
+    else:
+        weights = np.ones(len(post_training_curve))
+
+    # Calculate weighted normalized forgetting
+    weighted_forgetting = normalized_forgetting_at_each_step * weights
+
+    # Calculate the weighted average forgetting score
+    # Use the sum of weights to properly normalize the weighted average
+    if len(weighted_forgetting) > 0 and np.sum(weights) > 0:
+        curve_based_forgetting = np.sum(weighted_forgetting) / np.sum(weights)
+    else:
+        curve_based_forgetting = 0.0
+
+    # Ensure the result is between 0 and 1
+    return float(np.clip(curve_based_forgetting, 0.0, 1.0))
+
+
 def compute_metrics(
         data_root: Path,
         algo: str,
@@ -252,15 +319,32 @@ def compute_metrics(
             else:
                 FT_seeds.append(np.nan)
 
-            # Forgetting (F) – drop from best‑ever to final performance
+            # Forgetting (F) – curve-based forgetting that considers when forgetting occurs
             f_vals = []
             final_idx = env_mat.shape[1] - 1
-            fw_start = max(0, final_idx - end_window_evals + 1)
+
             # Process all series (NaN values have been replaced with zeros)
             for i in range(seq_len):
-                final_avg = np.nanmean(env_mat[i, fw_start : final_idx + 1])
-                best_perf = np.nanmax(env_mat[i, : final_idx + 1])
-                f_vals.append(max(best_perf - final_avg, 0.0))
+                task_curve = env_mat[i, : final_idx + 1]
+
+                # Calculate when training for task i ends in the evaluation timeline
+                # Training for task i ends at (i + 1) * chunk in the training timeline
+                # Map this proportionally to the evaluation timeline
+                training_end_step = (i + 1) * chunk
+                if n_train > 0:
+                    # Map training timeline to evaluation timeline proportionally
+                    training_end_idx = int((training_end_step / n_train) * len(task_curve))
+                    # Ensure the index is within bounds
+                    training_end_idx = min(training_end_idx, len(task_curve) - 1)
+                else:
+                    # Fallback: use the end of the curve
+                    training_end_idx = len(task_curve) - 1
+
+                # Calculate curve-based forgetting using end-of-training performance
+                if any(task_curve > 0.0):  # If end-of-training performance is 0 or negative, no meaningful forgetting can be calculated
+                    curve_forgetting = _calculate_curve_based_forgetting(task_curve, training_end_idx)
+                    f_vals.append(curve_forgetting)
+
             F_seeds.append(float(np.nanmean(f_vals)))
 
         # Aggregate across seeds
