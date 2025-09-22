@@ -32,10 +32,7 @@ class ActorCritic(nn.Module):
         return nn.relu if self.activation == "relu" else nn.tanh
 
     def _dense(self, n, name, gain):
-        return nn.Dense(n,
-                        kernel_init=orthogonal(gain),
-                        bias_init=constant(0.0),
-                        name=name)
+        return nn.Dense(n, kernel_init=orthogonal(gain), bias_init=constant(0.0), name=name)
 
     # ------------------------------------------------------------------ forward
     @nn.compact
@@ -44,7 +41,7 @@ class ActorCritic(nn.Module):
         hid = 256 if self.big_network else 128
 
         # Initialize list to collect activations for dormant ratio calculation
-        activations = [] if self.track_dormant_ratio else None
+        alive_masks = [] if self.track_dormant_ratio else None
 
         # -------- append task one-hot ----------------------------------------
         if self.use_task_id:
@@ -56,9 +53,9 @@ class ActorCritic(nn.Module):
         if self.shared_backbone:
             for i in range(2 + self.big_network):  # 2 or 3 layers
                 x = self._dense(hid, f"common_dense{i + 1}", np.sqrt(2))(x)
-                x = act(x)
                 if self.track_dormant_ratio:
-                    activations.append(x)
+                    alive_masks.append(self._alive_from_preact(x, self.activation, self.dormant_threshold))
+                x = act(x)
                 if self.use_layer_norm:
                     x = nn.LayerNorm(name=f"common_ln{i + 1}", epsilon=1e-5)(x)
             trunk = x
@@ -66,22 +63,22 @@ class ActorCritic(nn.Module):
         else:
             # separate trunks – duplicate code for actor / critic
             def branch(prefix, inp):
-                branch_activations = []
+                masks = []
                 for i in range(2 + self.big_network):
                     inp = self._dense(hid, f"{prefix}_dense{i + 1}", np.sqrt(2))(inp)
-                    inp = act(inp)
                     if self.track_dormant_ratio:
-                        branch_activations.append(inp)
+                        masks.append(self._alive_from_preact(inp, self.activation, self.dormant_threshold))
+                    inp = act(inp)
                     if self.use_layer_norm:
                         inp = nn.LayerNorm(name=f"{prefix}_ln{i + 1}", epsilon=1e-5)(inp)
-                return inp, branch_activations
+                return inp, masks
 
-            actor_in, actor_activations = branch("actor", x)
-            critic_in, critic_activations = branch("critic", x)
+            actor_in, actor_masks = branch("actor", x)
+            critic_in, critic_masks = branch("critic", x)
 
             if self.track_dormant_ratio:
-                activations.extend(actor_activations)
-                activations.extend(critic_activations)
+                alive_masks.extend(actor_masks)
+                alive_masks.extend(critic_masks)
 
         # -------- actor head --------------------------------------------------
         logits_dim = self.action_dim * (self.num_tasks if self.use_multihead else 1)
@@ -97,12 +94,9 @@ class ActorCritic(nn.Module):
 
         # -------- calculate dormant neuron ratio ------------------------------
         dormant_ratio = 0.0
-        if self.track_dormant_ratio and activations:
-            # Concatenate all activations and calculate dormant ratio
-            all_activations = jnp.concatenate([act_layer.flatten() for act_layer in activations])
-            # Count neurons with activation below threshold
-            dormant_count = jnp.sum(jnp.abs(all_activations) < self.dormant_threshold)
-            total_count = all_activations.size
-            dormant_ratio = dormant_count / total_count
+        if self.track_dormant_ratio and alive_masks:
+            # each mask is (hidden,), True = alive
+            all_alive = jnp.concatenate([m.astype(jnp.float32) for m in alive_masks])  # (sum_hidden,)
+            dormant_ratio = 1.0 - jnp.mean(all_alive)
 
         return pi, v, dormant_ratio
