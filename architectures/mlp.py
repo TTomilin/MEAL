@@ -54,7 +54,7 @@ class ActorCritic(nn.Module):
             for i in range(2 + self.big_network):  # 2 or 3 layers
                 x = self._dense(hid, f"common_dense{i + 1}", np.sqrt(2))(x)
                 if self.track_dormant_ratio:
-                    alive_masks.append(self._alive_from_preact(x, self.activation, self.dormant_threshold))
+                    alive_masks.append(jnp.any(jnp.abs(x) > self.dormant_threshold, axis=0))
                 x = act(x)
                 if self.use_layer_norm:
                     x = nn.LayerNorm(name=f"common_ln{i + 1}", epsilon=1e-5)(x)
@@ -67,7 +67,7 @@ class ActorCritic(nn.Module):
                 for i in range(2 + self.big_network):
                     inp = self._dense(hid, f"{prefix}_dense{i + 1}", np.sqrt(2))(inp)
                     if self.track_dormant_ratio:
-                        masks.append(self._alive_from_preact(inp, self.activation, self.dormant_threshold))
+                        masks.append(jnp.any(jnp.abs(inp) > self.dormant_threshold, axis=0))
                     inp = act(inp)
                     if self.use_layer_norm:
                         inp = nn.LayerNorm(name=f"{prefix}_ln{i + 1}", epsilon=1e-5)(inp)
