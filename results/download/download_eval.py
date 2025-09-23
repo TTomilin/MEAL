@@ -37,12 +37,13 @@ from results.download.common import cli, want, experiment_suffix
 EVAL_PREFIX = "Evaluation/Soup_Scaled/"
 KEY_PATTERN = re.compile(rf"^{re.escape(EVAL_PREFIX)}(\d+)__(.+)_(\d+)$")
 TRAINING_KEY = "Soup/scaled"
+DORMANT_RATIO_KEY = "Neural_Activity/dormant_ratio"
 
 
 # ---------------------------------------------------------------------------
 # HELPERS
 # ---------------------------------------------------------------------------
-def discover_eval_keys(run: Run) -> List[str]:
+def discover_eval_keys(run: Run, include_dormant_ratio: bool = False) -> List[str]:
     """Retrieve & sort eval keys, plus the one training key if present."""
     df = run.history(samples=500)
     # only exact eval keys
@@ -50,11 +51,21 @@ def discover_eval_keys(run: Run) -> List[str]:
     # include training series, if logged
     if TRAINING_KEY in df.columns:
         keys.append(TRAINING_KEY)
+    # include dormant ratio, if requested and logged
+    if include_dormant_ratio and DORMANT_RATIO_KEY in df.columns:
+        keys.append(DORMANT_RATIO_KEY)
 
-    # sort eval ones by idx, leave training last
+    # sort eval ones by idx, leave training and dormant ratio last
     def idx_of(key: str) -> int:
         m = KEY_PATTERN.match(key)
-        return int(m.group(1)) if m else 10 ** 6
+        if m:
+            return int(m.group(1))
+        elif key == TRAINING_KEY:
+            return 10 ** 6
+        elif key == DORMANT_RATIO_KEY:
+            return 10 ** 6 + 1
+        else:
+            return 10 ** 6 + 2
 
     return sorted(keys, key=idx_of)
 
@@ -127,7 +138,7 @@ def main() -> None:
                 continue
 
         # find eval keys as W&B actually logged them
-        eval_keys = discover_eval_keys(run)
+        eval_keys = discover_eval_keys(run, include_dormant_ratio=args.include_dormant_ratio)
         if not eval_keys:
             print(f"[warn] {run.name} has no Scaled_returns/ keys")
             continue
@@ -149,10 +160,12 @@ def main() -> None:
         print(f"[info] Output path: {out_base}")
 
         # iterate keys, skipping existing files unless overwrite
-        for key in discover_eval_keys(run):
+        for key in discover_eval_keys(run, include_dormant_ratio=args.include_dormant_ratio):
             # choose filename
             if key == TRAINING_KEY:
                 filename = f"training_soup.{ext}"
+            elif key == DORMANT_RATIO_KEY:
+                filename = f"dormant_ratio.{ext}"
             else:
                 idx, name, _ = KEY_PATTERN.match(key).groups()
                 filename = f"{idx}_{name}_soup.{ext}"

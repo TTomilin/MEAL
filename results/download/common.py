@@ -40,6 +40,10 @@ def cli() -> argparse.Namespace:
     # Number of agents parameter
     p.add_argument("--num_agents", type=int, default=None, help="Filter by number of agents")
 
+    # Neural activity parameters
+    p.add_argument("--include_dormant_ratio", action="store_true", 
+                   help="Also download Neural_Activity/dormant_ratio data")
+
     return p.parse_args()
 
 
