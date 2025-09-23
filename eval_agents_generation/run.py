@@ -6,7 +6,7 @@ import wandb
 import tyro
 import json
 
-from jax_marl.environments.overcooked.layouts import easy_layouts
+from jax_marl.environments.overcooked.layouts import overcooked_layouts
 
 from dataclasses import asdict, dataclass
 from eval_agents_generation.BRDiv import run_brdiv
@@ -33,7 +33,7 @@ class TrainConfig:
     layout_idx: int = 0
     layout_name: str = ""  # If specified, overrides layout_idx
 
-    rew_shaping_horizon: int = 1e7
+    rew_shaping_horizon: int = 2.5e8
     num_agents: int = 2
 
     # teammate generation
@@ -57,14 +57,14 @@ class TrainConfig:
     num_envs_xp: int = 32
     num_envs_sp: int = 32
     num_steps: int = 400
-    total_timesteps: int = 5e7
+    total_timesteps: int = 2.5e8
     update_epochs: int = 15
     num_minibatches: int = 16
     gamma: float = 0.99
     gae_lambda: float = 0.95
-    clip_eps: float = 0.05
-    ent_coef: float = 0.01
-    vf_coef: float = 0.5
+    clip_eps: float = 0.1
+    ent_coef: float = 0.05
+    vf_coef: float = 1.0
     max_grad_norm: float = 1.0
 
     # Eval
@@ -158,7 +158,7 @@ def run_training():
         print(f"Saved to {save_dir}/config.pckl")
 
     if config.layout_name != "":
-        layout_dict = {"layout":  easy_layouts[config.layout_name]}
+        layout_dict = {"layout":  overcooked_layouts[config.layout_name]}
     else:
         layouts = read_layouts(config)
         layout_dict = {"layout": frozendict_from_layout_repr(

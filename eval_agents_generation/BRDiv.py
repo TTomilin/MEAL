@@ -7,7 +7,6 @@ python teammate_generation/run.py algorithm=brdiv/lbf task=lbf label=test_brdiv 
 Limitations: does not support recurrent actors.
 '''
 import time
-import os
 import logging
 from typing import NamedTuple
 from functools import partial
@@ -24,6 +23,7 @@ from eval_agents.population_interface import AgentPopulation
 from jax_marl.registration import make
 from jax_marl.wrappers.baselines import LogWrapper
 
+from eval_agents_generation.utils import get_metric_names, get_stats
 from eval_agents_generation.save_load_utils import save_train_run
 from eval_agents_generation.run_episodes import run_episodes
 from eval_agents_generation.utils import unbatchify, _create_minibatches
@@ -43,13 +43,6 @@ class XPTransition(NamedTuple):
     obs: jnp.ndarray
     info: jnp.ndarray
     avail_actions: jnp.ndarray
-
-
-def get_metric_names(env_name):
-    if "overcooked" in env_name:
-        return ("base_return", "returned_episode_returns")
-    else:
-        return ("returned_episode_returns",)
 
 
 def _get_all_ids(pop_size):

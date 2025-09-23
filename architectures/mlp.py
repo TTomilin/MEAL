@@ -48,7 +48,7 @@ class ActorCritic(nn.Module):
 
         # -------- append task one-hot ----------------------------------------
         if self.use_task_id:
-            ids = jnp.full((x.shape[0],), env_idx)
+            ids = jnp.full((*x.shape[:-1],), env_idx)
             task_onehot = jax.nn.one_hot(ids, self.num_tasks)
             x = jnp.concatenate([x, task_onehot], axis=-1)
 
@@ -68,12 +68,14 @@ class ActorCritic(nn.Module):
             def branch(prefix, inp):
                 branch_activations = []
                 for i in range(2 + self.big_network):
-                    inp = self._dense(hid, f"{prefix}_dense{i + 1}", np.sqrt(2))(inp)
+                    inp = self._dense(
+                        hid, f"{prefix}_dense{i + 1}", np.sqrt(2))(inp)
                     inp = act(inp)
                     if self.track_dormant_ratio:
                         branch_activations.append(inp)
                     if self.use_layer_norm:
-                        inp = nn.LayerNorm(name=f"{prefix}_ln{i + 1}", epsilon=1e-5)(inp)
+                        inp = nn.LayerNorm(
+                            name=f"{prefix}_ln{i + 1}", epsilon=1e-5)(inp)
                 return inp, branch_activations
 
             actor_in, actor_activations = branch("actor", x)
@@ -84,24 +86,30 @@ class ActorCritic(nn.Module):
                 activations.extend(critic_activations)
 
         # -------- actor head --------------------------------------------------
-        logits_dim = self.action_dim * (self.num_tasks if self.use_multihead else 1)
+        logits_dim = self.action_dim * \
+            (self.num_tasks if self.use_multihead else 1)
         all_logits = self._dense(logits_dim, "actor_head", 0.01)(actor_in)
-        logits = choose_head(all_logits, self.num_tasks, env_idx) if self.use_multihead else all_logits
+
+        logits = choose_head(all_logits, self.num_tasks,
+                             env_idx) if self.use_multihead else all_logits
         pi = distrax.Categorical(logits=logits)
 
         # -------- critic head -------------------------------------------------
         vdim = 1 * (self.num_tasks if self.use_multihead else 1)
         all_v = self._dense(vdim, "critic_head", 1.0)(critic_in)
-        v = choose_head(all_v, self.num_tasks, env_idx) if self.use_multihead else all_v
+        v = choose_head(all_v, self.num_tasks,
+                        env_idx) if self.use_multihead else all_v
         v = jnp.squeeze(v, -1)
 
         # -------- calculate dormant neuron ratio ------------------------------
         dormant_ratio = 0.0
         if self.track_dormant_ratio and activations:
             # Concatenate all activations and calculate dormant ratio
-            all_activations = jnp.concatenate([act_layer.flatten() for act_layer in activations])
+            all_activations = jnp.concatenate(
+                [act_layer.flatten() for act_layer in activations])
             # Count neurons with activation below threshold
-            dormant_count = jnp.sum(jnp.abs(all_activations) < self.dormant_threshold)
+            dormant_count = jnp.sum(
+                jnp.abs(all_activations) < self.dormant_threshold)
             total_count = all_activations.size
             dormant_ratio = dormant_count / total_count
 

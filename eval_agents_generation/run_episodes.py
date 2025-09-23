@@ -8,7 +8,7 @@ import jax.numpy as jnp
 
 def run_single_episode(rng, env, agent_0_param, agent_0_policy,
                        agent_1_param, agent_1_policy,
-                       max_episode_steps, agent_0_test_mode=False, agent_1_test_mode=False):
+                       max_episode_steps, env_id_idx=0, agent_0_test_mode=False, agent_1_test_mode=False):
     # Reset the env.
     rng, reset_rng = jax.random.split(rng)
     init_obs, init_env_state = env.reset(reset_rng)
@@ -31,11 +31,12 @@ def run_single_episode(rng, env, agent_0_param, agent_0_policy,
     # Get ego action
     act_0, hstate_0 = agent_0_policy.get_action(
         params=agent_0_param,
-        obs=init_obs["agent_0"].reshape(1, 1, -1),
-        done=init_done["agent_0"].reshape(1, 1),
+        obs=init_obs["agent_0"].reshape(1, -1),
+        done=init_done["agent_0"].reshape(1),
         avail_actions=avail_actions_0,
         hstate=init_hstate_0,
         rng=act0_rng,
+        env_id_idx=env_id_idx,
         aux_obs=None,
         env_state=init_env_state,
         test_mode=agent_0_test_mode
@@ -45,11 +46,12 @@ def run_single_episode(rng, env, agent_0_param, agent_0_policy,
     # Get partner action using the underlying policy class's get_action method directly
     act_1, hstate_1 = agent_1_policy.get_action(
         params=agent_1_param,
-        obs=init_obs["agent_1"].reshape(1, 1, -1),
-        done=init_done["agent_1"].reshape(1, 1),
+        obs=init_obs["agent_1"].reshape(1, -1),
+        done=init_done["agent_1"].reshape(1),
         avail_actions=avail_actions_1,
         hstate=init_hstate_1,  # shape of entry 0 is (1, 1, 8)
         rng=act1_rng,
+        env_id_idx=env_id_idx,
         aux_obs=None,
         env_state=init_env_state,
         test_mode=agent_1_test_mode
@@ -79,26 +81,28 @@ def run_single_episode(rng, env, agent_0_param, agent_0_policy,
             rng, act0_rng, act1_rng, step_rng = jax.random.split(rng, 4)
             act_0, hstate_0_next = agent_0_policy.get_action(
                 params=agent_0_param,
-                obs=obs["agent_0"].reshape(1, 1, -1),
-                done=done["agent_0"].reshape(1, 1),
+                obs=obs["agent_0"].reshape(1, -1),
+                done=done["agent_0"].reshape(1),
                 avail_actions=avail_actions_0,
                 hstate=hstate_0,
                 rng=act0_rng,
                 env_state=env_state,
-                test_mode=agent_0_test_mode
+                test_mode=agent_0_test_mode,
+                env_id_idx=env_id_idx,
             )
             act_0 = act_0.squeeze()
 
             # Get partner action with proper hidden state tracking
             act_1, hstate_1_next = agent_1_policy.get_action(
                 params=agent_1_param,
-                obs=obs["agent_1"].reshape(1, 1, -1),
-                done=done["agent_1"].reshape(1, 1),
+                obs=obs["agent_1"].reshape(1, -1),
+                done=done["agent_1"].reshape(1),
                 avail_actions=avail_actions_1,
                 hstate=hstate_1,
                 rng=act1_rng,
                 env_state=env_state,
-                test_mode=agent_1_test_mode
+                test_mode=agent_1_test_mode,
+                env_id_idx=env_id_idx,
             )
             act_1 = act_1.squeeze()
 
@@ -126,7 +130,7 @@ def run_single_episode(rng, env, agent_0_param, agent_0_policy,
 
 def run_episodes(rng, env, agent_0_param, agent_0_policy,
                  agent_1_param, agent_1_policy,
-                 max_episode_steps, num_eps, agent_0_test_mode=False, agent_1_test_mode=False):
+                 max_episode_steps, num_eps, env_id_idx=0, agent_0_test_mode=False, agent_1_test_mode=False):
     '''Given a single ego agent and a single partner agent, run num_eps episodes in parallel using vmap.'''
     # Create episode-specific RNGs
     rngs = jax.random.split(rng, num_eps + 1)
@@ -136,8 +140,8 @@ def run_episodes(rng, env, agent_0_param, agent_0_policy,
     vmap_run_single_episode = jax.jit(jax.vmap(
         lambda ep_rng: run_single_episode(
             ep_rng, env, agent_0_param, agent_0_policy,
-            agent_1_param, agent_1_policy, max_episode_steps,
-            agent_0_test_mode, agent_1_test_mode
+            agent_1_param, agent_1_policy, max_episode_steps, env_id_idx,
+            agent_0_test_mode, agent_1_test_mode,
         )
     ))
     # Run episodes in parallel

@@ -6,6 +6,9 @@ import re
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 
+from functools import partial
+
+
 KEYS_WITH_ARRAYS = [
     "wall_idx",
     "agent_idx",
@@ -14,6 +17,51 @@ KEYS_WITH_ARRAYS = [
     "onion_pile_idx",
     "pot_idx",
 ]
+
+
+def get_metric_names(env_name):
+    if "overcooked-v1" in env_name:
+        return ("base_return", "returned_episode_returns")
+    else:
+        return ("returned_episode_returns",)
+
+
+@partial(jax.jit, static_argnames=['stats'])
+def get_stats(metrics, stats: tuple):
+    '''
+    Computes mean and std of metrics of interest for each seed and update, 
+    using only the final steps of episodes. Note that each rollout contains multiple episodes.
+
+    metrics is a pytree where each leaf has shape 
+        (..., rollout_length, num_envs)
+    stats is a tuple of strings, each corresponding to a metric of interest in metrics
+    '''
+    # Get mask for final steps of episodes
+    mask = metrics["returned_episode"]
+
+    # Initialize output dictionary
+    all_stats = {}
+    # convert to list to correctly iterate if the tuple only has a single element
+    stats = list(stats)
+    for stat_name in stats:
+        # Get the metric array
+        # Shape: (..., rollout_length, num_envs)
+        metric_data = metrics[stat_name]
+
+        # Compute means and stds for each seed and update
+        # Use masked operations to only consider final episode steps
+        means = jnp.where(mask, metric_data, 0).sum(
+            axis=(-2, -1)) / mask.sum(axis=(-2, -1))
+        # For std, first compute masked values
+        masked_vals = jnp.where(mask, metric_data, 0)
+        squared_diff = (masked_vals - means[..., None, None]) ** 2
+        variance = jnp.where(mask, squared_diff, 0).sum(
+            axis=(-2, -1)) / mask.sum(axis=(-2, -1))
+        stds = jnp.sqrt(variance)
+        # Stack means and stds
+        all_stats[stat_name] = jnp.stack([means, stds], axis=-1)
+
+    return all_stats
 
 
 def _parse_int_list(block: str):
@@ -128,4 +176,27 @@ def _create_minibatches(traj_batch, advantages, targets, init_hstate, num_actors
         shuffled_batch,
     )
 
+    return minibatches
+
+
+def _create_minibatches_no_time(traj_batch, advantages, targets, init_hstate, num_actors, num_minibatches, batch_size, perm_rng):
+    # reshape the batch to be compatible with the network
+    batch = (init_hstate, traj_batch, advantages, targets)
+    batch = jax.tree_util.tree_map(
+        f=(lambda x: x.reshape((batch_size,) + x.shape[2:])), tree=batch
+    )
+    # split the random number generator for shuffling the batch
+    rng, _rng = jax.random.split(perm_rng)
+
+    # creates random sequences of numbers from 0 to batch_size, one for each vmap
+    permutation = jax.random.permutation(_rng, batch_size)
+
+    # shuffle the batch
+    shuffled_batch = jax.tree_util.tree_map(
+        lambda x: jnp.take(x, permutation, axis=0), batch
+    )  # outputs a tuple of the batch, advantages, and targets shuffled
+
+    minibatches = jax.tree_util.tree_map(
+        f=(lambda x: jnp.reshape(x, [num_minibatches, -1] + list(x.shape[1:]))), tree=shuffled_batch,
+    )
     return minibatches

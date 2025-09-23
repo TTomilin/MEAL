@@ -13,7 +13,7 @@ class ActorCritic(nn.Module):
     fc_hidden_dim: int = 64
 
     @nn.compact
-    def __call__(self, x):
+    def __call__(self, x, env_id_idx=0):
         if self.activation == "relu":
             activation = nn.relu
         else:

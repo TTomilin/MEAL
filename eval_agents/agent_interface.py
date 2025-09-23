@@ -1,4 +1,5 @@
 import abc
+from ast import Break
 from typing import Tuple, Dict
 import chex
 from functools import partial
@@ -8,6 +9,9 @@ import jax.numpy as jnp
 from eval_agents.mlp_actor_critic import ActorCritic
 from eval_agents.mlp_actor_critic import ActorWithDoubleCritic
 from eval_agents.mlp_actor_critic import ActorWithConditionalCritic
+
+
+from architectures.mlp import ActorCritic as ActorCriticCL
 
 
 class AgentPolicy(abc.ABC):
@@ -47,7 +51,7 @@ class AgentPolicy(abc.ABC):
     def get_action_value_policy(self, params, obs, done, avail_actions, hstate, rng,
                                 aux_obs=None, env_state=None) -> Tuple[int, chex.Array, chex.Array, chex.Array]:
         """
-        Computes the action, value, and policy given an observation, 
+        Computes the action, value, and policy given an observation,
         done flag, available actions, hidden state, and random key.
 
         Args:
@@ -59,7 +63,7 @@ class AgentPolicy(abc.ABC):
             key (jax.random.PRNGKey): The random key.
             aux_obs (chex.Array): an optional auxiliary vector to append to the observation
         Returns:
-            Tuple[int, chex.Array, chex.Array, chex.Array]: 
+            Tuple[int, chex.Array, chex.Array, chex.Array]:
                 A tuple containing the action, value, policy, and new hidden state.
         """
         pass
@@ -68,8 +72,8 @@ class AgentPolicy(abc.ABC):
         """Initialize the hidden state for the policy.
         Args:
             batch_size: int, the batch size of the hidden state
-            aux_info: any auxiliary information needed to initialize the hidden state at the 
-            start of an episode (e.g. the agent id). 
+            aux_info: any auxiliary information needed to initialize the hidden state at the
+            start of an episode (e.g. the agent id).
         Returns:
             chex.Array: the initialized hidden state
         """
@@ -78,6 +82,44 @@ class AgentPolicy(abc.ABC):
     def init_params(self, rng) -> Dict:
         """Initialize the parameters for the policy."""
         return None
+
+
+class MLPActorCriticPolicyCL(AgentPolicy):
+    """Policy wrapper for MLP Actor-Critic for continual learning"""
+
+    def __init__(self, ac, obs_dim):
+        """
+        Args:
+            action_dim: int, dimension of the action space
+            obs_dim: int, dimension of the observation space
+            activation: str, activation function to use
+        """
+        super().__init__(6, obs_dim)
+        # self.activation = activation
+        self.network = ac
+
+    @partial(jax.jit, static_argnums=(0, 7))
+    def get_action(self, params, obs, done, avail_actions, hstate, rng,
+                   env_id_idx=0, aux_obs=None, env_state=None, test_mode=False):
+        """Get actions for the MLP policy."""
+        pi, _, _ = self.network.apply(params, obs, env_idx=env_id_idx)
+        action = jax.lax.cond(test_mode,
+                              lambda: pi.mode(),
+                              lambda: pi.sample(seed=rng))
+        return action, None  # no hidden state
+
+    @partial(jax.jit, static_argnums=(0, 7))
+    def get_action_value_policy(self, params, obs, done, avail_actions, hstate, rng,
+                                env_id_idx=0, aux_obs=None, env_state=None):
+        """Get actions, values, and policy for the MLP policy."""
+        pi, val, _ = self.network.apply(params, obs, env_idx=env_id_idx)
+        action = pi.sample(seed=rng)
+        return action, val, pi, None  # no hidden state
+
+    def init_params(self, rng):
+        """Initialize parameters for the MLP policy."""
+        dummy_obs = jnp.zeros((1, self.obs_dim,))
+        return self.network.init(rng, dummy_obs, env_idx=0)
 
 
 class MLPActorCriticPolicy(AgentPolicy):
@@ -195,7 +237,7 @@ class ActorWithConditionalCriticPolicy(AgentPolicy):
 
     @partial(jax.jit, static_argnums=(0,))
     def get_action(self, params, obs, done, avail_actions, hstate, rng,
-                   aux_obs=None, env_state=None, test_mode=False):
+                   env_id_idx=0, aux_obs=None, env_state=None, test_mode=False):
         """Get actions."""
         # The agent id is only used by the critic, so we pass in a
         # dummy vector to represent the one-hot agent id
@@ -209,9 +251,9 @@ class ActorWithConditionalCriticPolicy(AgentPolicy):
 
     @partial(jax.jit, static_argnums=(0,))
     def get_action_value_policy(self, params, obs, done, avail_actions, hstate, rng,
-                                aux_obs=None, env_state=None):
+                                env_id_idx=0, aux_obs=None, env_state=None):
         """Get actions, values, and policy for the policy with conditional critics.
-        The auxiliary observation should be used to pass in the agent ids that we wish to predict 
+        The auxiliary observation should be used to pass in the agent ids that we wish to predict
         values for.
         """
         pi, value = self.network.apply(params, (obs, aux_obs, avail_actions))
@@ -251,7 +293,7 @@ class RNNActorCriticPolicy(AgentPolicy):
                  activation="tanh", fc_hidden_dim=64, gru_hidden_dim=64):
         """
         Args:
-            action_dim: int, dimension of the action space  
+            action_dim: int, dimension of the action space
             obs_dim: int, dimension of the observation space
             activation: str, activation function to use
             fc_hidden_dim: int, dimension of the feed-forward hidden layers
@@ -269,10 +311,10 @@ class RNNActorCriticPolicy(AgentPolicy):
     @partial(jax.jit, static_argnums=(0,))
     def get_action(self, params, obs, done, avail_actions, hstate, rng,
                    aux_obs=None, env_state=None, test_mode=False):
-        """Get actions for the RNN policy. 
+        """Get actions for the RNN policy.
         Shape of obs, done, avail_actions should correspond to (seq_len, batch_size, ...)
-        Shape of hstate should correspond to (1, batch_size, -1). We maintain the extra first dimension for 
-        compatibility with the learning codes. 
+        Shape of hstate should correspond to (1, batch_size, -1). We maintain the extra first dimension for
+        compatibility with the learning codes.
         """
         batch_size = obs.shape[1]
         new_hstate, pi, _ = self.network.apply(
@@ -287,8 +329,8 @@ class RNNActorCriticPolicy(AgentPolicy):
                                 aux_obs=None, env_state=None):
         """Get actions, values, and policy for the RNN policy.
         Shape of obs, done, avail_actions should correspond to (seq_len, batch_size, ...)
-        Shape of hstate should correspond to (1, batch_size, -1). We maintain the extra first dimension for 
-        compatibility with the learning codes. 
+        Shape of hstate should correspond to (1, batch_size, -1). We maintain the extra first dimension for
+        compatibility with the learning codes.
         """
         batch_size = obs.shape[1]
         new_hstate, pi, val = self.network.apply(
