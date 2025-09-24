@@ -68,7 +68,7 @@ class TrainConfig:
     anneal_lr: bool = False
     num_envs: int = 512
     num_steps: int = 400
-    total_timesteps: int = 5e7
+    total_timesteps: int = 5e7  # 7
     update_epochs: int = 15
     num_minibatches: int = 16
     gamma: float = 0.99
@@ -241,17 +241,17 @@ def run_training():
         fake_params = jax.tree.map(
             lambda x: x[jnp.newaxis, ...], ego_params)
         eval_partner = [
-            (HeuristicPolicyPopulation(policy_cls=indp), fake_params, 3),
-            (HeuristicPolicyPopulation(policy_cls=onin), fake_params, 4),
-            (HeuristicPolicyPopulation(policy_cls=plate), fake_params, 5),
-            (HeuristicPolicyPopulation(policy_cls=rndm), fake_params, 6),
-            (HeuristicPolicyPopulation(policy_cls=static), fake_params, 7),
             (DummyPolicyPopulation(
                 policy_cls=partner_policy), jax.tree.map(lambda x: x[jnp.newaxis, ...], pop_params[0]), 0),
             (DummyPolicyPopulation(
                 policy_cls=partner_policy), jax.tree.map(lambda x: x[jnp.newaxis, ...], pop_params[1]), 1),
             (DummyPolicyPopulation(
-                policy_cls=partner_policy), jax.tree.map(lambda x: x[jnp.newaxis, ...], pop_params[2]), 2)
+                policy_cls=partner_policy), jax.tree.map(lambda x: x[jnp.newaxis, ...], pop_params[2]), 2),
+            (HeuristicPolicyPopulation(policy_cls=indp), fake_params, 3),
+            (HeuristicPolicyPopulation(policy_cls=onin), fake_params, 4),
+            (HeuristicPolicyPopulation(policy_cls=plate), fake_params, 5),
+            (HeuristicPolicyPopulation(policy_cls=rndm), fake_params, 6),
+            (HeuristicPolicyPopulation(policy_cls=static), fake_params, 7),
         ]
 
         # Train ego agent against partners in a schedule
