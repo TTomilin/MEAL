@@ -34,6 +34,13 @@ from architectures.cnn import ActorCritic as CNNActorCritic
 # Import utility functions from baselines
 from baselines.utils import add_eval_metrics, record_gif_of_episode, initialize_logging_setup
 
+# Import continual learning methods
+from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, update_agem_memory
+from cl_methods.FT import FT
+from cl_methods.L2 import L2
+from cl_methods.MAS import MAS
+from cl_methods.EWC import EWC
+
 
 @dataclass
 class TrainConfig:
@@ -63,7 +70,6 @@ class TrainConfig:
     alg = "br"
 
     # Actor-Critic
-    activation: str = "tanh"
     fc_dim_size: int = 256
     gru_hidden_dim: int = 256
 
@@ -71,19 +77,19 @@ class TrainConfig:
     num_checkpoints: int = 20
 
     # Training
-    lr: float = 3e-4
+    lr: float = 1e-3
     anneal_lr: bool = False
-    num_envs: int = 16
-    num_steps: int = 128
-    total_timesteps: int = 1e7
-    update_epochs: int = 8
-    num_minibatches: int = 8
+    num_envs: int = 512
+    num_steps: int = 400
+    total_timesteps: int = 5e7
+    update_epochs: int = 15
+    num_minibatches: int = 16
     gamma: float = 0.99
-    gae_lambda: float = 0.957
-    clip_eps: float = 0.2
+    gae_lambda: float = 0.95
+    clip_eps: float = 0.05
     ent_coef: float = 0.01
     vf_coef: float = 0.5
-    max_grad_norm: float = 0.5
+    max_grad_norm: float = 1.0
 
     # ═══════════════════════════════════════════════════════════════════════════
     # NETWORK ARCHITECTURE PARAMETERS
@@ -104,6 +110,19 @@ class TrainConfig:
     normalize_importance: bool = False
     regularize_critic: bool = False
     regularize_heads: bool = False
+
+    # EWC specific parameters
+    ewc_mode: str = "online"
+    ewc_decay: float = 0.9
+
+    # AGEM specific parameters
+    agem_memory_size: int = 1000
+    agem_sample_size: int = 64
+    agem_gradient_scale: float = 1.0
+
+    # Importance computation parameters
+    importance_episodes: int = 10
+    importance_steps: int = 100
 
     # Eval
     num_eval_episodes: int = 20
@@ -188,6 +207,35 @@ def run_training():
 
     # Use a shorter name for checkpoint directory (keep wandb id as is)
     checkpoint_dir_name = run_string
+
+    # Initialize continual learning method if specified
+    cl = None
+    if config.cl_method is not None:
+        # Set default regularization coefficient based on the CL method if not specified
+        if config.reg_coef is None:
+            if config.cl_method.lower() == "ewc":
+                config.reg_coef = 1e11
+            elif config.cl_method.lower() == "mas":
+                config.reg_coef = 1e9
+            elif config.cl_method.lower() == "l2":
+                config.reg_coef = 1e7
+            else:
+                config.reg_coef = 1e6  # Default value
+
+        # Initialize the continual learning method
+        method_map = dict(
+            ewc=EWC(mode=config.ewc_mode, decay=config.ewc_decay),
+            mas=MAS(),
+            l2=L2(),
+            ft=FT(),
+            agem=AGEM(memory_size=config.agem_memory_size, sample_size=config.agem_sample_size)
+        )
+
+        if config.cl_method.lower() in method_map:
+            cl = method_map[config.cl_method.lower()]
+            print(f"Initialized continual learning method: {config.cl_method.upper()}")
+        else:
+            raise ValueError(f"Unknown continual learning method: {config.cl_method}")
 
     if config.checkpoint_path is not None:
         save_dir = os.path.join(config.checkpoint_path, checkpoint_dir_name)
