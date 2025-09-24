@@ -9,6 +9,8 @@ import numpy as np
 import wandb
 import tyro
 import json
+from datetime import datetime
+from dotenv import load_dotenv
 
 import jax.numpy as jnp
 
@@ -17,6 +19,8 @@ from eval_agents.mlp_actor_critic import ActorWithConditionalCritic
 from eval_agents.overcooked.agent_policy_wrappers import OvercookedIndependentPolicyWrapper, OvercookedOnionPolicyWrapper, OvercookedPlatePolicyWrapper, OvercookedRandomPolicyWrapper, OvercookedStaticPolicyWrapper
 from eval_agents_generation.train_br import DummyPolicyPopulation, HeuristicPolicyPopulation, run_br_training
 from jax_marl.environments.overcooked.layouts import easy_layouts
+from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
+from jax_marl.eval.visualizer import OvercookedVisualizer
 
 from dataclasses import asdict, dataclass
 from eval_agents_generation.utils import frozendict_from_layout_repr
@@ -26,6 +30,9 @@ from jax_marl.wrappers.baselines import LogWrapper
 
 from architectures.mlp import ActorCritic as MLPActorCritic
 from architectures.cnn import ActorCritic as CNNActorCritic
+
+# Import utility functions from baselines
+from baselines.utils import add_eval_metrics, record_gif_of_episode, initialize_logging_setup
 
 
 @dataclass
@@ -68,7 +75,7 @@ class TrainConfig:
     anneal_lr: bool = False
     num_envs: int = 512
     num_steps: int = 400
-    total_timesteps: int = 5e7  # 7
+    total_timesteps: int = 1e7
     update_epochs: int = 15
     num_minibatches: int = 16
     gamma: float = 0.99
@@ -100,6 +107,8 @@ class TrainConfig:
 
     # Eval
     num_eval_episodes: int = 20
+    record_gif: bool = True  # Record and upload gifs after each partner training
+    gif_len: int = 100  # Maximum steps for gif recording
 
     log_train_out: bool = True
 
@@ -126,6 +135,8 @@ class TrainConfig:
 
         #############
         print("Number of updates: ", self.num_updates)
+        # Ensure num_checkpoints is at least 1 to avoid IndexError in checkpoint array
+        self.num_checkpoints = max(1, int(self.num_updates))
 
 
 def read_layouts(config):
@@ -135,7 +146,7 @@ def read_layouts(config):
 
 
 def get_run_string(config: TrainConfig):
-    return f"FF_BRDIV_IPPO_Overcooked_{config.layout_difficulty}_{config.layout_idx}"
+    return f"FF_BRDIV_PPO_{config.layout_difficulty}_{config.layout_idx}"
 
 
 def run_training():
@@ -151,26 +162,35 @@ def run_training():
     group_string = get_run_string(config)
     run_string = f"{group_string}_SEED_{config.seed}"
 
+    # Create a unique run name with timestamp
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
+    run_name = f"{run_string}_{timestamp}"
+
+    # Initialize WandB with unified parameters like baselines/PPO_CL.py
+    load_dotenv()
+    wandb_tags = tags if tags is not None else []
+    wandb.login(key=os.environ.get("WANDB_API_KEY"))
     run = wandb.init(
         project=config.project,
-        group=config.group,
-        mode=config.mode,
         config=asdict(config),
+        sync_tensorboard=True,
+        mode=config.mode,
+        tags=wandb_tags,
+        group=config.group,
+        name=run_name,
+        id=run_name,
         save_code=True,
-        tags=tags,
     )
-
-    if run.sweep_id is not None:
-        run.name = run.sweep_id + "___" + run_string
-    else:
-        run.name = run.name + "___" + run_string
 
     print("XPID ID name:")
     print(run.name)
     print("-------------")
 
+    # Use a shorter name for checkpoint directory (keep wandb id as is)
+    checkpoint_dir_name = run_string
+
     if config.checkpoint_path is not None:
-        save_dir = os.path.join(config.checkpoint_path, run.name)
+        save_dir = os.path.join(config.checkpoint_path, checkpoint_dir_name)
         config.save_dir = save_dir
         # Make sure we can write the checkpoint later _before_ we wait 1 day for training!
         os.makedirs(save_dir, exist_ok=True)
@@ -190,6 +210,13 @@ def run_training():
     config.layout = layout_dict.copy()  # These are env kwargs
     env = make(config.env_name, **config.layout)
     env = LogWrapper(env)
+
+    # Calculate max soup for the layout (unified with baselines/PPO_CL.py)
+    layout_name = config.layout_name if config.layout_name != "" else f"layout_{config.layout_idx}"
+    max_soup_dict = {layout_name: estimate_max_soup(config.layout["layout"], env.max_steps, n_agents=env.num_agents)}
+
+    # Initialize visualizer for gif recording
+    visualizer = OvercookedVisualizer(num_agents=env.num_agents)
 
     rng = jax.random.PRNGKey(config.seed)
     rng, init_rng = jax.random.split(rng, 2)
@@ -257,51 +284,129 @@ def run_training():
         # Train ego agent against partners in a schedule
         ego_params = run_br_training(
             config, env, partner_agent_config, ego_policy,
-            ego_params, partner_policy, pop_params[0], env_id_idx=0, eval_partner=eval_partner)
+            ego_params, partner_policy, pop_params[0], env_id_idx=0, eval_partner=eval_partner,
+            max_soup_dict=max_soup_dict, layout_names=[layout_name])
         ego_params = jax.tree.map(  # take the first params set from the batch dimension
             lambda x: x[0, ...], ego_params)
 
-        ego_params = run_br_training(
-            config, env, partner_agent_config, ego_policy,
-            ego_params, partner_policy, pop_params[1], env_id_idx=1, eval_partner=eval_partner)
-        ego_params = jax.tree.map(  # take the first params set from the batch dimension
-            lambda x: x[0, ...], ego_params)
+        # Record and upload gif after training with partner 0 (unified with baselines/PPO_CL.py)
+        if hasattr(config, 'record_gif') and config.record_gif:
+            from flax.training.train_state import TrainState
+            import optax
+            # Create a temporary train state for gif recording
+            temp_train_state = TrainState.create(
+                apply_fn=ego_policy.network.apply,
+                params=ego_params,
+                tx=optax.adam(1e-4)  # dummy optimizer
+            )
+            states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=0, max_steps=config.gif_len)
+            partner_name = "BRDiv_Partner_0"
+            visualizer.animate(states, agent_view_size=5, task_idx=0, task_name=partner_name, exp_dir=f"gifs/{run.name}")
 
         ego_params = run_br_training(
             config, env, partner_agent_config, ego_policy,
-            ego_params, partner_policy, pop_params[2], env_id_idx=2, eval_partner=eval_partner)
+            ego_params, partner_policy, pop_params[1], env_id_idx=1, eval_partner=eval_partner,
+            max_soup_dict=max_soup_dict, layout_names=[layout_name])
         ego_params = jax.tree.map(  # take the first params set from the batch dimension
             lambda x: x[0, ...], ego_params)
 
-        ego_params = run_br_training(
-            config, env, partner_agent_config, ego_policy,
-            ego_params, indp, None, env_id_idx=3, eval_partner=eval_partner)
-        ego_params = jax.tree.map(  # take the first params set from the batch dimension
-            lambda x: x[0, ...], ego_params)
+        # Record gif after training with partner 1
+        if hasattr(config, 'record_gif') and config.record_gif:
+            temp_train_state = TrainState.create(
+                apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
+            states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=1, max_steps=config.gif_len)
+            partner_name = "BRDiv_Partner_1"
+            visualizer.animate(states, agent_view_size=5, task_idx=1, task_name=partner_name, exp_dir=f"gifs/{run.name}")
 
         ego_params = run_br_training(
             config, env, partner_agent_config, ego_policy,
-            ego_params, onin, None, env_id_idx=4, eval_partner=eval_partner)
+            ego_params, partner_policy, pop_params[2], env_id_idx=2, eval_partner=eval_partner,
+            max_soup_dict=max_soup_dict, layout_names=[layout_name])
         ego_params = jax.tree.map(  # take the first params set from the batch dimension
             lambda x: x[0, ...], ego_params)
 
-        ego_params = run_br_training(
-            config, env, partner_agent_config, ego_policy,
-            ego_params, plate, None, env_id_idx=5, eval_partner=eval_partner)
-        ego_params = jax.tree.map(  # take the first params set from the batch dimension
-            lambda x: x[0, ...], ego_params)
+        # Record gif after training with partner 2
+        if hasattr(config, 'record_gif') and config.record_gif:
+            temp_train_state = TrainState.create(
+                apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
+            states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=2, max_steps=config.gif_len)
+            partner_name = "BRDiv_Partner_2"
+            visualizer.animate(states, agent_view_size=5, task_idx=2, task_name=partner_name, exp_dir=f"gifs/{run.name}")
 
         ego_params = run_br_training(
             config, env, partner_agent_config, ego_policy,
-            ego_params, rndm, None, env_id_idx=6, eval_partner=eval_partner)
+            ego_params, indp, None, env_id_idx=3, eval_partner=eval_partner,
+            max_soup_dict=max_soup_dict, layout_names=[layout_name])
         ego_params = jax.tree.map(  # take the first params set from the batch dimension
             lambda x: x[0, ...], ego_params)
 
+        # Record gif after training with independent policy
+        if hasattr(config, 'record_gif') and config.record_gif:
+            temp_train_state = TrainState.create(
+                apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
+            states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=3, max_steps=config.gif_len)
+            partner_name = "Independent_Policy"
+            visualizer.animate(states, agent_view_size=5, task_idx=3, task_name=partner_name, exp_dir=f"gifs/{run.name}")
+
         ego_params = run_br_training(
             config, env, partner_agent_config, ego_policy,
-            ego_params, static, None, env_id_idx=7, eval_partner=eval_partner)
+            ego_params, onin, None, env_id_idx=4, eval_partner=eval_partner,
+            max_soup_dict=max_soup_dict, layout_names=[layout_name])
         ego_params = jax.tree.map(  # take the first params set from the batch dimension
             lambda x: x[0, ...], ego_params)
+
+        # Record gif after training with onion policy
+        if hasattr(config, 'record_gif') and config.record_gif:
+            temp_train_state = TrainState.create(
+                apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
+            states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=4, max_steps=config.gif_len)
+            partner_name = "Onion_Policy"
+            visualizer.animate(states, agent_view_size=5, task_idx=4, task_name=partner_name, exp_dir=f"gifs/{run.name}")
+
+        ego_params = run_br_training(
+            config, env, partner_agent_config, ego_policy,
+            ego_params, plate, None, env_id_idx=5, eval_partner=eval_partner,
+            max_soup_dict=max_soup_dict, layout_names=[layout_name])
+        ego_params = jax.tree.map(  # take the first params set from the batch dimension
+            lambda x: x[0, ...], ego_params)
+
+        # Record gif after training with plate policy
+        if hasattr(config, 'record_gif') and config.record_gif:
+            temp_train_state = TrainState.create(
+                apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
+            states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=5, max_steps=config.gif_len)
+            partner_name = "Plate_Policy"
+            visualizer.animate(states, agent_view_size=5, task_idx=5, task_name=partner_name, exp_dir=f"gifs/{run.name}")
+
+        ego_params = run_br_training(
+            config, env, partner_agent_config, ego_policy,
+            ego_params, rndm, None, env_id_idx=6, eval_partner=eval_partner,
+            max_soup_dict=max_soup_dict, layout_names=[layout_name])
+        ego_params = jax.tree.map(  # take the first params set from the batch dimension
+            lambda x: x[0, ...], ego_params)
+
+        # Record gif after training with random policy
+        if hasattr(config, 'record_gif') and config.record_gif:
+            temp_train_state = TrainState.create(
+                apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
+            states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=6, max_steps=config.gif_len)
+            partner_name = "Random_Policy"
+            visualizer.animate(states, agent_view_size=5, task_idx=6, task_name=partner_name, exp_dir=f"gifs/{run.name}")
+
+        ego_params = run_br_training(
+            config, env, partner_agent_config, ego_policy,
+            ego_params, static, None, env_id_idx=7, eval_partner=eval_partner,
+            max_soup_dict=max_soup_dict, layout_names=[layout_name])
+        ego_params = jax.tree.map(  # take the first params set from the batch dimension
+            lambda x: x[0, ...], ego_params)
+
+        # Record gif after training with static policy
+        if hasattr(config, 'record_gif') and config.record_gif:
+            temp_train_state = TrainState.create(
+                apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
+            states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=7, max_steps=config.gif_len)
+            partner_name = "Static_Policy"
+            visualizer.animate(states, agent_view_size=5, task_idx=7, task_name=partner_name, exp_dir=f"gifs/{run.name}")
     else:
         raise NotImplementedError("Selected method not implemented.")
 

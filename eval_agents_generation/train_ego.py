@@ -30,6 +30,8 @@ from eval_agents_generation.save_load_utils import save_train_run
 from jax_marl.registration import make
 from jax_marl.wrappers.baselines import LogWrapper
 
+# Import unified evaluation utilities
+from baselines.utils import add_eval_metrics
 
 from eval_agents_generation.utils import _create_minibatches, _create_minibatches_no_time, Transition, unbatchify
 
@@ -139,7 +141,8 @@ def train_ppo_ego_agent(
                         config.num_controlled_actors),
                     avail_actions=avail_actions_0,
                     hstate=ego_hstate,
-                    rng=actor_rng
+                    rng=actor_rng,
+                    env_id_idx=env_id_idx,
                 )
                 logp_0 = pi_0.log_prob(act_0)
 
@@ -234,7 +237,8 @@ def train_ppo_ego_agent(
                         avail_actions=traj_batch.avail_actions,
                         hstate=init_ego_hstate,
                         # only used for action sampling, which is unused here
-                        rng=jax.random.PRNGKey(0)
+                        rng=jax.random.PRNGKey(0),
+                        env_id_idx=env_id_idx,
                     )
                     log_prob = pi.log_prob(traj_batch.action)
 
@@ -342,7 +346,8 @@ def train_ppo_ego_agent(
                     avail_actions=jax.lax.stop_gradient(avail_actions_0),
                     hstate=ego_hstate,
                     # Dummy key since we're just extracting the value
-                    rng=jax.random.PRNGKey(0)
+                    rng=jax.random.PRNGKey(0),
+                    env_id_idx=env_id_idx,
                 )
                 last_val = last_val.squeeze()
                 advantages, targets = _calculate_gae(traj_batch, last_val)
@@ -664,13 +669,15 @@ def train_ppo_ego_agent(
     return out
 
 
-def log_metrics(config, train_out, metric_names: tuple):
+def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layout_names=None):
     """Process training metrics and log them using the provided logger.
 
     Args:
-        training_logs: dict, the logs from training
-        logger: Logger, instance to log metrics
+        config: Configuration object
+        train_out: dict, the logs from training
         metric_names: tuple, names of metrics to extract from training logs
+        max_soup_dict: dict, maximum soup counts for each layout (for unified soup metrics)
+        layout_names: list, names of layouts/partners for evaluation metrics
     """
     train_metrics = train_out["metrics"]
 
@@ -697,13 +704,31 @@ def log_metrics(config, train_out, metric_names: tuple):
     all_ego_returns = all_ego_returns.sum(axis=-1)
     average_ego_rets_per_iter = np.mean(all_ego_returns, axis=(0, 2, 3))
 
+    # Extract soup metrics (unified with baselines/PPO_CL.py)
+    all_ego_soups = None
+    average_ego_soups_per_iter = None
+    if "returned_episode_soups" in train_metrics["eval_ep_last_info"]:
+        all_ego_soups = np.asarray(
+            train_metrics["eval_ep_last_info"]["returned_episode_soups"])
+        all_ego_soups = all_ego_soups.sum(axis=-1)
+        average_ego_soups_per_iter = np.mean(all_ego_soups, axis=(0, 2, 3))
+
     per_partner_per_iter = {}
+    per_partner_soup_per_iter = {}
     for (idx, metrics) in train_metrics["eval_infos"]:
         return_per_partner = np.asarray(metrics["returned_episode_returns"])
         return_per_partner = return_per_partner.sum(axis=-1)
         average_return_per_partner_per_iters = np.mean(
             return_per_partner, axis=(0, 2, 3))
-        per_partner_per_iter[f"Eval/EgoReturn_Partner{idx[0][0]}"] = average_return_per_partner_per_iters
+        per_partner_per_iter[f"Eval/EgoReturn_Partner{idx}"] = average_return_per_partner_per_iters
+
+        # Add soup metrics for per-partner evaluation (unified with baselines/PPO_CL.py)
+        if "returned_episode_soups" in metrics:
+            soup_per_partner = np.asarray(metrics["returned_episode_soups"])
+            soup_per_partner = soup_per_partner.sum(axis=-1)
+            average_soup_per_partner_per_iters = np.mean(
+                soup_per_partner, axis=(0, 2, 3))
+            per_partner_soup_per_iter[f"Eval/EgoSoup_Partner{idx}"] = average_soup_per_partner_per_iters
 
     # Process loss metrics - average across ego seeds, partners and minibatches dims
     # Loss metrics shape should be (n_ego_train_seeds, num_updates, ...)
@@ -716,30 +741,40 @@ def log_metrics(config, train_out, metric_names: tuple):
     # Log metrics for each update step
     num_updates = len(average_ego_value_losses)
     for step in range(num_updates):
-        # def log_item(self, tag, val, step=None, commit=True, **kwargs):
+        # Create metrics dict for unified logging (similar to baselines/PPO_CL.py)
+        metrics = {}
+
+        # Add training metrics
         for stat_name, stat_data in train_stats.items():
             # second dimension contains the mean and std of the metric
             stat_mean = stat_data[step, 0]
-            wandb.log({f"Train/Ego_{stat_name}": stat_mean,
-                      "train_step": step}, commit=True)
+            metrics[f"Train/Ego_{stat_name}"] = stat_mean
 
-        wandb.log({"Eval/EgoReturn": average_ego_rets_per_iter[step],
-                  "train_step": step}, commit=True)
+        metrics["Eval/EgoReturn"] = average_ego_rets_per_iter[step]
 
+        # Add soup metrics if available
+        if average_ego_soups_per_iter is not None:
+            metrics["Eval/EgoSoup"] = average_ego_soups_per_iter[step]
+
+        # Add per-partner metrics
         for partner_name, partner_data in per_partner_per_iter.items():
-            wandb.log({partner_name: partner_data[step],
-                      "train_step": step}, commit=True)
+            metrics[partner_name] = partner_data[step]
 
-        wandb.log({"Train/EgoValueLoss": average_ego_value_losses[step],
-                  "train_step": step}, commit=True)
+        for partner_name, partner_data in per_partner_soup_per_iter.items():
+            metrics[partner_name] = partner_data[step]
 
-        wandb.log({"Train/EgoActorLoss": average_ego_actor_losses[step],
-                   "train_step": step}, commit=True)
+        # Use add_eval_metrics for unified soup calculation if parameters are provided
+        if max_soup_dict is not None and layout_names is not None and average_ego_soups_per_iter is not None:
+            # Create lists for add_eval_metrics function
+            avg_rewards = [average_ego_rets_per_iter[step]]
+            avg_soups = [average_ego_soups_per_iter[step]]
+            metrics = add_eval_metrics(avg_rewards, avg_soups, layout_names, max_soup_dict, metrics)
 
-        wandb.log({"Train/EgoEntropyLoss": average_ego_entropy_losses[step],
-                   "train_step": step}, commit=True)
+        metrics["Train/EgoValueLoss"] = average_ego_value_losses[step]
+        metrics["Train/EgoActorLoss"] = average_ego_actor_losses[step]
+        metrics["Train/EgoEntropyLoss"] = average_ego_entropy_losses[step]
+        metrics["Train/EgoGradNorm"] = average_ego_grad_norms[step]
+        metrics["train_step"] = step
 
-        wandb.log({"Train/EgoGradNorm": average_ego_grad_norms[step],
-                   "train_step": step}, commit=True)
-
-        wandb.log({}, commit=True)
+        # Log all metrics at once
+        wandb.log(metrics, commit=True)
