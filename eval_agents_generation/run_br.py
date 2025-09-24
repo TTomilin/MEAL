@@ -71,19 +71,19 @@ class TrainConfig:
     num_checkpoints: int = 20
 
     # Training
-    lr: float = 1e-3
+    lr: float = 3e-4
     anneal_lr: bool = False
-    num_envs: int = 512
-    num_steps: int = 400
+    num_envs: int = 16
+    num_steps: int = 128
     total_timesteps: int = 1e7
-    update_epochs: int = 15
-    num_minibatches: int = 16
+    update_epochs: int = 8
+    num_minibatches: int = 8
     gamma: float = 0.99
-    gae_lambda: float = 0.95
-    clip_eps: float = 0.05
+    gae_lambda: float = 0.957
+    clip_eps: float = 0.2
     ent_coef: float = 0.01
     vf_coef: float = 0.5
-    max_grad_norm: float = 1.0
+    max_grad_norm: float = 0.5
 
     # ═══════════════════════════════════════════════════════════════════════════
     # NETWORK ARCHITECTURE PARAMETERS

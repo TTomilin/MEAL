@@ -720,7 +720,7 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
         return_per_partner = return_per_partner.sum(axis=-1)
         average_return_per_partner_per_iters = np.mean(
             return_per_partner, axis=(0, 2, 3))
-        per_partner_per_iter[f"Eval/EgoReturn_Partner{idx}"] = average_return_per_partner_per_iters
+        per_partner_per_iter[f"Eval/EgoReturn_Partner{idx[0][0]}"] = average_return_per_partner_per_iters
 
         # Add soup metrics for per-partner evaluation (unified with baselines/PPO_CL.py)
         if "returned_episode_soups" in metrics:
@@ -728,7 +728,7 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
             soup_per_partner = soup_per_partner.sum(axis=-1)
             average_soup_per_partner_per_iters = np.mean(
                 soup_per_partner, axis=(0, 2, 3))
-            per_partner_soup_per_iter[f"Eval/EgoSoup_Partner{idx}"] = average_soup_per_partner_per_iters
+            per_partner_soup_per_iter[f"Eval/EgoSoup_Partner{idx[0][0]}"] = average_soup_per_partner_per_iters
 
     # Process loss metrics - average across ego seeds, partners and minibatches dims
     # Loss metrics shape should be (n_ego_train_seeds, num_updates, ...)
