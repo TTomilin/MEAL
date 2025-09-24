@@ -56,7 +56,7 @@ class TrainConfig:
     layout_idx: int = 0
     layout_name: str = ""  # If specified, overrides layout_idx
 
-    rew_shaping_horizon: int = 1e7
+    rew_shaping_horizon: int = 1e6
     num_agents: int = 2
 
     # best_response

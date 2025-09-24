@@ -239,7 +239,6 @@ def train_ppo_ego_agent(
                         env_id_idx=env_id_idx,
                         # only used for action sampling, which is unused here
                         rng=jax.random.PRNGKey(0),
-                        env_id_idx=env_id_idx,
                     )
                     log_prob = pi.log_prob(traj_batch.action)
 
@@ -349,7 +348,6 @@ def train_ppo_ego_agent(
                     env_id_idx=env_id_idx,
                     # Dummy key since we're just extracting the value
                     rng=jax.random.PRNGKey(0),
-                    env_id_idx=env_id_idx,
                 )
                 last_val = last_val.squeeze()
                 advantages, targets = _calculate_gae(traj_batch, last_val)
@@ -719,6 +717,7 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
     per_partner_per_iter = {}
     per_partner_soup_per_iter = {}
     for (idx, metrics) in train_metrics["eval_infos"]:
+        breakpoint()
         return_per_partner = np.asarray(metrics["returned_episode_returns"])
         return_per_partner = return_per_partner.sum(axis=-1)
         average_return_per_partner_per_iters = np.mean(
@@ -771,7 +770,8 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
             # Create lists for add_eval_metrics function
             avg_rewards = [average_ego_rets_per_iter[step]]
             avg_soups = [average_ego_soups_per_iter[step]]
-            metrics = add_eval_metrics(avg_rewards, avg_soups, layout_names, max_soup_dict, metrics)
+            metrics = add_eval_metrics(
+                avg_rewards, avg_soups, layout_names, max_soup_dict, metrics)
 
         metrics["Train/EgoValueLoss"] = average_ego_value_losses[step]
         metrics["Train/EgoActorLoss"] = average_ego_actor_losses[step]
