@@ -306,6 +306,20 @@ def run_training():
 
         ego_params = ego_policy.init_params(network_rng)
 
+        # Initialize continual learning state if CL method is specified
+        cl_state = None
+        if cl is not None:
+            cl_state = cl.init_state(ego_params, config.regularize_critic, config.regularize_heads)
+
+            # Initialize AGEM memory if using AGEM
+            if config.cl_method.lower() == "agem":
+                obs_dim_agem = env.observation_space().shape
+                if not config.use_cnn:
+                    obs_dim_agem = (np.prod(obs_dim_agem),)
+                cl_state = init_agem_memory(config.agem_memory_size, obs_dim_agem)
+
+            print(f"Initialized CL state for method: {config.cl_method.upper()}")
+
         indp = OvercookedIndependentPolicyWrapper(
             layout=config.layout["layout"],  p_onion_on_counter=0.5, p_plate_on_counter=0.5)
         onin = OvercookedOnionPolicyWrapper(layout=config.layout["layout"])
@@ -330,10 +344,10 @@ def run_training():
         ]
 
         # Train ego agent against partners in a schedule
-        ego_params = run_br_training(
+        ego_params, cl_state = run_br_training(
             config, env, partner_agent_config, ego_policy,
             ego_params, partner_policy, pop_params[0], env_id_idx=0, eval_partner=eval_partner,
-            max_soup_dict=max_soup_dict, layout_names=[layout_name])
+            max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
         ego_params = jax.tree.map(  # take the first params set from the batch dimension
             lambda x: x[0, ...], ego_params)
 
@@ -351,10 +365,10 @@ def run_training():
             partner_name = "BRDiv_Partner_0"
             visualizer.animate(states, agent_view_size=5, task_idx=0, task_name=partner_name, exp_dir=f"gifs/{run.name}")
 
-        ego_params = run_br_training(
+        ego_params, cl_state = run_br_training(
             config, env, partner_agent_config, ego_policy,
             ego_params, partner_policy, pop_params[1], env_id_idx=1, eval_partner=eval_partner,
-            max_soup_dict=max_soup_dict, layout_names=[layout_name])
+            max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
         ego_params = jax.tree.map(  # take the first params set from the batch dimension
             lambda x: x[0, ...], ego_params)
 
@@ -366,10 +380,10 @@ def run_training():
             partner_name = "BRDiv_Partner_1"
             visualizer.animate(states, agent_view_size=5, task_idx=1, task_name=partner_name, exp_dir=f"gifs/{run.name}")
 
-        ego_params = run_br_training(
+        ego_params, cl_state = run_br_training(
             config, env, partner_agent_config, ego_policy,
             ego_params, partner_policy, pop_params[2], env_id_idx=2, eval_partner=eval_partner,
-            max_soup_dict=max_soup_dict, layout_names=[layout_name])
+            max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
         ego_params = jax.tree.map(  # take the first params set from the batch dimension
             lambda x: x[0, ...], ego_params)
 
@@ -381,10 +395,10 @@ def run_training():
             partner_name = "BRDiv_Partner_2"
             visualizer.animate(states, agent_view_size=5, task_idx=2, task_name=partner_name, exp_dir=f"gifs/{run.name}")
 
-        ego_params = run_br_training(
+        ego_params, cl_state = run_br_training(
             config, env, partner_agent_config, ego_policy,
             ego_params, indp, None, env_id_idx=3, eval_partner=eval_partner,
-            max_soup_dict=max_soup_dict, layout_names=[layout_name])
+            max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
         ego_params = jax.tree.map(  # take the first params set from the batch dimension
             lambda x: x[0, ...], ego_params)
 
@@ -396,10 +410,10 @@ def run_training():
             partner_name = "Independent_Policy"
             visualizer.animate(states, agent_view_size=5, task_idx=3, task_name=partner_name, exp_dir=f"gifs/{run.name}")
 
-        ego_params = run_br_training(
+        ego_params, cl_state = run_br_training(
             config, env, partner_agent_config, ego_policy,
             ego_params, onin, None, env_id_idx=4, eval_partner=eval_partner,
-            max_soup_dict=max_soup_dict, layout_names=[layout_name])
+            max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
         ego_params = jax.tree.map(  # take the first params set from the batch dimension
             lambda x: x[0, ...], ego_params)
 
@@ -411,10 +425,10 @@ def run_training():
             partner_name = "Onion_Policy"
             visualizer.animate(states, agent_view_size=5, task_idx=4, task_name=partner_name, exp_dir=f"gifs/{run.name}")
 
-        ego_params = run_br_training(
+        ego_params, cl_state = run_br_training(
             config, env, partner_agent_config, ego_policy,
             ego_params, plate, None, env_id_idx=5, eval_partner=eval_partner,
-            max_soup_dict=max_soup_dict, layout_names=[layout_name])
+            max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
         ego_params = jax.tree.map(  # take the first params set from the batch dimension
             lambda x: x[0, ...], ego_params)
 
@@ -426,10 +440,10 @@ def run_training():
             partner_name = "Plate_Policy"
             visualizer.animate(states, agent_view_size=5, task_idx=5, task_name=partner_name, exp_dir=f"gifs/{run.name}")
 
-        ego_params = run_br_training(
+        ego_params, cl_state = run_br_training(
             config, env, partner_agent_config, ego_policy,
             ego_params, rndm, None, env_id_idx=6, eval_partner=eval_partner,
-            max_soup_dict=max_soup_dict, layout_names=[layout_name])
+            max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
         ego_params = jax.tree.map(  # take the first params set from the batch dimension
             lambda x: x[0, ...], ego_params)
 
@@ -441,10 +455,10 @@ def run_training():
             partner_name = "Random_Policy"
             visualizer.animate(states, agent_view_size=5, task_idx=6, task_name=partner_name, exp_dir=f"gifs/{run.name}")
 
-        ego_params = run_br_training(
+        ego_params, cl_state = run_br_training(
             config, env, partner_agent_config, ego_policy,
             ego_params, static, None, env_id_idx=7, eval_partner=eval_partner,
-            max_soup_dict=max_soup_dict, layout_names=[layout_name])
+            max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
         ego_params = jax.tree.map(  # take the first params set from the batch dimension
             lambda x: x[0, ...], ego_params)
 

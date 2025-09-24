@@ -43,7 +43,7 @@ def train_ppo_ego_agent(
     config, env, train_rng,
     ego_policy, init_ego_params, n_ego_train_seeds,
     partner_population: AgentPopulation,
-    partner_params, env_id_idx=0, eval_partner=[]
+    partner_params, env_id_idx=0, eval_partner=[], cl=None, cl_state=None
 ):
     '''
     Train PPO ego agent using the given partner checkpoints and initial ego parameters.
@@ -267,10 +267,16 @@ def train_ppo_ego_agent(
                     # Entropy
                     entropy = jnp.mean(pi.entropy())
 
+                    # Continual learning penalty (for regularization-based methods)
+                    cl_penalty = 0.0
+                    if cl is not None and cl_state is not None:
+                        cl_penalty = cl.penalty(params, cl_state, config.reg_coef)
+
                     total_loss = pg_loss + \
                         config.vf_coef * value_loss - \
-                        config.ent_coef * entropy
-                    return total_loss, (value_loss, pg_loss, entropy)
+                        config.ent_coef * entropy + \
+                        cl_penalty
+                    return total_loss, (value_loss, pg_loss, entropy, cl_penalty)
 
                 grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
                 (loss_val, aux_vals), grads = grad_fn(
@@ -373,6 +379,7 @@ def train_ppo_ego_agent(
                 metric["actor_loss"] = loss_terms[1]
                 metric["value_loss"] = loss_terms[0]
                 metric["entropy_loss"] = loss_terms[2]
+                metric["cl_penalty"] = loss_terms[3]
                 metric["avg_grad_norm"] = avg_grad_norm
                 new_runner_state = (train_state, rng, update_steps + 1)
                 return (new_runner_state, metric)
