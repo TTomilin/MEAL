@@ -68,7 +68,7 @@ class TrainConfig:
     anneal_lr: bool = False
     num_envs: int = 512
     num_steps: int = 400
-    total_timesteps: int = 5e7  # 7
+    total_timesteps: int = 1e7
     update_epochs: int = 15
     num_minibatches: int = 16
     gamma: float = 0.99
@@ -126,6 +126,7 @@ class TrainConfig:
 
         #############
         print("Number of updates: ", self.num_updates)
+        self.num_checkpoints = int(self.num_updates)
 
 
 def read_layouts(config):

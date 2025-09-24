@@ -139,7 +139,8 @@ def train_ppo_ego_agent(
                         config.num_controlled_actors),
                     avail_actions=avail_actions_0,
                     hstate=ego_hstate,
-                    rng=actor_rng
+                    rng=actor_rng,
+                    env_id_idx=env_id_idx,
                 )
                 logp_0 = pi_0.log_prob(act_0)
 
@@ -233,6 +234,7 @@ def train_ppo_ego_agent(
                         done=traj_batch.done,
                         avail_actions=traj_batch.avail_actions,
                         hstate=init_ego_hstate,
+                        env_id_idx=env_id_idx,
                         # only used for action sampling, which is unused here
                         rng=jax.random.PRNGKey(0)
                     )
@@ -341,6 +343,7 @@ def train_ppo_ego_agent(
                         config.num_controlled_actors),
                     avail_actions=jax.lax.stop_gradient(avail_actions_0),
                     hstate=ego_hstate,
+                    env_id_idx=env_id_idx,
                     # Dummy key since we're just extracting the value
                     rng=jax.random.PRNGKey(0)
                 )
@@ -645,6 +648,7 @@ def train_ppo_ego_agent(
                 xs=None,
                 length=config.num_updates
             )
+
             (final_runner_state, checkpoint_array, final_ckpt_idx,
              eval_eps_last_infos, eval_infos) = state_with_ckpt
             out = {
