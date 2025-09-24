@@ -104,8 +104,12 @@ class HeuristicPolicyPopulation(AgentPopulation):
 
 
 def run_br_training(
-        config, env, partner_agent_config, ego_policy, ego_params, partner_policy, partner_params=None, partner_test_mode=False, env_id_idx=0, eval_partner=[]):
+        config, env, partner_agent_config, ego_policy, ego_params, partner_policy, partner_params=None, partner_test_mode=False, env_id_idx=0, eval_partner=[], max_soup_dict=None, layout_names=None):
     '''Run ego agent training against a single partner agent.
+
+    Args:
+        max_soup_dict: dict, maximum soup counts for each layout (for unified soup metrics)
+        layout_names: list, names of layouts/partners for evaluation metrics
     '''
     rng = jax.random.PRNGKey(config.seed)
     rng, init_rng, train_rng = jax.random.split(rng, 3)
@@ -148,6 +152,6 @@ def run_br_training(
 
     # process and log metrics
     metric_names = get_metric_names("overcooked")
-    log_metrics(config, out, metric_names)
+    log_metrics(config, out, metric_names, max_soup_dict, layout_names)
 
     return out["final_params"]
