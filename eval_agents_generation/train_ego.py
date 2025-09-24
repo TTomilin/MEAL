@@ -717,7 +717,6 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
     per_partner_per_iter = {}
     per_partner_soup_per_iter = {}
     for (idx, metrics) in train_metrics["eval_infos"]:
-        breakpoint()
         return_per_partner = np.asarray(metrics["returned_episode_returns"])
         return_per_partner = return_per_partner.sum(axis=-1)
         average_return_per_partner_per_iters = np.mean(
