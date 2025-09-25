@@ -389,7 +389,6 @@ def main() -> None:
 
         if args.include_dormant_ratio:
             axes[1].set_ylabel("Dormant ratio ↑")
-            axes[1].set_title("Dormant Neuron Ratio")
             axes[1].set_ylim(0, 1)  # Dormant ratio is between 0 and 1
 
         for ax in axes:
@@ -401,7 +400,7 @@ def main() -> None:
         fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.15),
                    ncol=len(plot_repeats_list), frameon=True)
 
-        fig.tight_layout(rect=[-0.05, 0.1, 1, 1])
+        fig.tight_layout(rect=[-0.03, 0.1, 1, 1])
         fig.savefig(out_dir / f"{method}_plasticity.png", dpi=300)
         fig.savefig(out_dir / f"{method}_plasticity.pdf")
         plt.show()
