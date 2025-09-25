@@ -510,8 +510,12 @@ def train_ppo_ego_agent(
     # Actually run the PPO training
     # ------------------------------
     rngs = jax.random.split(train_rng, n_ego_train_seeds)
-    train_fn = jax.jit(jax.vmap(make_ppo_train(config)))
-    out = train_fn(rngs)
+    if n_ego_train_seeds == 1:
+        train_fn = jax.jit(make_ppo_train(config))
+        out = train_fn(rngs[0])
+    else:
+        train_fn = jax.jit(jax.vmap(make_ppo_train(config)))
+        out = train_fn(rngs)
     return out
 
 
