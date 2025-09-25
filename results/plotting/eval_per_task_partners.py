@@ -55,7 +55,7 @@ def plot():
 
     # Set up figure with one subplot per method
     methods = args.methods
-    fig_height = 2.5 * len(methods) if len(methods) > 1 else 2.8
+    fig_height = 3 * len(methods) if len(methods) > 1 else 2.8
     fig, axes = plt.subplots(len(methods), 1, sharex=False, sharey=True, figsize=(12, fig_height))
     if len(methods) == 1:
         axes = [axes]
@@ -111,9 +111,6 @@ def plot():
     # Add method name to filename if only a single method is given
     if len(methods) == 1:
         name += f"_{methods[0]}"
-    # Add level suffix if not already present
-    if "_level" not in name:
-        name += f"_level_{args.level}"
     save_plot(fig, out_dir, name)
 
     # Display the plot
