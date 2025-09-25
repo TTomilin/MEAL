@@ -18,15 +18,15 @@ import optax
 from flax.training.train_state import TrainState
 import wandb
 
-from eval_agents.agent_interface import ActorWithConditionalCriticPolicy
-from eval_agents.population_interface import AgentPopulation
+from partner_adaptation.partner_agents.agent_interface import ActorWithConditionalCriticPolicy
+from partner_adaptation.partner_agents.population_interface import AgentPopulation
 from jax_marl.registration import make
 from jax_marl.wrappers.baselines import LogWrapper
 
-from eval_agents_generation.utils import get_metric_names, get_stats
-from eval_agents_generation.save_load_utils import save_train_run
-from eval_agents_generation.run_episodes import run_episodes
-from eval_agents_generation.utils import unbatchify, _create_minibatches
+from partner_adaptation.partner_generation.utils import get_metric_names
+from partner_adaptation.partner_generation.save_load_utils import save_train_run
+from partner_adaptation.partner_generation.run_episodes import run_episodes
+from partner_adaptation.partner_generation.utils import unbatchify, _create_minibatches
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)

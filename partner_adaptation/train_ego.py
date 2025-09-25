@@ -12,7 +12,6 @@ python ego_agent_training/run.py algorithm=ppo_ego/lbf task=lbf label=test_ppo_e
 Suggested debug command:
 python ego_agent_training/run.py algorithm=ppo_ego/lbf task=lbf logger.mode=disabled label=debug algorithm.TOTAL_TIMESTEPS=1e5
 '''
-import wandb
 import logging
 
 import jax
@@ -22,18 +21,14 @@ import optax
 from flax.training.train_state import TrainState
 import wandb
 
-from eval_agents.population_interface import AgentPopulation
-from eval_agents_generation.run_episodes import run_episodes
-from eval_agents_generation.utils import get_stats, get_metric_names
-from eval_agents_generation.save_load_utils import save_train_run
-
-from jax_marl.registration import make
-from jax_marl.wrappers.baselines import LogWrapper
+from partner_adaptation.partner_agents.population_interface import AgentPopulation
+from partner_adaptation.partner_generation.run_episodes import run_episodes
+from partner_adaptation.partner_generation.utils import get_stats
 
 # Import unified evaluation utilities
 from baselines.utils import add_eval_metrics
 
-from eval_agents_generation.utils import _create_minibatches, _create_minibatches_no_time, Transition, unbatchify
+from partner_adaptation.partner_generation.utils import _create_minibatches_no_time, Transition, unbatchify
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)

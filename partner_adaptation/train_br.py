@@ -9,10 +9,10 @@ import jax
 import jax.numpy as jnp
 
 
-from eval_agents.population_interface import AgentPopulation
-from eval_agents_generation.utils import get_metric_names
+from partner_adaptation.partner_agents.population_interface import AgentPopulation
+from partner_adaptation.partner_generation.utils import get_metric_names
 
-from eval_agents_generation.train_ego import train_ppo_ego_agent, log_metrics
+from partner_adaptation.train_ego import train_ppo_ego_agent, log_metrics
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)

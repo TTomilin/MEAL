@@ -1,6 +1,6 @@
 '''Main entry point for running teammate generation algorithms.'''
 import os
-from turtle import st
+from pathlib import Path
 from typing import Optional
 from gym import make
 import jax
@@ -14,16 +14,15 @@ from dotenv import load_dotenv
 
 import jax.numpy as jnp
 
-from eval_agents.agent_interface import ActorWithConditionalCriticPolicy, MLPActorCriticPolicyCL
-from eval_agents.mlp_actor_critic import ActorWithConditionalCritic
-from eval_agents.overcooked.agent_policy_wrappers import OvercookedIndependentPolicyWrapper, OvercookedOnionPolicyWrapper, OvercookedPlatePolicyWrapper, OvercookedRandomPolicyWrapper, OvercookedStaticPolicyWrapper
-from eval_agents_generation.train_br import DummyPolicyPopulation, HeuristicPolicyPopulation, run_br_training
+from partner_adaptation.partner_agents.agent_interface import ActorWithConditionalCriticPolicy, MLPActorCriticPolicyCL
+from partner_adaptation.partner_agents.overcooked.agent_policy_wrappers import OvercookedIndependentPolicyWrapper, OvercookedOnionPolicyWrapper, OvercookedPlatePolicyWrapper, OvercookedRandomPolicyWrapper, OvercookedStaticPolicyWrapper
+from partner_adaptation.train_br import DummyPolicyPopulation, HeuristicPolicyPopulation, run_br_training
 from jax_marl.environments.overcooked.layouts import easy_layouts
 from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
 from jax_marl.eval.visualizer import OvercookedVisualizer
 
 from dataclasses import asdict, dataclass
-from eval_agents_generation.utils import frozendict_from_layout_repr
+from partner_adaptation.partner_generation.utils import frozendict_from_layout_repr
 
 from jax_marl.registration import make
 from jax_marl.wrappers.baselines import LogWrapper
@@ -32,10 +31,10 @@ from architectures.mlp import ActorCritic as MLPActorCritic
 from architectures.cnn import ActorCritic as CNNActorCritic
 
 # Import utility functions from baselines
-from baselines.utils import add_eval_metrics, record_gif_of_episode, initialize_logging_setup
+from baselines.utils import record_gif_of_episode
 
 # Import continual learning methods
-from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, update_agem_memory
+from cl_methods.AGEM import AGEM, init_agem_memory
 from cl_methods.FT import FT
 from cl_methods.L2 import L2
 from cl_methods.MAS import MAS
@@ -134,7 +133,6 @@ class TrainConfig:
     # Partner/Task Configuration
     num_population_partners: int = 3  # Number of population partners to train against
     num_heuristic_partners: int = 5   # Number of heuristic partners to train against
-    use_heuristic_partners: bool = True  # Whether to include heuristic partners
 
     def __post_init__(self):
         ### MEAL ###
@@ -159,7 +157,7 @@ class TrainConfig:
 
         #############
         print("Number of updates: ", self.num_updates)
-        # Ensure num_checkpoints is at least 1 to avoid IndexError in checkpoint array
+        # TODO we probably don't need this many checkpoints
         self.num_checkpoints = max(1, int(self.num_updates))
 
 
@@ -273,7 +271,7 @@ def run_training():
     rng, init_rng = jax.random.split(rng, 2)
 
     # TODO: Fix this to work with difficulty and seed also if layout_name is not given
-    pop_dir = f"BRDiv_population/{config.layout_name}"
+    pop_dir = f"{Path(__file__).resolve().parent}/partner_agents/BRDiv_population/{config.layout_name}"
     with open(os.path.join(pop_dir, "config.pckl"), "rb") as f:
         partner_agent_config = pickle.load(f)  # has 'partner_pop_size'
     pop_params = []
@@ -288,13 +286,13 @@ def run_training():
 
     # train partner population
     if config.alg == "br":
-        seq_length = 8
         # Initialize ego agent
-
         ac_cls = CNNActorCritic if config.use_cnn else MLPActorCritic
 
+        seq_length = config.num_population_partners + config.num_heuristic_partners
+
         ego_network = ac_cls(
-            6, config.activation, seq_length, config.use_multihead,
+            len(env.action_set), config.activation, seq_length, config.use_multihead,
             config.shared_backbone, config.big_network, config.use_task_id,
             config.regularize_heads, config.use_layer_norm)
 
@@ -346,18 +344,16 @@ def run_training():
             ))
             partner_idx += 1
 
-        # Add heuristic partners if enabled
-        if config.use_heuristic_partners:
-            heuristic_policies = [indp, onin, plate, rndm, static]
-            heuristic_names = ["Independent", "Onion", "Plate", "Random", "Static"]
+        # Add heuristic partners
+        heuristic_policies = [indp, onin, plate, rndm, static]
 
-            for i in range(min(config.num_heuristic_partners, len(heuristic_policies))):
-                eval_partner.append((
-                    HeuristicPolicyPopulation(policy_cls=heuristic_policies[i]), 
-                    fake_params, 
-                    partner_idx
-                ))
-                partner_idx += 1
+        for i in range(min(config.num_heuristic_partners, len(heuristic_policies))):
+            eval_partner.append((
+                HeuristicPolicyPopulation(policy_cls=heuristic_policies[i]),
+                fake_params,
+                partner_idx
+            ))
+            partner_idx += 1
 
         # Train ego agent against partners in a configurable schedule
         heuristic_policies = [indp, onin, plate, rndm, static]
