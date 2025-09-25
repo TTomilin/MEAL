@@ -432,94 +432,16 @@ def train_ppo_ego_agent(
                         num_eps=config.num_eval_episodes))(gathered_params)
 
                     eval_infos = []
-                    # for eval_policy, params, idx in eval_partner:
-                    eval_policy, params, idx = eval_partner[0]
-                    eval_info = jax.vmap(lambda x: run_episodes(
-                        rng_eval,
-                        env,
-                        agent_0_param=train_state.params, agent_0_policy=ego_policy,
-                        agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
-                        max_episode_steps=max_episode_steps,
-                        env_id_idx=idx,
-                        num_eps=config.num_eval_episodes))(params)
-                    eval_infos.append((idx, eval_info))
-
-                    eval_policy, params, idx = eval_partner[1]
-                    eval_info = jax.vmap(lambda x: run_episodes(
-                        rng_eval,
-                        env,
-                        agent_0_param=train_state.params, agent_0_policy=ego_policy,
-                        agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
-                        max_episode_steps=max_episode_steps,
-                        env_id_idx=idx,
-                        num_eps=config.num_eval_episodes))(params)
-                    eval_infos.append((idx, eval_info))
-
-                    eval_policy, params, idx = eval_partner[2]
-                    eval_info = jax.vmap(lambda x: run_episodes(
-                        rng_eval,
-                        env,
-                        agent_0_param=train_state.params, agent_0_policy=ego_policy,
-                        agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
-                        max_episode_steps=max_episode_steps,
-                        env_id_idx=idx,
-                        num_eps=config.num_eval_episodes))(params)
-                    eval_infos.append((idx, eval_info))
-
-                    eval_policy, params, idx = eval_partner[3]
-                    eval_info = jax.vmap(lambda x: run_episodes(
-                        rng_eval,
-                        env,
-                        agent_0_param=train_state.params, agent_0_policy=ego_policy,
-                        agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
-                        max_episode_steps=max_episode_steps,
-                        env_id_idx=idx,
-                        num_eps=config.num_eval_episodes))(params)
-                    eval_infos.append((idx, eval_info))
-
-                    eval_policy, params, idx = eval_partner[4]
-                    eval_info = jax.vmap(lambda x: run_episodes(
-                        rng_eval,
-                        env,
-                        agent_0_param=train_state.params, agent_0_policy=ego_policy,
-                        agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
-                        max_episode_steps=max_episode_steps,
-                        env_id_idx=idx,
-                        num_eps=config.num_eval_episodes))(params)
-                    eval_infos.append((idx, eval_info))
-
-                    eval_policy, params, idx = eval_partner[5]
-                    eval_info = jax.vmap(lambda x: run_episodes(
-                        rng_eval,
-                        env,
-                        agent_0_param=train_state.params, agent_0_policy=ego_policy,
-                        agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
-                        max_episode_steps=max_episode_steps,
-                        env_id_idx=idx,
-                        num_eps=config.num_eval_episodes))(params)
-                    eval_infos.append((idx, eval_info))
-
-                    eval_policy, params, idx = eval_partner[6]
-                    eval_info = jax.vmap(lambda x: run_episodes(
-                        rng_eval,
-                        env,
-                        agent_0_param=train_state.params, agent_0_policy=ego_policy,
-                        agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
-                        max_episode_steps=max_episode_steps,
-                        env_id_idx=idx,
-                        num_eps=config.num_eval_episodes))(params)
-                    eval_infos.append((idx, eval_info))
-
-                    eval_policy, params, idx = eval_partner[7]
-                    eval_info = jax.vmap(lambda x: run_episodes(
-                        rng_eval,
-                        env,
-                        agent_0_param=train_state.params, agent_0_policy=ego_policy,
-                        agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
-                        max_episode_steps=max_episode_steps,
-                        env_id_idx=idx,
-                        num_eps=config.num_eval_episodes))(params)
-                    eval_infos.append((idx, eval_info))
+                    for eval_policy, params, idx in eval_partner:
+                        eval_info = jax.vmap(lambda x: run_episodes(
+                            eval_rng,
+                            env,
+                            agent_0_param=train_state.params, agent_0_policy=ego_policy,
+                            agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
+                            max_episode_steps=max_episode_steps,
+                            env_id_idx=idx,
+                            num_eps=config.num_eval_episodes))(params)
+                        eval_infos.append((idx, eval_info))
 
                     return (new_ckpt_arr, cidx + 1, rng, eval_eps_last_infos, eval_infos)
 
@@ -554,94 +476,16 @@ def train_ppo_ego_agent(
 
             eval_infos = []
 
-            # for eval_policy, params, idx in eval_partner:
-            eval_policy, params, idx = eval_partner[0]
-            eval_info = jax.vmap(lambda x: run_episodes(
-                rng_eval,
-                env,
-                agent_0_param=train_state.params, agent_0_policy=ego_policy,
-                agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
-                max_episode_steps=max_episode_steps,
-                env_id_idx=idx,
-                num_eps=config.num_eval_episodes))(params)
-            eval_infos.append((idx, eval_info))
-
-            eval_policy, params, idx = eval_partner[1]
-            eval_info = jax.vmap(lambda x: run_episodes(
-                rng_eval,
-                env,
-                agent_0_param=train_state.params, agent_0_policy=ego_policy,
-                agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
-                max_episode_steps=max_episode_steps,
-                env_id_idx=idx,
-                num_eps=config.num_eval_episodes))(params)
-            eval_infos.append((idx, eval_info))
-
-            eval_policy, params, idx = eval_partner[2]
-            eval_info = jax.vmap(lambda x: run_episodes(
-                rng_eval,
-                env,
-                agent_0_param=train_state.params, agent_0_policy=ego_policy,
-                agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
-                max_episode_steps=max_episode_steps,
-                env_id_idx=idx,
-                num_eps=config.num_eval_episodes))(params)
-            eval_infos.append((idx, eval_info))
-
-            eval_policy, params, idx = eval_partner[3]
-            eval_info = jax.vmap(lambda x: run_episodes(
-                rng_eval,
-                env,
-                agent_0_param=train_state.params, agent_0_policy=ego_policy,
-                agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
-                max_episode_steps=max_episode_steps,
-                env_id_idx=idx,
-                num_eps=config.num_eval_episodes))(params)
-            eval_infos.append((idx, eval_info))
-
-            eval_policy, params, idx = eval_partner[4]
-            eval_info = jax.vmap(lambda x: run_episodes(
-                rng_eval,
-                env,
-                agent_0_param=train_state.params, agent_0_policy=ego_policy,
-                agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
-                max_episode_steps=max_episode_steps,
-                env_id_idx=idx,
-                num_eps=config.num_eval_episodes))(params)
-            eval_infos.append((idx, eval_info))
-
-            eval_policy, params, idx = eval_partner[5]
-            eval_info = jax.vmap(lambda x: run_episodes(
-                rng_eval,
-                env,
-                agent_0_param=train_state.params, agent_0_policy=ego_policy,
-                agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
-                max_episode_steps=max_episode_steps,
-                env_id_idx=idx,
-                num_eps=config.num_eval_episodes))(params)
-            eval_infos.append((idx, eval_info))
-
-            eval_policy, params, idx = eval_partner[6]
-            eval_info = jax.vmap(lambda x: run_episodes(
-                rng_eval,
-                env,
-                agent_0_param=train_state.params, agent_0_policy=ego_policy,
-                agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
-                max_episode_steps=max_episode_steps,
-                env_id_idx=idx,
-                num_eps=config.num_eval_episodes))(params)
-            eval_infos.append((idx, eval_info))
-
-            eval_policy, params, idx = eval_partner[7]
-            eval_info = jax.vmap(lambda x: run_episodes(
-                rng_eval,
-                env,
-                agent_0_param=train_state.params, agent_0_policy=ego_policy,
-                agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
-                max_episode_steps=max_episode_steps,
-                env_id_idx=idx,
-                num_eps=config.num_eval_episodes))(params)
-            eval_infos.append((idx, eval_info))
+            for eval_policy, params, idx in eval_partner:
+                eval_info = jax.vmap(lambda x: run_episodes(
+                    rng_eval,
+                    env,
+                    agent_0_param=train_state.params, agent_0_policy=ego_policy,
+                    agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
+                    max_episode_steps=max_episode_steps,
+                    env_id_idx=idx,
+                    num_eps=config.num_eval_episodes))(params)
+                eval_infos.append((idx, eval_info))
 
             # initial runner state for scanning
             update_steps = 0
@@ -711,7 +555,7 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
     all_ego_returns = all_ego_returns.sum(axis=-1)
     average_ego_rets_per_iter = np.mean(all_ego_returns, axis=(0, 2, 3))
 
-    # Extract soup metrics (unified with baselines/PPO_CL.py)
+    # Extract soup metrics
     all_ego_soups = None
     average_ego_soups_per_iter = None
     if "returned_episode_soups" in train_metrics["eval_ep_last_info"]:
@@ -727,15 +571,41 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
         return_per_partner = return_per_partner.sum(axis=-1)
         average_return_per_partner_per_iters = np.mean(
             return_per_partner, axis=(0, 2, 3))
-        per_partner_per_iter[f"Eval/EgoReturn_Partner{idx[0][0]}"] = average_return_per_partner_per_iters
 
-        # Add soup metrics for per-partner evaluation (unified with baselines/PPO_CL.py)
+        # Create a check to verify and handle the dimension of idx
+        # Depending on the dimension of idx, we might need to do [0] once or twice
+        if hasattr(idx, '__len__') and not isinstance(idx, str):
+            # idx is array-like (list, tuple, numpy array, etc.)
+            if len(idx) == 0:
+                # Empty container - shouldn't happen in practice, but handle gracefully
+                partner_id = 0
+            elif hasattr(idx[0], '__len__') and not isinstance(idx[0], str) and len(idx[0]) > 0:
+                # idx is nested (e.g., [[0]], [(0,)], etc.) AND idx[0] is not empty
+                partner_id = idx[0][0]
+            else:
+                # idx is single-level array-like (e.g., [0], (0,), etc.) OR idx[0] is empty
+                # For the case where idx has shape (1, 0), idx[0] will be empty array
+                # In this case, we should extract a meaningful partner ID
+                if hasattr(idx[0], '__len__') and len(idx[0]) == 0:
+                    # idx[0] is empty (like shape (1, 0) case), use the outer index if available
+                    # This handles the case where idx has shape (1, 0) - we can't use idx[0][0]
+                    # but we can try to infer the partner ID from context or use a default
+                    partner_id = 0  # Default fallback
+                else:
+                    partner_id = idx[0]
+        else:
+            # idx is a scalar (int, float, etc.)
+            partner_id = idx
+
+        per_partner_per_iter[f"Eval/EgoReturn_Partner{partner_id}"] = average_return_per_partner_per_iters
+
+        # Add soup metrics for per-partner evaluation
         if "returned_episode_soups" in metrics:
             soup_per_partner = np.asarray(metrics["returned_episode_soups"])
             soup_per_partner = soup_per_partner.sum(axis=-1)
             average_soup_per_partner_per_iters = np.mean(
                 soup_per_partner, axis=(0, 2, 3))
-            per_partner_soup_per_iter[f"Eval/EgoSoup_Partner{idx[0][0]}"] = average_soup_per_partner_per_iters
+            per_partner_soup_per_iter[f"Eval/EgoSoup_Partner{partner_id}"] = average_soup_per_partner_per_iters
 
     # Process loss metrics - average across ego seeds, partners and minibatches dims
     # Loss metrics shape should be (n_ego_train_seeds, num_updates, ...)
@@ -748,7 +618,7 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
     # Log metrics for each update step
     num_updates = len(average_ego_value_losses)
     for step in range(num_updates):
-        # Create metrics dict for unified logging (similar to baselines/PPO_CL.py)
+        # Create metrics dict for unified logging
         metrics = {}
 
         # Add training metrics

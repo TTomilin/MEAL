@@ -131,6 +131,11 @@ class TrainConfig:
 
     log_train_out: bool = True
 
+    # Partner/Task Configuration
+    num_population_partners: int = 3  # Number of population partners to train against
+    num_heuristic_partners: int = 5   # Number of heuristic partners to train against
+    use_heuristic_partners: bool = True  # Whether to include heuristic partners
+
     def __post_init__(self):
         ### MEAL ###
 
@@ -219,8 +224,6 @@ def run_training():
                 config.reg_coef = 1e9
             elif config.cl_method.lower() == "l2":
                 config.reg_coef = 1e7
-            else:
-                config.reg_coef = 1e6  # Default value
 
         # Initialize the continual learning method
         method_map = dict(
@@ -259,7 +262,7 @@ def run_training():
     env = make(config.env_name, **config.layout)
     env = LogWrapper(env)
 
-    # Calculate max soup for the layout (unified with baselines/PPO_CL.py)
+    # Calculate max soup for the layout
     layout_name = config.layout_name if config.layout_name != "" else f"layout_{config.layout_idx}"
     max_soup_dict = {layout_name: estimate_max_soup(config.layout["layout"], env.max_steps, n_agents=env.num_agents)}
 
@@ -329,146 +332,79 @@ def run_training():
 
         fake_params = jax.tree.map(
             lambda x: x[jnp.newaxis, ...], ego_params)
-        eval_partner = [
-            (DummyPolicyPopulation(
-                policy_cls=partner_policy), jax.tree.map(lambda x: x[jnp.newaxis, ...], pop_params[0]), 0),
-            (DummyPolicyPopulation(
-                policy_cls=partner_policy), jax.tree.map(lambda x: x[jnp.newaxis, ...], pop_params[1]), 1),
-            (DummyPolicyPopulation(
-                policy_cls=partner_policy), jax.tree.map(lambda x: x[jnp.newaxis, ...], pop_params[2]), 2),
-            (HeuristicPolicyPopulation(policy_cls=indp), fake_params, 3),
-            (HeuristicPolicyPopulation(policy_cls=onin), fake_params, 4),
-            (HeuristicPolicyPopulation(policy_cls=plate), fake_params, 5),
-            (HeuristicPolicyPopulation(policy_cls=rndm), fake_params, 6),
-            (HeuristicPolicyPopulation(policy_cls=static), fake_params, 7),
-        ]
 
-        # Train ego agent against partners in a schedule
-        ego_params, cl_state = run_br_training(
-            config, env, partner_agent_config, ego_policy,
-            ego_params, partner_policy, pop_params[0], env_id_idx=0, eval_partner=eval_partner,
-            max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
-        ego_params = jax.tree.map(  # take the first params set from the batch dimension
-            lambda x: x[0, ...], ego_params)
+        # Build evaluation partner list based on configuration
+        eval_partner = []
+        partner_idx = 0
 
-        # Record and upload gif after training with partner 0 (unified with baselines/PPO_CL.py)
-        if hasattr(config, 'record_gif') and config.record_gif:
-            from flax.training.train_state import TrainState
-            import optax
-            # Create a temporary train state for gif recording
-            temp_train_state = TrainState.create(
-                apply_fn=ego_policy.network.apply,
-                params=ego_params,
-                tx=optax.adam(1e-4)  # dummy optimizer
-            )
-            states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=0, max_steps=config.gif_len)
-            partner_name = "BRDiv_Partner_0"
-            visualizer.animate(states, agent_view_size=5, task_idx=0, task_name=partner_name, exp_dir=f"gifs/{run.name}")
+        # Add population partners
+        for i in range(min(config.num_population_partners, len(pop_params))):
+            eval_partner.append((
+                DummyPolicyPopulation(policy_cls=partner_policy), 
+                jax.tree.map(lambda x: x[jnp.newaxis, ...], pop_params[i]), 
+                partner_idx
+            ))
+            partner_idx += 1
 
-        ego_params, cl_state = run_br_training(
-            config, env, partner_agent_config, ego_policy,
-            ego_params, partner_policy, pop_params[1], env_id_idx=1, eval_partner=eval_partner,
-            max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
-        ego_params = jax.tree.map(  # take the first params set from the batch dimension
-            lambda x: x[0, ...], ego_params)
+        # Add heuristic partners if enabled
+        if config.use_heuristic_partners:
+            heuristic_policies = [indp, onin, plate, rndm, static]
+            heuristic_names = ["Independent", "Onion", "Plate", "Random", "Static"]
 
-        # Record gif after training with partner 1
-        if hasattr(config, 'record_gif') and config.record_gif:
-            temp_train_state = TrainState.create(
-                apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
-            states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=1, max_steps=config.gif_len)
-            partner_name = "BRDiv_Partner_1"
-            visualizer.animate(states, agent_view_size=5, task_idx=1, task_name=partner_name, exp_dir=f"gifs/{run.name}")
+            for i in range(min(config.num_heuristic_partners, len(heuristic_policies))):
+                eval_partner.append((
+                    HeuristicPolicyPopulation(policy_cls=heuristic_policies[i]), 
+                    fake_params, 
+                    partner_idx
+                ))
+                partner_idx += 1
 
-        ego_params, cl_state = run_br_training(
-            config, env, partner_agent_config, ego_policy,
-            ego_params, partner_policy, pop_params[2], env_id_idx=2, eval_partner=eval_partner,
-            max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
-        ego_params = jax.tree.map(  # take the first params set from the batch dimension
-            lambda x: x[0, ...], ego_params)
+        # Train ego agent against partners in a configurable schedule
+        heuristic_policies = [indp, onin, plate, rndm, static]
+        heuristic_names = ["Independent_Policy", "Onion_Policy", "Plate_Policy", "Random_Policy", "Static_Policy"]
 
-        # Record gif after training with partner 2
-        if hasattr(config, 'record_gif') and config.record_gif:
-            temp_train_state = TrainState.create(
-                apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
-            states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=2, max_steps=config.gif_len)
-            partner_name = "BRDiv_Partner_2"
-            visualizer.animate(states, agent_view_size=5, task_idx=2, task_name=partner_name, exp_dir=f"gifs/{run.name}")
+        # Train against population partners
+        for i in range(min(config.num_population_partners, len(pop_params))):
+            ego_params, cl_state = run_br_training(
+                config, env, partner_agent_config, ego_policy,
+                ego_params, partner_policy, pop_params[i], env_id_idx=i, eval_partner=eval_partner,
+                max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
+            ego_params = jax.tree.map(  # take the first params set from the batch dimension
+                lambda x: x[0, ...], ego_params)
 
-        ego_params, cl_state = run_br_training(
-            config, env, partner_agent_config, ego_policy,
-            ego_params, indp, None, env_id_idx=3, eval_partner=eval_partner,
-            max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
-        ego_params = jax.tree.map(  # take the first params set from the batch dimension
-            lambda x: x[0, ...], ego_params)
+            # Record gif after training with population partner
+            if hasattr(config, 'record_gif') and config.record_gif:
+                from flax.training.train_state import TrainState
+                import optax
+                temp_train_state = TrainState.create(
+                    apply_fn=ego_policy.network.apply,
+                    params=ego_params,
+                    tx=optax.adam(1e-4)  # dummy optimizer
+                )
+                states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=i, max_steps=config.gif_len)
+                partner_name = f"BRDiv_Partner_{i}"
+                visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=partner_name, exp_dir=f"gifs/{run.name}")
 
-        # Record gif after training with independent policy
-        if hasattr(config, 'record_gif') and config.record_gif:
-            temp_train_state = TrainState.create(
-                apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
-            states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=3, max_steps=config.gif_len)
-            partner_name = "Independent_Policy"
-            visualizer.animate(states, agent_view_size=5, task_idx=3, task_name=partner_name, exp_dir=f"gifs/{run.name}")
+        # Train against heuristic partners if enabled
+        if config.use_heuristic_partners:
+            for i in range(min(config.num_heuristic_partners, len(heuristic_policies))):
+                env_id_idx = config.num_population_partners + i
+                partner_policy_obj = heuristic_policies[i]
+                partner_name = heuristic_names[i]
 
-        ego_params, cl_state = run_br_training(
-            config, env, partner_agent_config, ego_policy,
-            ego_params, onin, None, env_id_idx=4, eval_partner=eval_partner,
-            max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
-        ego_params = jax.tree.map(  # take the first params set from the batch dimension
-            lambda x: x[0, ...], ego_params)
+                ego_params, cl_state = run_br_training(
+                    config, env, partner_agent_config, ego_policy,
+                    ego_params, partner_policy_obj, None, env_id_idx=env_id_idx, eval_partner=eval_partner,
+                    max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
+                ego_params = jax.tree.map(  # take the first params set from the batch dimension
+                    lambda x: x[0, ...], ego_params)
 
-        # Record gif after training with onion policy
-        if hasattr(config, 'record_gif') and config.record_gif:
-            temp_train_state = TrainState.create(
-                apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
-            states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=4, max_steps=config.gif_len)
-            partner_name = "Onion_Policy"
-            visualizer.animate(states, agent_view_size=5, task_idx=4, task_name=partner_name, exp_dir=f"gifs/{run.name}")
-
-        ego_params, cl_state = run_br_training(
-            config, env, partner_agent_config, ego_policy,
-            ego_params, plate, None, env_id_idx=5, eval_partner=eval_partner,
-            max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
-        ego_params = jax.tree.map(  # take the first params set from the batch dimension
-            lambda x: x[0, ...], ego_params)
-
-        # Record gif after training with plate policy
-        if hasattr(config, 'record_gif') and config.record_gif:
-            temp_train_state = TrainState.create(
-                apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
-            states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=5, max_steps=config.gif_len)
-            partner_name = "Plate_Policy"
-            visualizer.animate(states, agent_view_size=5, task_idx=5, task_name=partner_name, exp_dir=f"gifs/{run.name}")
-
-        ego_params, cl_state = run_br_training(
-            config, env, partner_agent_config, ego_policy,
-            ego_params, rndm, None, env_id_idx=6, eval_partner=eval_partner,
-            max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
-        ego_params = jax.tree.map(  # take the first params set from the batch dimension
-            lambda x: x[0, ...], ego_params)
-
-        # Record gif after training with random policy
-        if hasattr(config, 'record_gif') and config.record_gif:
-            temp_train_state = TrainState.create(
-                apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
-            states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=6, max_steps=config.gif_len)
-            partner_name = "Random_Policy"
-            visualizer.animate(states, agent_view_size=5, task_idx=6, task_name=partner_name, exp_dir=f"gifs/{run.name}")
-
-        ego_params, cl_state = run_br_training(
-            config, env, partner_agent_config, ego_policy,
-            ego_params, static, None, env_id_idx=7, eval_partner=eval_partner,
-            max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
-        ego_params = jax.tree.map(  # take the first params set from the batch dimension
-            lambda x: x[0, ...], ego_params)
-
-        # Record gif after training with static policy
-        if hasattr(config, 'record_gif') and config.record_gif:
-            temp_train_state = TrainState.create(
-                apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
-            states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=7, max_steps=config.gif_len)
-            partner_name = "Static_Policy"
-            visualizer.animate(states, agent_view_size=5, task_idx=7, task_name=partner_name, exp_dir=f"gifs/{run.name}")
+                # Record gif after training with heuristic partner
+                if hasattr(config, 'record_gif') and config.record_gif:
+                    temp_train_state = TrainState.create(
+                        apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
+                    states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=env_id_idx, max_steps=config.gif_len)
+                    visualizer.animate(states, agent_view_size=5, task_idx=env_id_idx, task_name=partner_name, exp_dir=f"gifs/{run.name}")
     else:
         raise NotImplementedError("Selected method not implemented.")
 
