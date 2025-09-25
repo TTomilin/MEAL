@@ -114,11 +114,8 @@ def compute_fisher(params: FrozenDict,
 
         # Handle both policy networks (return distributions) and Q-networks (return Q-values)
         if isinstance(net_output, tuple):
-            # Policy network case: returns (dists, values, dormant_ratio) or (dists, values)
-            if len(net_output) == 3:
-                dists, _, _ = net_output  # Unpack all 3 values
-            else:
-                dists, _ = net_output  # Unpack 2 values
+            # Policy network case: returns (dists, values, dormant_ratio)
+            dists, _, _ = net_output  # Unpack all 3 values
         else:
             # Q-network case: returns Q-values, convert to Categorical distribution
             q_values = net_output  # (A, num_actions)
@@ -149,10 +146,7 @@ def compute_fisher(params: FrozenDict,
         # Handle both policy networks (return distributions) and Q-networks (return Q-values)
         if isinstance(net_output, tuple):
             # Policy network case: returns (dists, values, dormant_ratio) or (dists, values)
-            if len(net_output) == 3:
-                dists, _, _ = net_output  # Unpack all 3 values
-            else:
-                dists, _ = net_output  # Unpack 2 values
+            dists, _, _ = net_output
             actions = dists.sample(seed=key_sample)  # (A,)
         else:
             # Q-network case: returns Q-values, convert to Categorical distribution
