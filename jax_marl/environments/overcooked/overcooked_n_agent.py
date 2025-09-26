@@ -397,7 +397,7 @@ class Overcooked(MultiAgentEnv):
                 operand=None,
             )
             inv = inv.at[idx].set(inv_i)
-            rew = rew + r_i
+            rew = rew.at[idx].add(r_i)
             shaped = shaped.at[idx].set(s_i)
             # Calculate soups delivered by this agent
             soups_delivered = r_i / DELIVERY_REWARD
