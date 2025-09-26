@@ -137,7 +137,7 @@ def main() -> None:
         base_colors.extend(base_colors)  # recycle if too many
     palette = {ver: col for ver, col in zip(versions, base_colors)}
 
-    fig, ax = plt.subplots(figsize=(max(6, len(args.methods)), 2.5))
+    fig, ax = plt.subplots(figsize=(max(4.5, len(args.methods)), 2.25))
 
     for i, ver in enumerate(versions):
         offsets = x - (n_ver - 1) * bar_w / 2 + i * bar_w
@@ -153,7 +153,7 @@ def main() -> None:
 
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=n_ver // 2, frameon=False, fontsize=10)
 
-    plt.tight_layout(rect=[0, -0.05, 1, 1])
+    plt.tight_layout(rect=[0, -0.1, 1, 1])
     out_dir = root / "plots"
     out_dir.mkdir(exist_ok=True)
     stem = args.plot_name or "ablation"

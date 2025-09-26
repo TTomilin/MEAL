@@ -32,10 +32,18 @@ class ActorCritic(nn.Module):
         return nn.relu if self.activation == "relu" else nn.tanh
 
     def _dense(self, n, name, gain):
-        return nn.Dense(n,
-                        kernel_init=orthogonal(gain),
-                        bias_init=constant(0.0),
-                        name=name)
+        return nn.Dense(n, kernel_init=orthogonal(gain), bias_init=constant(0.0), name=name)
+
+    def _layer_dormant_ratio(self, h: jnp.ndarray, tag: str):
+        """h: (batch, hidden). Implements Sokar et al.'s τ-dormant metric."""
+        # mean |activation| per unit over the batch
+        m = jnp.mean(jnp.abs(h), axis=0)             # shape: (H,)
+        denom = jnp.mean(m) + 1e-12
+        s = m / denom                                # normalized score
+        ratio = jnp.mean(s <= self.dormant_threshold)
+        # stash per-layer ratio for logging
+        self.sow("metrics", "dormant_layer", {tag: ratio})
+        return ratio
 
     # ------------------------------------------------------------------ forward
     @nn.compact
@@ -43,8 +51,7 @@ class ActorCritic(nn.Module):
         act = self._act()
         hid = 256 if self.big_network else 128
 
-        # Initialize list to collect activations for dormant ratio calculation
-        activations = [] if self.track_dormant_ratio else None
+        per_layer_ratios = []  # collect to average later
 
         # -------- append task one-hot ----------------------------------------
         if self.use_task_id:
@@ -58,7 +65,7 @@ class ActorCritic(nn.Module):
                 x = self._dense(hid, f"common_dense{i + 1}", np.sqrt(2))(x)
                 x = act(x)
                 if self.track_dormant_ratio:
-                    activations.append(x)
+                    per_layer_ratios.append(self._layer_dormant_ratio(x, f"shared_{i+1}"))
                 if self.use_layer_norm:
                     x = nn.LayerNorm(name=f"common_ln{i + 1}", epsilon=1e-5)(x)
             trunk = x
@@ -66,24 +73,22 @@ class ActorCritic(nn.Module):
         else:
             # separate trunks – duplicate code for actor / critic
             def branch(prefix, inp):
-                branch_activations = []
+                ratios = []
                 for i in range(2 + self.big_network):
                     inp = self._dense(
                         hid, f"{prefix}_dense{i + 1}", np.sqrt(2))(inp)
                     inp = act(inp)
                     if self.track_dormant_ratio:
-                        branch_activations.append(inp)
+                        ratios.append(self._layer_dormant_ratio(inp, f"{prefix}_{i+1}"))
                     if self.use_layer_norm:
-                        inp = nn.LayerNorm(
-                            name=f"{prefix}_ln{i + 1}", epsilon=1e-5)(inp)
-                return inp, branch_activations
+                        inp = nn.LayerNorm(name=f"{prefix}_ln{i + 1}", epsilon=1e-5)(inp)
+                return inp, ratios
 
-            actor_in, actor_activations = branch("actor", x)
-            critic_in, critic_activations = branch("critic", x)
-
+            actor_in, actor_ratios = branch("actor", x)
+            critic_in, critic_ratios = branch("critic", x)
             if self.track_dormant_ratio:
-                activations.extend(actor_activations)
-                activations.extend(critic_activations)
+                per_layer_ratios.extend(actor_ratios)
+                per_layer_ratios.extend(critic_ratios)
 
         # -------- actor head --------------------------------------------------
         logits_dim = self.action_dim * \
@@ -102,15 +107,10 @@ class ActorCritic(nn.Module):
         v = jnp.squeeze(v, -1)
 
         # -------- calculate dormant neuron ratio ------------------------------
-        dormant_ratio = 0.0
-        if self.track_dormant_ratio and activations:
-            # Concatenate all activations and calculate dormant ratio
-            all_activations = jnp.concatenate(
-                [act_layer.flatten() for act_layer in activations])
-            # Count neurons with activation below threshold
-            dormant_count = jnp.sum(
-                jnp.abs(all_activations) < self.dormant_threshold)
-            total_count = all_activations.size
-            dormant_ratio = dormant_count / total_count
+        if self.track_dormant_ratio and per_layer_ratios:
+            # average of per-layer dormant ratios
+            dormant_ratio = jnp.mean(jnp.array(per_layer_ratios))
+        else:
+            dormant_ratio = jnp.array(0.0, dtype=jnp.float32)
 
         return pi, v, dormant_ratio
