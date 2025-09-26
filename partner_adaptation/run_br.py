@@ -1,44 +1,41 @@
 '''Main entry point for running teammate generation algorithms.'''
+import json
 import os
+import pickle
+from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from gym import make
+
 import jax
-import pickle
-import numpy as np
-import wandb
-import tyro
-import json
-from datetime import datetime
-from dotenv import load_dotenv
-
 import jax.numpy as jnp
+import numpy as np
+import tyro
+import wandb
+from dotenv import load_dotenv
+from gym import make
 
-from partner_adaptation.partner_agents.agent_interface import ActorWithConditionalCriticPolicy, MLPActorCriticPolicyCL
-from partner_adaptation.partner_agents.overcooked.agent_policy_wrappers import OvercookedIndependentPolicyWrapper, OvercookedOnionPolicyWrapper, OvercookedPlatePolicyWrapper, OvercookedRandomPolicyWrapper, OvercookedStaticPolicyWrapper
-from partner_adaptation.train_br import DummyPolicyPopulation, HeuristicPolicyPopulation, run_br_training
-from jax_marl.environments.overcooked.layouts import easy_layouts
-from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
-from jax_marl.eval.visualizer import OvercookedVisualizer
-
-from dataclasses import asdict, dataclass
-from partner_adaptation.partner_generation.utils import frozendict_from_layout_repr
-
-from jax_marl.registration import make
-from jax_marl.wrappers.baselines import LogWrapper
-
-from architectures.mlp import ActorCritic as MLPActorCritic
 from architectures.cnn import ActorCritic as CNNActorCritic
-
+from architectures.mlp import ActorCritic as MLPActorCritic
 # Import utility functions from baselines
 from baselines.utils import record_gif_of_episode
-
 # Import continual learning methods
 from cl_methods.AGEM import AGEM, init_agem_memory
+from cl_methods.EWC import EWC
 from cl_methods.FT import FT
 from cl_methods.L2 import L2
 from cl_methods.MAS import MAS
-from cl_methods.EWC import EWC
+from jax_marl.environments.overcooked.layouts import easy_layouts
+from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
+from jax_marl.eval.visualizer import OvercookedVisualizer
+from jax_marl.registration import make
+from jax_marl.wrappers.baselines import LogWrapper
+from partner_adaptation.partner_agents.agent_interface import ActorWithConditionalCriticPolicy, MLPActorCriticPolicyCL
+from partner_adaptation.partner_agents.overcooked.agent_policy_wrappers import OvercookedIndependentPolicyWrapper, \
+    OvercookedOnionPolicyWrapper, OvercookedPlatePolicyWrapper, OvercookedRandomPolicyWrapper, \
+    OvercookedStaticPolicyWrapper
+from partner_adaptation.partner_generation.utils import frozendict_from_layout_repr
+from partner_adaptation.train_br import DummyPolicyPopulation, HeuristicPolicyPopulation, run_br_training
 
 
 @dataclass
@@ -132,7 +129,7 @@ class TrainConfig:
 
     # Partner/Task Configuration
     num_population_partners: int = 3  # Number of population partners to train against
-    num_heuristic_partners: int = 5   # Number of heuristic partners to train against
+    num_heuristic_partners: int = 5  # Number of heuristic partners to train against
 
     def __post_init__(self):
         ### MEAL ###
@@ -153,7 +150,7 @@ class TrainConfig:
         self.num_actions = 6
 
         self.minibatch_size = (
-            self.num_controlled_actors * self.num_steps) // self.num_minibatches
+                                      self.num_controlled_actors * self.num_steps) // self.num_minibatches
 
         #############
         print("Number of updates: ", self.num_updates)
@@ -250,7 +247,7 @@ def run_training():
         print(f"Saved to {save_dir}/config.pckl")
 
     if config.layout_name != "":
-        layout_dict = {"layout":  easy_layouts[config.layout_name]}
+        layout_dict = {"layout": easy_layouts[config.layout_name]}
     else:
         layouts = read_layouts(config)
         layout_dict = {"layout": frozendict_from_layout_repr(
@@ -322,7 +319,7 @@ def run_training():
             print(f"Initialized CL state for method: {config.cl_method.upper()}")
 
         indp = OvercookedIndependentPolicyWrapper(
-            layout=config.layout["layout"],  p_onion_on_counter=0.5, p_plate_on_counter=0.5)
+            layout=config.layout["layout"], p_onion_on_counter=0.5, p_plate_on_counter=0.5)
         onin = OvercookedOnionPolicyWrapper(layout=config.layout["layout"])
         plate = OvercookedPlatePolicyWrapper(layout=config.layout["layout"])
         rndm = OvercookedRandomPolicyWrapper(layout=config.layout["layout"])
@@ -338,8 +335,8 @@ def run_training():
         # Add population partners
         for i in range(min(config.num_population_partners, len(pop_params))):
             eval_partner.append((
-                DummyPolicyPopulation(policy_cls=partner_policy), 
-                jax.tree.map(lambda x: x[jnp.newaxis, ...], pop_params[i]), 
+                DummyPolicyPopulation(policy_cls=partner_policy),
+                jax.tree.map(lambda x: x[jnp.newaxis, ...], pop_params[i]),
                 partner_idx
             ))
             partner_idx += 1
@@ -365,8 +362,8 @@ def run_training():
                 config, env, partner_agent_config, ego_policy,
                 ego_params, partner_policy, pop_params[i], env_id_idx=i, eval_partner=eval_partner,
                 max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
-            ego_params = jax.tree.map(  # take the first params set from the batch dimension
-                lambda x: x[0, ...], ego_params)
+            # TODO when using vmap over seeds, do the following
+            # ego_params = jax.tree.map(lambda x: x[0, ...], ego_params) # take the first params set from the batch dimension
 
             # Record gif after training with population partner
             if hasattr(config, 'record_gif') and config.record_gif:
@@ -377,30 +374,33 @@ def run_training():
                     params=ego_params,
                     tx=optax.adam(1e-4)  # dummy optimizer
                 )
-                states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=i, max_steps=config.gif_len)
+                states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=i,
+                                               max_steps=config.gif_len)
                 partner_name = f"BRDiv_Partner_{i}"
-                visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=partner_name, exp_dir=f"gifs/{run.name}")
+                visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=partner_name,
+                                   exp_dir=f"gifs/{run.name}")
 
         # Train against heuristic partners if enabled
-        if config.use_heuristic_partners:
-            for i in range(min(config.num_heuristic_partners, len(heuristic_policies))):
-                env_id_idx = config.num_population_partners + i
-                partner_policy_obj = heuristic_policies[i]
-                partner_name = heuristic_names[i]
+        for i in range(min(config.num_heuristic_partners, len(heuristic_policies))):
+            env_id_idx = config.num_population_partners + i
+            partner_policy_obj = heuristic_policies[i]
+            partner_name = heuristic_names[i]
 
-                ego_params, cl_state = run_br_training(
-                    config, env, partner_agent_config, ego_policy,
-                    ego_params, partner_policy_obj, None, env_id_idx=env_id_idx, eval_partner=eval_partner,
-                    max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
-                ego_params = jax.tree.map(  # take the first params set from the batch dimension
-                    lambda x: x[0, ...], ego_params)
+            ego_params, cl_state = run_br_training(
+                config, env, partner_agent_config, ego_policy,
+                ego_params, partner_policy_obj, None, env_id_idx=env_id_idx, eval_partner=eval_partner,
+                max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
+            ego_params = jax.tree.map(  # take the first params set from the batch dimension
+                lambda x: x[0, ...], ego_params)
 
-                # Record gif after training with heuristic partner
-                if hasattr(config, 'record_gif') and config.record_gif:
-                    temp_train_state = TrainState.create(
-                        apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
-                    states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=env_id_idx, max_steps=config.gif_len)
-                    visualizer.animate(states, agent_view_size=5, task_idx=env_id_idx, task_name=partner_name, exp_dir=f"gifs/{run.name}")
+            # Record gif after training with heuristic partner
+            if hasattr(config, 'record_gif') and config.record_gif:
+                temp_train_state = TrainState.create(
+                    apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
+                states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=env_id_idx,
+                                               max_steps=config.gif_len)
+                visualizer.animate(states, agent_view_size=5, task_idx=env_id_idx, task_name=partner_name,
+                                   exp_dir=f"gifs/{run.name}")
     else:
         raise NotImplementedError("Selected method not implemented.")
 
@@ -408,8 +408,7 @@ def run_training():
         path = f"{save_dir}/"
         os.makedirs(path, exist_ok=True)
         payload = {"actor_params": ego_params}
-        pickle.dump(payload, open(
-            path + f"params_seed{config.seed}.pt", "wb"))
+        pickle.dump(payload, open(path + f"params_seed{config.seed}.pt", "wb"))
 
 
 if __name__ == '__main__':

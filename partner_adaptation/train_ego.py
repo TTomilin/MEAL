@@ -18,27 +18,25 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-from flax.training.train_state import TrainState
 import wandb
-
-from partner_adaptation.partner_agents.population_interface import AgentPopulation
-from partner_adaptation.partner_generation.run_episodes import run_episodes
-from partner_adaptation.partner_generation.utils import get_stats
+from flax.training.train_state import TrainState
 
 # Import unified evaluation utilities
 from baselines.utils import add_eval_metrics
-
+from partner_adaptation.partner_agents.population_interface import AgentPopulation
+from partner_adaptation.partner_generation.run_episodes import run_episodes
 from partner_adaptation.partner_generation.utils import _create_minibatches_no_time, Transition, unbatchify
+from partner_adaptation.partner_generation.utils import get_stats
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
 def train_ppo_ego_agent(
-    config, env, train_rng,
-    ego_policy, init_ego_params, n_ego_train_seeds,
-    partner_population: AgentPopulation,
-    partner_params, env_id_idx=0, eval_partner=[], cl=None, cl_state=None
+        config, env, train_rng,
+        ego_policy, init_ego_params, n_ego_train_seeds,
+        partner_population: AgentPopulation,
+        partner_params, env_id_idx=0, eval_partner=[], cl=None, cl_state=None
 ):
     '''
     Train PPO ego agent using the given partner checkpoints and initial ego parameters.
@@ -66,8 +64,8 @@ def train_ppo_ego_agent(
 
         def linear_schedule(count):
             frac = 1.0 - \
-                (count // (config.num_minibatches *
-                 config.update_epochs)) / config.num_updates
+                   (count // (config.num_minibatches *
+                              config.update_epochs)) / config.num_updates
             return config.lr * frac
 
         def train(rng):
@@ -106,8 +104,7 @@ def train_ppo_ego_agent(
                     rng, 4)
 
                 # Get available actions for agent 0 from environment state
-                avail_actions = jax.vmap(
-                    env.get_avail_actions)(env_state.env_state)
+                avail_actions = jax.vmap(env.get_avail_actions)(env_state.env_state)
                 avail_actions = jax.lax.stop_gradient(avail_actions)
                 avail_actions_0 = avail_actions["agent_0"].astype(jnp.float32)
                 avail_actions_1 = avail_actions["agent_1"].astype(jnp.float32)
@@ -119,9 +116,9 @@ def train_ppo_ego_agent(
 
                 # Determine final indices based on whether resampling was needed for each env
                 updated_partner_indices = jnp.where(
-                    needs_resample,         # Mask shape (NUM_ENVS,)
-                    sampled_indices_all,    # Use newly sampled index if True
-                    partner_indices         # Else, keep index from previous step
+                    needs_resample,  # Mask shape (NUM_ENVS,)
+                    sampled_indices_all,  # Use newly sampled index if True
+                    partner_indices  # Else, keep index from previous step
                 )
 
                 # Note that we do not need to reset the hiden states for both the ego and partner agents
@@ -203,11 +200,11 @@ def train_ppo_ego_agent(
                         transition.reward,
                     )
                     delta = reward + config.gamma * \
-                        next_value * (1 - done) - value
+                            next_value * (1 - done) - value
                     gae = (
-                        delta
-                        + config.gamma *
-                        config.gae_lambda * (1 - done) * gae
+                            delta
+                            + config.gamma *
+                            config.gae_lambda * (1 - done) * gae
                     )
                     return (gae, value), gae
 
@@ -239,7 +236,7 @@ def train_ppo_ego_agent(
 
                     # Value loss
                     value_pred_clipped = traj_batch.value + (
-                        value - traj_batch.value
+                            value - traj_batch.value
                     ).clip(
                         -config.clip_eps, config.clip_eps)
                     value_losses = jnp.square(value - target_v)
@@ -268,9 +265,9 @@ def train_ppo_ego_agent(
                         cl_penalty = cl.penalty(params, cl_state, config.reg_coef)
 
                     total_loss = pg_loss + \
-                        config.vf_coef * value_loss - \
-                        config.ent_coef * entropy + \
-                        cl_penalty
+                                 config.vf_coef * value_loss - \
+                                 config.ent_coef * entropy + \
+                                 cl_penalty
                     return total_loss, (value_loss, pg_loss, entropy, cl_penalty)
 
                 grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
@@ -294,11 +291,12 @@ def train_ppo_ego_agent(
 
                 batch_size = config.minibatch_size * config.num_minibatches
                 assert (
-                    batch_size == config.num_steps * config.num_controlled_actors
+                        batch_size == config.num_steps * config.num_controlled_actors
                 ), "batch size must be equal to number of steps * number of actors"
 
                 minibatches = _create_minibatches_no_time(
-                    traj_batch, advantages, targets, init_ego_hstate, config.num_controlled_actors, config.num_minibatches, batch_size, perm_rng)
+                    traj_batch, advantages, targets, init_ego_hstate, config.num_controlled_actors,
+                    config.num_minibatches, batch_size, perm_rng)
                 train_state, losses_and_grads = jax.lax.scan(
                     _update_minbatch, train_state, minibatches
                 )
@@ -316,26 +314,20 @@ def train_ppo_ego_agent(
                 # Init envs & partner indices
                 rng, reset_rng, p_rng = jax.random.split(rng, 3)
                 reset_rngs = jax.random.split(reset_rng, config.num_envs)
-                init_obs, init_env_state = jax.vmap(
-                    env.reset, in_axes=(0,))(reset_rngs)
-                init_done = {k: jnp.zeros(
-                    (config.num_envs), dtype=bool) for k in env.agents + ["__all__"]}
-                new_partner_indices = partner_population.sample_agent_indices(
-                    config.num_uncontrolled_actors, p_rng)
+                init_obs, init_env_state = jax.vmap(env.reset, in_axes=(0,))(reset_rngs)
+                init_done = {k: jnp.zeros((config.num_envs), dtype=bool) for k in env.agents + ["__all__"]}
+                new_partner_indices = partner_population.sample_agent_indices(config.num_uncontrolled_actors, p_rng)
 
                 # 1) rollout
                 runner_state = (train_state, init_env_state, init_obs, init_done,
                                 init_ego_hstate, init_partner_hstate, new_partner_indices, rng)
 
-                runner_state, traj_batch = jax.lax.scan(
-                    _env_step, runner_state, None, config.num_steps)
-                (train_state, env_state, obs, done, ego_hstate,
-                 partner_hstate, partner_indices, rng) = runner_state
+                runner_state, traj_batch = jax.lax.scan(_env_step, runner_state, None, config.num_steps)
+                (train_state, env_state, obs, done, ego_hstate, partner_hstate, partner_indices, rng) = runner_state
 
                 # 2) advantage
                 # Get available actions for agent 0 from environment state
-                avail_actions_0 = jax.vmap(env.get_avail_actions)(
-                    env_state.env_state)["agent_0"].astype(jnp.float32)
+                avail_actions_0 = jax.vmap(env.get_avail_actions)(env_state.env_state)["agent_0"].astype(jnp.float32)
 
                 # Get final value estimate for completed trajectory
                 _, last_val, _, _ = ego_policy.get_action_value_policy(
@@ -405,7 +397,7 @@ def train_ppo_ego_agent(
                 (train_state, rng, update_steps) = new_update_state
 
                 # update steps is 1-indexed because it was incremented at the end of the update step
-                to_store = jnp.logical_or(jnp.equal(jnp.mod(update_steps-1, ckpt_and_eval_interval), 0),
+                to_store = jnp.logical_or(jnp.equal(jnp.mod(update_steps - 1, ckpt_and_eval_interval), 0),
                                           jnp.equal(update_steps, config.num_updates))
 
                 def store_and_eval_ckpt(args):
@@ -504,6 +496,7 @@ def train_ppo_ego_agent(
                 "checkpoints": checkpoint_array,
             }
             return out
+
         return train
 
     # ------------------------------
@@ -517,6 +510,33 @@ def train_ppo_ego_agent(
         train_fn = jax.jit(jax.vmap(make_ppo_train(config)))
         out = train_fn(rngs)
     return out
+
+
+def add_seed_axis_if_missing(x, expected_ndim_with_seed):
+    x = np.asarray(x)
+    if x.ndim == expected_ndim_with_seed - 1:
+        return x[None, ...]  # add leading seed axis
+    return x
+
+
+def mean_over_all_but_updates(arr, num_updates: int):
+    """Returns shape (num_updates,), averaging every axis except the updates axis."""
+    a = np.asarray(arr)
+    if a.size == 0:
+        return np.zeros((num_updates,), dtype=float)
+
+    # Try to locate the updates axis by size match
+    cand = [i for i, s in enumerate(a.shape) if s == num_updates]
+    if cand:
+        upd_ax = cand[0]
+    else:
+        # Fallback heuristics: (seeds, updates, ...)->1, (updates, ...)->0
+        upd_ax = 1 if a.ndim >= 3 else 0
+
+    # Move updates to front, flatten the rest, then mean
+    a = np.moveaxis(a, upd_ax, 0)  # (num_updates, ...)
+    a = a.reshape(num_updates, -1)  # (num_updates, rest)
+    return a.mean(axis=1)  # (num_updates,)
 
 
 def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layout_names=None):
@@ -535,8 +555,7 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
     train_stats = get_stats(train_metrics, metric_names)
     # each key in train_stats is a metric name, and the value is an array of shape (num_seeds, num_updates, 2)
     # where the last dimension contains the mean and std of the metric
-    train_stats = {k: np.mean(np.array(v), axis=0)
-                   for k, v in train_stats.items()}
+    train_stats = {k: np.mean(np.array(v), axis=0) for k, v in train_stats.items()}
 
     # shape (n_ego_train_seeds, num_updates, num_partners, num_minibatches)
     all_ego_value_losses = np.asarray(train_metrics["value_loss"])
@@ -549,17 +568,16 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
     # Process eval return metrics - average across ego seeds, eval episodes,  training partners
     # and num_agents per game for each checkpoint
     # shape (n_ego_train_seeds, num_updates, num_partners, num_eval_episodes, nuM_agents_per_game)
-    all_ego_returns = np.asarray(
-        train_metrics["eval_ep_last_info"]["returned_episode_returns"])
+    all_ego_returns = np.asarray(train_metrics["eval_ep_last_info"]["returned_episode_returns"])
     all_ego_returns = all_ego_returns.sum(axis=-1)
+    all_ego_returns = add_seed_axis_if_missing(all_ego_returns, expected_ndim_with_seed=4)
     average_ego_rets_per_iter = np.mean(all_ego_returns, axis=(0, 2, 3))
 
     # Extract soup metrics
     all_ego_soups = None
     average_ego_soups_per_iter = None
     if "returned_episode_soups" in train_metrics["eval_ep_last_info"]:
-        all_ego_soups = np.asarray(
-            train_metrics["eval_ep_last_info"]["returned_episode_soups"])
+        all_ego_soups = np.asarray(train_metrics["eval_ep_last_info"]["returned_episode_soups"])
         all_ego_soups = all_ego_soups.sum(axis=-1)
         average_ego_soups_per_iter = np.mean(all_ego_soups, axis=(0, 2, 3))
 
@@ -568,8 +586,8 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
     for (idx, metrics) in train_metrics["eval_infos"]:
         return_per_partner = np.asarray(metrics["returned_episode_returns"])
         return_per_partner = return_per_partner.sum(axis=-1)
-        average_return_per_partner_per_iters = np.mean(
-            return_per_partner, axis=(0, 2, 3))
+        return_per_partner = add_seed_axis_if_missing(return_per_partner, expected_ndim_with_seed=4)
+        average_return_per_partner_per_iters = np.mean(return_per_partner, axis=(0, 2, 3))
 
         # Create a check to verify and handle the dimension of idx
         # Depending on the dimension of idx, we might need to do [0] once or twice
@@ -602,17 +620,16 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
         if "returned_episode_soups" in metrics:
             soup_per_partner = np.asarray(metrics["returned_episode_soups"])
             soup_per_partner = soup_per_partner.sum(axis=-1)
-            average_soup_per_partner_per_iters = np.mean(
-                soup_per_partner, axis=(0, 2, 3))
+            soup_per_partner = add_seed_axis_if_missing(soup_per_partner, expected_ndim_with_seed=4)
+            average_soup_per_partner_per_iters = np.mean(soup_per_partner, axis=(0, 2, 3))
             per_partner_soup_per_iter[f"Eval/EgoSoup_Partner{partner_id}"] = average_soup_per_partner_per_iters
 
     # Process loss metrics - average across ego seeds, partners and minibatches dims
     # Loss metrics shape should be (n_ego_train_seeds, num_updates, ...)
-    average_ego_value_losses = np.mean(all_ego_value_losses, axis=(0, 2, 3))
-    average_ego_actor_losses = np.mean(all_ego_actor_losses, axis=(0, 2, 3))
-    average_ego_entropy_losses = np.mean(
-        all_ego_entropy_losses, axis=(0, 2, 3))
-    average_ego_grad_norms = np.mean(all_ego_grad_norms, axis=(0, 2, 3))
+    average_ego_value_losses = mean_over_all_but_updates(all_ego_value_losses, config.num_updates)
+    average_ego_actor_losses = mean_over_all_but_updates(all_ego_actor_losses, config.num_updates)
+    average_ego_entropy_losses = mean_over_all_but_updates(all_ego_entropy_losses, config.num_updates)
+    average_ego_grad_norms = mean_over_all_but_updates(all_ego_grad_norms, config.num_updates)
 
     # Log metrics for each update step
     num_updates = len(average_ego_value_losses)
