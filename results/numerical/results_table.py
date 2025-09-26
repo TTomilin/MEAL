@@ -387,7 +387,7 @@ if __name__ == "__main__":
     p.add_argument("--data_root", required=True)
     p.add_argument("--algo", required=True)
     p.add_argument("--methods", nargs="+", required=True)
-    p.add_argument("--strategy", required=True)
+    p.add_argument("--strategy", default='generate')
     p.add_argument("--seq_len", type=int, default=10)
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--level", type=int, default=None, help="Difficulty level of the environment (if not provided, generates table for all levels 1, 2, 3)")

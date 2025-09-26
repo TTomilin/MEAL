@@ -51,7 +51,8 @@ class MultiAgentEnv(object):
         Otherwise, the environment will reset randomly."""
 
         key, key_reset = jax.random.split(key)
-        obs_st, states_st, rewards, dones, infos = self.step_env(key, state, actions)
+        obs_st, states_st, rewards, dones, infos = self.step_env(
+            key, state, actions)
 
         if reset_state is None:
             obs_re, states_re = self.reset(key_reset)
@@ -60,12 +61,12 @@ class MultiAgentEnv(object):
             obs_re = self.get_obs(states_re)
 
         # Auto-reset environment based on termination
-        states = jax.tree_map(
+        states = jax.tree.map(
             lambda x, y: jnp.where(dones["__all__"], x, y),
             states_re,
             states_st,
         )
-        obs = jax.tree_map(
+        obs = jax.tree.map(
             lambda x, y: jax.lax.select(dones["__all__"], x, y), obs_re, obs_st
         )
         return obs, states, rewards, dones, infos

@@ -55,7 +55,7 @@ class ActorCritic(nn.Module):
 
         # -------- append task one-hot ----------------------------------------
         if self.use_task_id:
-            ids = jnp.full((x.shape[0],), env_idx)
+            ids = jnp.full((*x.shape[:-1],), env_idx)
             task_onehot = jax.nn.one_hot(ids, self.num_tasks)
             x = jnp.concatenate([x, task_onehot], axis=-1)
 
@@ -75,7 +75,8 @@ class ActorCritic(nn.Module):
             def branch(prefix, inp):
                 ratios = []
                 for i in range(2 + self.big_network):
-                    inp = self._dense(hid, f"{prefix}_dense{i + 1}", np.sqrt(2))(inp)
+                    inp = self._dense(
+                        hid, f"{prefix}_dense{i + 1}", np.sqrt(2))(inp)
                     inp = act(inp)
                     if self.track_dormant_ratio:
                         ratios.append(self._layer_dormant_ratio(inp, f"{prefix}_{i+1}"))
@@ -90,15 +91,19 @@ class ActorCritic(nn.Module):
                 per_layer_ratios.extend(critic_ratios)
 
         # -------- actor head --------------------------------------------------
-        logits_dim = self.action_dim * (self.num_tasks if self.use_multihead else 1)
+        logits_dim = self.action_dim * \
+            (self.num_tasks if self.use_multihead else 1)
         all_logits = self._dense(logits_dim, "actor_head", 0.01)(actor_in)
-        logits = choose_head(all_logits, self.num_tasks, env_idx) if self.use_multihead else all_logits
+
+        logits = choose_head(all_logits, self.num_tasks,
+                             env_idx) if self.use_multihead else all_logits
         pi = distrax.Categorical(logits=logits)
 
         # -------- critic head -------------------------------------------------
         vdim = 1 * (self.num_tasks if self.use_multihead else 1)
         all_v = self._dense(vdim, "critic_head", 1.0)(critic_in)
-        v = choose_head(all_v, self.num_tasks, env_idx) if self.use_multihead else all_v
+        v = choose_head(all_v, self.num_tasks,
+                        env_idx) if self.use_multihead else all_v
         v = jnp.squeeze(v, -1)
 
         # -------- calculate dormant neuron ratio ------------------------------

@@ -35,7 +35,7 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--data_root", default="data", help="Root folder with algo/method runs")
     parser.add_argument("--algo", default="ippo", help="Algorithm name")
     parser.add_argument("--methods", nargs="+", help="Method names to plot")
-    parser.add_argument("--strategy", default="generate", help="Training strategy (e.g., 'generate', 'ordered')")
+    parser.add_argument("--strategy", default='generate', help="Training strategy (e.g., 'generate', 'ordered')")
     parser.add_argument("--seq_len", type=int, default=20, help="Sequence length (number of tasks)")
     parser.add_argument("--steps_per_task", type=float, default=1e7, help="Steps per task (x-axis scaling)")
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5], help="Seeds to include")
