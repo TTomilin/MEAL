@@ -13,11 +13,10 @@ from jax_marl.environments import MultiAgentEnv
 from jax_marl.environments import spaces
 from jax_marl.environments.overcooked.common import (
     OBJECT_TO_INDEX,
-    COLOR_TO_INDEX,
     OBJECT_INDEX_TO_VEC,
     DIR_TO_VEC,
     make_overcooked_map)
-from jax_marl.environments.overcooked.layouts import overcooked_layouts as layouts, layout_grid_to_dict
+from jax_marl.environments.overcooked.layouts import overcooked_layouts as layouts
 
 BASE_REW_SHAPING_PARAMS = {
     "PLACEMENT_IN_POT_REW": 3,  # reward for putting ingredients
@@ -221,8 +220,10 @@ class Overcooked(MultiAgentEnv):
         # Add agent inventory handling to environment layers
         agent_inv_items = jnp.expand_dims(state.agent_inv, (1, 2)) * pos_layers
         obj_with_inv = jnp.where(jnp.sum(pos_layers, 0), jnp.sum(agent_inv_items, 0), obj)
-        soup_ready_with_inv = soup_ready + (jnp.sum(agent_inv_items, 0) == OBJECT_TO_INDEX["dish"]) * jnp.sum(pos_layers, 0)
-        onions_in_soup_with_inv = onions_in_soup + (jnp.sum(agent_inv_items, 0) == OBJECT_TO_INDEX["dish"]) * 3 * jnp.sum(pos_layers, 0)
+        soup_ready_with_inv = soup_ready + (jnp.sum(agent_inv_items, 0) == OBJECT_TO_INDEX["dish"]) * jnp.sum(
+            pos_layers, 0)
+        onions_in_soup_with_inv = onions_in_soup + (
+                    jnp.sum(agent_inv_items, 0) == OBJECT_TO_INDEX["dish"]) * 3 * jnp.sum(pos_layers, 0)
 
         # Rebuild env_layers with agent inventory
         env_layers_with_inv = jnp.stack([
@@ -263,10 +264,10 @@ class Overcooked(MultiAgentEnv):
                 other_pos_layer = others_pos.sum(0, keepdims=True)
 
             layers = jnp.concatenate([
-                own_pos,           # 1 layer: own position
-                other_pos_layer,   # 1 layer: other agent(s) position
-                own_ori,           # 4 layers: own orientation
-                others_ori,        # 4(n-1) layers: other agents' orientations
+                own_pos,  # 1 layer: own position
+                other_pos_layer,  # 1 layer: other agent(s) position
+                own_ori,  # 4 layers: own orientation
+                others_ori,  # 4(n-1) layers: other agents' orientations
                 env_layers_with_inv,  # 16 layers: environment
             ], axis=0)
 
@@ -296,7 +297,8 @@ class Overcooked(MultiAgentEnv):
             fwd_goal = jnp.any(fwd_goal)
             return jnp.asarray(fwd_wall), jnp.asarray(fwd_goal)
 
-        fwd_pos_has_wall, fwd_pos_has_goal = jax.vmap(_wall_or_goal, in_axes=(0, None, None))(fwd_pos, state.wall_map, state.goal_pos)
+        fwd_pos_has_wall, fwd_pos_has_goal = jax.vmap(_wall_or_goal, in_axes=(0, None, None))(fwd_pos, state.wall_map,
+                                                                                              state.goal_pos)
         fwd_pos_blocked = jnp.logical_or(fwd_pos_has_wall, fwd_pos_has_goal)
         fwd_pos_blocked = fwd_pos_blocked.flatten()[:self.num_agents]
         fwd_pos_blocked = fwd_pos_blocked.reshape((self.num_agents, 1))
@@ -405,10 +407,12 @@ class Overcooked(MultiAgentEnv):
             return (maze_new, inv, rew, shaped, soups), None
 
         init_carry = (state.maze_map, state.agent_inv,
-                      jnp.float32(0.), jnp.zeros(self.num_agents, jnp.float32),
-                      jnp.zeros(self.num_agents, jnp.float32))
+                      jnp.zeros((self.num_agents,), jnp.float32),
+                      jnp.zeros((self.num_agents,), jnp.float32),
+                      jnp.zeros((self.num_agents,), jnp.float32))
 
-        (maze_map, agent_inv, reward, shaped_r, soups_delivered), _ = lax.scan(body, init_carry, jnp.arange(self.num_agents))
+        (maze_map, agent_inv, reward, shaped_r, soups_delivered), _ = lax.scan(body, init_carry,
+                                                                               jnp.arange(self.num_agents))
 
         # ─── tick every pot exactly once per env-step ────────────────────────
         pad = (maze_map.shape[0] - self.height) // 2
@@ -470,11 +474,7 @@ class Overcooked(MultiAgentEnv):
         obs = self.get_obs(state)
 
         # package outputs back into dict form
-        # convert reward → per-agent dict
-        if reward.ndim == 0:  # scalar -> same for all
-            rew_dict = {a: reward for a in self.agents}
-        else:  # vector length n
-            rew_dict = {a: reward[i] for i, a in enumerate(self.agents)}
+        rew_dict = {a: reward[i] for i, a in enumerate(self.agents)}
 
         # shaped reward is already a length-n vector
         shaped_dict = {a: shaped_rewards[i] for i, a in enumerate(self.agents)}
@@ -635,7 +635,6 @@ class Overcooked(MultiAgentEnv):
 
         return lax.stop_gradient(obs), lax.stop_gradient(state)
 
-
     def process_interact(
             self,
             maze_map: chex.Array,
@@ -782,7 +781,10 @@ class Overcooked(MultiAgentEnv):
         num_notempty_pots = jnp.sum((padded_map != POT_EMPTY_STATUS) * pot_loc_layer)
         is_dish_pickup_useful = num_plates_in_inv < num_notempty_pots
 
-        shaped_reward += has_picked_up_plate * is_dish_pickup_useful * BASE_REW_SHAPING_PARAMS[
+        plate_loc_layer = (maze_map == OBJECT_TO_INDEX["plate"]).astype(jnp.uint8)
+        no_plates_on_counters = jnp.sum(plate_loc_layer) == 0
+
+        shaped_reward += no_plates_on_counters * has_picked_up_plate * is_dish_pickup_useful * BASE_REW_SHAPING_PARAMS[
             "PLATE_PICKUP_REWARD"]
 
         inventory = new_object_in_inv
