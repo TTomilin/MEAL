@@ -580,7 +580,7 @@ def main():
         tx=tx
     )
 
-    @partial(jax.jit, static_argnums=(2))
+    @partial(jax.jit, static_argnums=(2, 4))
     def train_on_environment(rng, train_state, env, cl_state, env_idx):
         '''
         Trains the network using IPPO
@@ -1123,8 +1123,7 @@ def main():
 
         for i, (rng, env) in enumerate(zip(env_rngs, envs)):
             # --- Train on environment i using the *current* ewc_state ---
-            env_idx = jnp.asarray(i, jnp.int32)
-            runner_state, metrics = train_on_environment(rng, train_state, env, cl_state, env_idx)
+            runner_state, metrics = train_on_environment(rng, train_state, env, cl_state, i)
             train_state = runner_state[0]
             cl_state = runner_state[6]
 
