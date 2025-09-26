@@ -20,6 +20,7 @@ from flax.training.train_state import TrainState
 
 from jax_marl.registration import make
 from jax_marl.eval.visualizer import OvercookedVisualizer
+from jax_marl.eval.visualizer_po import OvercookedVisualizerPO
 from jax_marl.wrappers.baselines import LogWrapper
 from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
 from architectures.mlp import ActorCritic as MLPActorCritic
@@ -58,8 +59,10 @@ class Config:
     # Reward shaping
     reward_shaping: bool = True
     reward_shaping_horizon: float = 2.5e6
-    sparse_rewards: bool = False
-    individual_rewards: bool = False
+
+    # Reward distribution settings
+    sparse_rewards: bool = False  # Only shared reward for soup delivery
+    individual_rewards: bool = False  # Only respective agent gets reward for their actions
 
     # ═══════════════════════════════════════════════════════════════════════════
     # NETWORK ARCHITECTURE PARAMETERS
@@ -90,15 +93,15 @@ class Config:
     ewc_decay: float = 0.9  # Only for online EWC
 
     # AGEM specific parameters
-    agem_memory_size: int = 50000
-    agem_sample_size: int = 128
+    agem_memory_size: int = 100000
+    agem_sample_size: int = 1024
     agem_gradient_scale: float = 1.0
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
-    env_name: str = "overcooked_single"
-    num_agents: int = 1
+    env_name: str = "overcooked_n_agent"
+    num_agents: int = 2  # number of agents in the environment
     seq_length: int = 10
     repeat_sequence: int = 1
     strategy: str = "generate"
@@ -116,11 +119,13 @@ class Config:
     width_max: int = 7  # maximum layout width
     wall_density: float = 0.15  # fraction of internal tiles that are untraversable
 
+    # Agent restriction parameters
+    complementary_restrictions: bool = False  # One agent can't pick up onions, other can't pick up plates
+
     # ═══════════════════════════════════════════════════════════════════════════
     # EVALUATION PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
     evaluation: bool = True
-    eval_forward_transfer: bool = False
     eval_num_steps: int = 1000
     eval_num_episodes: int = 5
     record_gif: bool = True
@@ -150,7 +155,7 @@ class Config:
 
 
 ############################
-##### MAIN FUNCTION    #####
+######  MAIN FUNCTION  #####
 ############################
 
 
@@ -176,9 +181,14 @@ def main():
         raise ValueError(
             "cl_method is required. Please specify a continual learning method (e.g., ewc, mas, l2, ft, agem).")
 
+    difficulty = cfg.difficulty
+    seq_length = cfg.seq_length
+    strategy = cfg.strategy
+    seed = cfg.seed
+
     # Set height_min, height_max, width_min, width_max, and wall_density based on difficulty
-    if cfg.difficulty:
-        apply_difficulty_to_config(cfg, cfg.difficulty)
+    if difficulty:
+        apply_difficulty_to_config(cfg, difficulty)
 
     # Set default regularization coefficient based on the CL method if not specified
     if cfg.reg_coef is None:
@@ -200,10 +210,10 @@ def main():
     # generate a sequence of tasks
     cfg.env_kwargs, layout_names = generate_sequence(
         num_agents=cfg.num_agents,
-        sequence_length=cfg.seq_length,
-        strategy=cfg.strategy,
+        sequence_length=seq_length,
+        strategy=strategy,
         layout_names=cfg.layouts,
-        seed=cfg.seed,
+        seed=seed,
         height_rng=(cfg.height_min, cfg.height_max),
         width_rng=(cfg.width_min, cfg.width_max),
         wall_density=cfg.wall_density,
@@ -211,7 +221,7 @@ def main():
     )
 
     # Add view parameters for PO environments when difficulty is specified
-    if cfg.env_name == "overcooked_po" and cfg.difficulty:
+    if cfg.env_name == "overcooked_po" and difficulty:
         for env_args in cfg.env_kwargs:
             env_args["view_ahead"] = cfg.view_ahead
             env_args["view_sides"] = cfg.view_sides
@@ -234,9 +244,7 @@ def main():
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
     network = "cnn" if cfg.use_cnn else "mlp"
-    difficulty = cfg.difficulty
-    difficulty_str = f"_{difficulty}" if difficulty else ""
-    run_name = f'{cfg.alg_name}_{cfg.cl_method}{difficulty_str}_{cfg.num_agents}agents_{network}_seq{cfg.seq_length}_{cfg.strategy}_seed_{cfg.seed}_{timestamp}'
+    run_name = f'{cfg.alg_name}_{cfg.cl_method}_{difficulty}_{cfg.num_agents}agents_{network}_seq{seq_length}_{strategy}_seed_{seed}_{timestamp}'
     exp_dir = os.path.join("runs", run_name)
 
     # Initialize WandB
@@ -272,25 +280,40 @@ def main():
         Get view parameters for overcooked_po environments from config.
         Returns a dictionary with view parameters if applicable, empty dict otherwise.
         '''
-        params = {"random_reset": cfg.random_reset}
         if cfg.env_name == "overcooked_po" and cfg.difficulty:
-            params.update({
+            return {
+                "random_reset": cfg.random_reset,
                 "view_ahead": cfg.view_ahead,
                 "view_sides": cfg.view_sides,
                 "view_behind": cfg.view_behind
-            })
-        return params
+            }
+        return {}
 
-    # pad the observation space
-    def pad_observation_space():
+    def create_environments():
         '''
-        Pads the observation space of the environment to be compatible with the network
-        @param envs: the environment
-        returns the padded observation space
+        Creates environments, with padding for regular Overcooked but not for PO environments
+        since PO environments have local observations that don't need padding.
+        returns the environment layouts and agent restrictions
         '''
+        agent_restrictions_list = []
+        for env_args in cfg.env_kwargs:
+            # Extract agent restrictions from env_args
+            agent_restrictions_list.append(env_args.get('agent_restrictions', {}))
+
+        # For PO environments, no padding is needed since observations are local
+        # PO environments naturally have consistent observation spaces based on view parameters
+        if cfg.env_name == "overcooked_po":
+            # Return the original layouts without modification
+            env_layouts = []
+            for env_args in cfg.env_kwargs:
+                temp_env = make(cfg.env_name, **env_args, num_agents=cfg.num_agents)
+                env_layouts.append(temp_env.layout)
+            return env_layouts, agent_restrictions_list
+
+        # For regular environments, apply padding as before
+        # Create environments first
         envs = []
         for env_args in cfg.env_kwargs:
-            # Create the environment
             env = make(cfg.env_name, **env_args, num_agents=cfg.num_agents)
             envs.append(env)
 
@@ -365,7 +388,7 @@ def main():
 
             padded_envs.append(freeze(env))  # Freeze the environment to prevent further modifications
 
-        return padded_envs
+        return padded_envs, agent_restrictions_list
 
     @partial(jax.jit)
     def evaluate_model(train_state, key):
@@ -412,19 +435,8 @@ def main():
                 # ***Create a batched copy for the network only.***
                 # For each agent, expand dims to get shape (1, H, W, C) then flatten to (1, -1)
                 batched_obs = {}
-
-                # Handle both single-agent (direct array) and multi-agent (dictionary) cases
-                if isinstance(obs, dict):
-                    # Multi-agent case: obs is a dictionary
-                    for agent, v in obs.items():
-                        v_b = jnp.expand_dims(v, axis=0)  # now (1, H, W, C)
-                        if not cfg.use_cnn:
-                            v_b = jnp.reshape(v_b, (v_b.shape[0], -1))  # flatten
-                        batched_obs[agent] = v_b
-                else:
-                    # Single-agent case: obs is a direct array
-                    agent = agents[0]  # Get the single agent name
-                    v_b = jnp.expand_dims(obs, axis=0)  # now (1, H, W, C)
+                for agent, v in obs.items():
+                    v_b = jnp.expand_dims(v, axis=0)  # now (1, H, W, C)
                     if not cfg.use_cnn:
                         v_b = jnp.reshape(v_b, (v_b.shape[0], -1))  # flatten
                     batched_obs[agent] = v_b
@@ -449,33 +461,11 @@ def main():
                     act, _ = select_action(train_state, key_agent, batched_obs[agent])
                     actions[agent] = act
 
-                # Handle action format for single-agent vs multi-agent environments
-                if len(agents) == 1:
-                    # Single-agent case: pass action directly
-                    env_actions = actions[agents[0]]
-                else:
-                    # Multi-agent case: pass actions as dictionary
-                    env_actions = actions
-
                 # Environment step
-                next_obs, next_state, reward, done_step, info = env.step(key_s, state_env, env_actions)
-
-                # Handle both single-agent (boolean/direct value) and multi-agent (dictionary) cases
-                if isinstance(done_step, dict):
-                    done = done_step["__all__"]
-                else:
-                    done = done_step
-
-                if isinstance(reward, dict):
-                    reward = sum(reward[agent] for agent in agents)  # Sum of all agent rewards
-                else:
-                    # Single-agent case: reward is already a direct value
-                    pass  # reward is already the total reward
-
-                if isinstance(info["soups"], dict):
-                    soups_this_step = sum(info["soups"][agent] for agent in agents)
-                else:
-                    soups_this_step = info["soups"]  # Single-agent case: direct value
+                next_obs, next_state, reward, done_step, info = env.step(key_s, state_env, actions)
+                done = done_step["__all__"]
+                reward = sum(reward[agent] for agent in agents)  # Sum of all agent rewards
+                soups_this_step = sum(info["soups"][agent] for agent in agents)
                 total_reward += reward
                 total_soup += soups_this_step
                 step_count += 1
@@ -500,11 +490,13 @@ def main():
         all_avg_rewards = []
         all_avg_soups = []
 
-        envs = pad_observation_space()
+        envs, agent_restrictions_list = create_environments()
 
         for eval_idx, env in enumerate(envs):
+            # Create the environment with agent restrictions
+            agent_restrictions = agent_restrictions_list[eval_idx]
             view_params = get_view_params()
-            env = make(cfg.env_name, layout=env, num_agents=cfg.num_agents, **view_params)  # Create the environment
+            env = make(cfg.env_name, layout=env, num_agents=cfg.num_agents, agent_restrictions=agent_restrictions, **view_params)  # Create the environment
 
             # Run k episodes
             all_rewards, all_soups = jax.vmap(lambda k: run_episode_while(env, k, cfg.eval_num_steps))(
@@ -518,15 +510,17 @@ def main():
 
         return all_avg_rewards, all_avg_soups
 
-    padded_envs = pad_observation_space()
+    env_layouts, agent_restrictions_list = create_environments()
 
     envs = []
     env_names = []
     max_soup_dict = {}
-    for i, env_layout in enumerate(padded_envs):
+    for i, env_layout in enumerate(env_layouts):
+        # Create the environment with agent restrictions
+        agent_restrictions = agent_restrictions_list[i]
         view_params = get_view_params()
         env = make(cfg.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i,
-                   num_agents=cfg.num_agents, **view_params)
+                   agent_restrictions=agent_restrictions, num_agents=cfg.num_agents, **view_params)
         env = LogWrapper(env, replace_info=False)
         env_name = env.layout_name
         envs.append(env)
@@ -552,7 +546,7 @@ def main():
 
     ac_cls = CNNActorCritic if cfg.use_cnn else MLPActorCritic
 
-    network = ac_cls(temp_env.action_space().n, cfg.activation, cfg.seq_length, cfg.use_multihead,
+    network = ac_cls(temp_env.action_space().n, cfg.activation, seq_length, cfg.use_multihead,
                      cfg.shared_backbone, cfg.big_network, cfg.use_task_id, cfg.regularize_heads,
                      cfg.use_layer_norm)
 
@@ -642,7 +636,7 @@ def main():
                 obs_batch = batchify(last_obs, env.agents, cfg.num_actors, not cfg.use_cnn)  # (num_actors, obs_dim)
 
                 # apply the policy network to the observations to get the suggested actions and their values
-                pi, value, dormant_ratio = network.apply(train_state.params, obs_batch, env_idx=env_idx)
+                pi, value, _ = network.apply(train_state.params, obs_batch, env_idx=env_idx)
 
                 # Sample and action from the policy
                 action = pi.sample(seed=_rng)
@@ -651,14 +645,7 @@ def main():
 
                 # format the actions to be compatible with the environment
                 env_act = unbatchify(action, env.agents, cfg.num_envs, env.num_agents)
-
-                # Handle single-agent vs multi-agent action formatting
-                if isinstance(env_act, dict):
-                    # Multi-agent case: flatten each agent's actions
-                    env_act = {k: v.flatten() for k, v in env_act.items()}
-                else:
-                    # Single-agent case: actions are already in the right format
-                    env_act = env_act.flatten()
+                env_act = {k: v.flatten() for k, v in env_act.items()}
 
                 # STEP ENV
                 # split the random number generator for stepping the environment
@@ -680,33 +667,18 @@ def main():
                 elif cfg.individual_rewards:
                     # Individual rewards: delivery rewards + individual shaped rewards
                     # Environment now provides individual delivery rewards directly
-                    if len(env.agents) == 1:
-                        # Single-agent case: extract both reward and shaped_reward from dictionaries
-                        agent_key = env.agents[0]
-                        reward = reward[agent_key] + info["shaped_reward"][agent_key] * rew_shaping_anneal(current_timestep)
-                    else:
-                        # Multi-agent case: reward and shaped_reward are dictionaries
-                        reward = jax.tree_util.tree_map(lambda x, y:
-                                                        x + y * rew_shaping_anneal(current_timestep),
-                                                        reward,
-                                                        info["shaped_reward"]
-                                                        )
+                    reward = jax.tree_util.tree_map(lambda x, y:
+                                                    x + y * rew_shaping_anneal(current_timestep),
+                                                    reward, info["shaped_reward"])
                 else:
                     # Default behavior: shared delivery rewards + individual shaped rewards
-                    if len(env.agents) == 1:
-                        # Single-agent case: extract both reward and shaped_reward from dictionaries
-                        agent_key = env.agents[0]
-                        reward = reward[agent_key] + info["shaped_reward"][agent_key] * rew_shaping_anneal(current_timestep)
-                    else:
-                        # Multi-agent case: Convert individual delivery rewards to shared rewards (all agents get total)
-                        total_delivery_reward = sum(reward[agent] for agent in env.agents)
-                        shared_delivery_rewards = {agent: total_delivery_reward for agent in env.agents}
+                    # Convert individual delivery rewards to shared rewards (all agents get total)
+                    total_delivery_reward = sum(reward[agent] for agent in env.agents)
+                    shared_delivery_rewards = {agent: total_delivery_reward for agent in env.agents}
 
-                        reward = jax.tree_util.tree_map(lambda x, y:
-                                                        x + y * rew_shaping_anneal(current_timestep),
-                                                        shared_delivery_rewards,
-                                                        info["shaped_reward"]
-                                                        )
+                    reward = jax.tree_util.tree_map(lambda x, y:
+                                                    x + y * rew_shaping_anneal(current_timestep),
+                                                    shared_delivery_rewards, info["shaped_reward"])
 
                 transition = Transition(
                     batchify(done, env.agents, cfg.num_actors, not cfg.use_cnn).squeeze(),
@@ -740,9 +712,6 @@ def main():
             # apply the network to the batch of observations to get the value of the last state
             _, last_val, _ = network.apply(train_state.params, last_obs_batch, env_idx=env_idx)
 
-            # this returns the value network for the last observation batch
-
-            # @profile
             def _calculate_gae(traj_batch, last_val):
                 '''
                 calculates the generalized advantage estimate (GAE) for the trajectory batch
@@ -785,8 +754,7 @@ def main():
             advantages, targets = _calculate_gae(traj_batch, last_val)
 
             # UPDATE NETWORK
-            # @profile
-            def _update_epoch(update_state, unused):
+            def _update_epoch(update_state, _):
                 '''
                 performs a single update epoch in the training loop
                 @param update_state: the current state of the update
@@ -838,8 +806,7 @@ def main():
                                 * gae
                         )
 
-                        loss_actor = -jnp.minimum(loss_actor_unclipped,
-                                                  loss_actor_clipped)
+                        loss_actor = -jnp.minimum(loss_actor_unclipped, loss_actor_clipped)
                         loss_actor = loss_actor.mean()
                         entropy = pi.entropy().mean()
 
@@ -982,10 +949,9 @@ def main():
                 loss_dict = {
                     "total_loss": total_loss
                 }
-                if cfg.cl_method.lower() == "agem" and env_idx > 0:
+                if cfg.cl_method.lower() == "agem":
                     loss_dict["agem_stats"] = agem_stats
 
-                avg_grads = jax.tree_util.tree_map(lambda x: jnp.mean(x, axis=0), grads)
                 update_state = (train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state)
                 return update_state, loss_dict
 
@@ -1062,13 +1028,7 @@ def main():
             agent_soups = {}
             soup_delivered = 0
             for agent in env.agents:
-                # Handle both single-agent (direct value) and multi-agent (dictionary) cases
-                if isinstance(info["soups"], dict):
-                    # Multi-agent case: soups is a dictionary
-                    agent_soup = info["soups"][agent].sum()
-                else:
-                    # Single-agent case: soups is a direct value
-                    agent_soup = info["soups"].sum()
+                agent_soup = info["soups"][agent].sum()
                 agent_soups[agent] = agent_soup
                 soup_delivered += agent_soup
                 metrics[f"Soup/{agent}_soup"] = agent_soup
@@ -1081,13 +1041,7 @@ def main():
             # Rewards section
             # Agent-agnostic reward logging
             for agent in env.agents:
-                # Handle both single-agent (direct value) and multi-agent (dictionary) cases
-                if isinstance(metrics["shaped_reward"], dict):
-                    # Multi-agent case: shaped_reward is a dictionary
-                    metrics[f"General/shaped_reward_{agent}"] = metrics["shaped_reward"][agent]
-                else:
-                    # Single-agent case: shaped_reward is a direct value
-                    metrics[f"General/shaped_reward_{agent}"] = metrics["shaped_reward"]
+                metrics[f"General/shaped_reward_{agent}"] = metrics["shaped_reward"][agent]
                 metrics[f"General/shaped_reward_annealed_{agent}"] = metrics[
                                                                          f"General/shaped_reward_{agent}"] * rew_shaping_anneal(
                     current_timestep)
@@ -1147,7 +1101,7 @@ def main():
             length=cfg.num_updates
         )
 
-        # Return the runner state after the training loop, and the metric arrays
+        # Return the runner state after the training loop, and the metrics arrays
         return runner_state, metrics
 
     def loop_over_envs(rng, train_state, cl_state, envs):
@@ -1161,19 +1115,17 @@ def main():
         # split the random number generator for training on the environments
         rng, *env_rngs = jax.random.split(rng, len(envs) + 1)
 
-        visualizer = OvercookedVisualizer(num_agents=temp_env.num_agents)
-
-        evaluation_matrix = None
-        if cfg.eval_forward_transfer:
-            evaluation_matrix = jnp.zeros(((len(envs) + 1), len(envs)))
-            rng, eval_rng = jax.random.split(rng)
-            evaluations, _ = evaluate_model(train_state, eval_rng)
-            evaluation_matrix = evaluation_matrix.at[0, :].set(evaluations)
+        # Create appropriate visualizer based on environment type
+        if cfg.env_name == "overcooked_po":
+            visualizer = OvercookedVisualizerPO(num_agents=temp_env.num_agents)
+        else:
+            visualizer = OvercookedVisualizer(num_agents=temp_env.num_agents)
 
         for i, (rng, env) in enumerate(zip(env_rngs, envs)):
             # --- Train on environment i using the *current* ewc_state ---
             runner_state, metrics = train_on_environment(rng, train_state, env, cl_state, i)
             train_state = runner_state[0]
+            cl_state = runner_state[6]
 
             importance = cl.compute_importance(train_state.params, env, network, i, rng, cfg.use_cnn,
                                                cfg.importance_episodes, cfg.importance_steps,
@@ -1185,21 +1137,17 @@ def main():
                 # Generate & log a GIF after finishing task i
                 env_name = layout_names[i]
                 states = record_gif_of_episode(cfg, train_state, env, network, i, cfg.gif_len)
-                visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir)
-
-            if cfg.eval_forward_transfer:
-                # Evaluate at the end of training to get the average performance of the task right after training
-                evaluations, _ = evaluate_model(train_state, rng)
-                evaluation_matrix = evaluation_matrix.at[i + 1, :].set(evaluations)
+                # Pass environment instance to PO visualizer for view highlighting
+                if cfg.env_name == "overcooked_po":
+                    visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir,
+                                       env=env)
+                else:
+                    visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir)
 
             # save the model
             repo_root = Path(__file__).resolve().parent.parent
             path = f"{repo_root}/checkpoints/overcooked/{cfg.cl_method}/{run_name}/model_env_{i + 1}"
             save_params(path, train_state, env_kwargs=env.layout, layout_name=env.layout_name, config=cfg)
-
-            if cfg.eval_forward_transfer:
-                # calculate the forward transfer and backward transfer
-                pass
 
             if cfg.single_task_idx is not None:
                 break  # stop after the first env
@@ -1297,12 +1245,10 @@ def main():
         if not cfg.use_cnn:
             obs_dim = (np.prod(obs_dim),)
         # Initialize memory buffer
-        cl_state = init_agem_memory(cfg.agem_memory_size, obs_dim)
+        cl_state = init_agem_memory(cfg.agem_memory_size, obs_dim, max_tasks=cfg.seq_length)
 
     # apply the loop_over_envs function to the environments
     loop_over_envs(train_rng, train_state, cl_state, envs)
-
-
 
 
 if __name__ == "__main__":

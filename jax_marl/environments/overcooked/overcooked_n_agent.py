@@ -13,10 +13,11 @@ from jax_marl.environments import MultiAgentEnv
 from jax_marl.environments import spaces
 from jax_marl.environments.overcooked.common import (
     OBJECT_TO_INDEX,
+    COLOR_TO_INDEX,
     OBJECT_INDEX_TO_VEC,
     DIR_TO_VEC,
     make_overcooked_map)
-from jax_marl.environments.overcooked.layouts import overcooked_layouts as layouts
+from jax_marl.environments.overcooked.layouts import overcooked_layouts as layouts, layout_grid_to_dict
 
 BASE_REW_SHAPING_PARAMS = {
     "PLACEMENT_IN_POT_REW": 3,  # reward for putting ingredients
@@ -41,14 +42,14 @@ class Actions(IntEnum):
 
 @struct.dataclass
 class State:
-    agent_pos: chex.Array  # (n,2)
-    agent_dir: chex.Array  # (n,2)
-    agent_dir_idx: chex.Array  # (n,)
-    agent_inv: chex.Array  # (n,)
-    goal_pos: chex.Array  # (g,2)
-    pot_pos: chex.Array  # (p,2)
-    wall_map: chex.Array  # (H,W) bool
-    maze_map: chex.Array  # (H+pad, W+pad, 3)
+    agent_pos: chex.Array
+    agent_dir: chex.Array
+    agent_dir_idx: chex.Array
+    agent_inv: chex.Array
+    goal_pos: chex.Array
+    pot_pos: chex.Array
+    wall_map: chex.Array
+    maze_map: chex.Array
     time: int
     terminal: bool
     task_id: int
@@ -69,13 +70,15 @@ class Overcooked(MultiAgentEnv):
 
     def __init__(
             self,
-            layout: dict | None = None,
+            layout=None,
             layout_name="cramped_room",
             random_reset: bool = True,
+            random_agent_start: bool = False,
             max_steps: int = 400,
             task_id: int = 0,
             num_agents: int = 2,
             start_idx: tuple[int, ...] | None = None,
+            agent_restrictions: dict = None,
     ):
         super().__init__(num_agents=num_agents)
 
@@ -105,8 +108,10 @@ class Overcooked(MultiAgentEnv):
         ], dtype=jnp.uint8)
 
         self.random_reset = random_reset
+        self.random_agent_start = random_agent_start
         self.max_steps = max_steps
         self.task_id = task_id
+        self.agent_restrictions = agent_restrictions or {}
 
     # ─────────────────────────  observation  ──────────────────────
 
@@ -476,13 +481,14 @@ class Overcooked(MultiAgentEnv):
         # Add soups dictionary
         soups_dict = {a: soups_delivered[i] for i, a in enumerate(self.agents)}
         done_dict = {a: done for a in self.agents} | {"__all__": done}
+        info = {'shaped_reward': shaped_dict, 'soups': soups_dict}
 
         return (
             lax.stop_gradient(obs),
             lax.stop_gradient(state),
             rew_dict,
             done_dict,
-            {'shaped_reward': shaped_dict, 'soups': soups_dict},
+            info,
         )
 
     def reset(
@@ -496,7 +502,6 @@ class Overcooked(MultiAgentEnv):
 
         In both cases, the environment layout is determined by `self.layout`
         """
-
 
         # Whether to fully randomize the start state
         random_reset = self.random_reset
@@ -604,7 +609,7 @@ class Overcooked(MultiAgentEnv):
             agent_view_size=self.agent_view_size
         )
 
-        # agent inventory - match original logic
+        # agent inventory (empty by default, can be randomized)
         key, subkey = jax.random.split(key)
         possible_items = jnp.array([OBJECT_TO_INDEX['empty'], OBJECT_TO_INDEX['onion'],
                                     OBJECT_TO_INDEX['plate'], OBJECT_TO_INDEX['dish']])
@@ -710,21 +715,22 @@ class Overcooked(MultiAgentEnv):
         base_pickup_condition = is_table * ~table_is_empty * inv_is_empty * jnp.logical_or(object_is_pile,
                                                                                            object_is_pickable)
 
-        # Apply agent restrictions if they exist (for compatibility with original)
+        # Apply agent restrictions if they exist
         agent_key = f"agent_{player_idx}"
         can_pick_onions = jnp.array(True)
         can_pick_plates = jnp.array(True)
 
-        # Note: agent_restrictions not implemented in n-agent version, but keeping structure for compatibility
-        # if self.agent_restrictions:
-        #     can_pick_onions = jnp.array(not self.agent_restrictions.get(f"{agent_key}_cannot_pick_onions", False))
-        #     can_pick_plates = jnp.array(not self.agent_restrictions.get(f"{agent_key}_cannot_pick_plates", False))
+        if self.agent_restrictions:
+            can_pick_onions = jnp.array(not self.agent_restrictions.get(
+                f"{agent_key}_cannot_pick_onions", False))
+            can_pick_plates = jnp.array(not self.agent_restrictions.get(
+                f"{agent_key}_cannot_pick_plates", False))
 
         # Check if the object being picked up is restricted
-        picking_up_onion = jnp.logical_or(object_on_table == OBJECT_TO_INDEX["onion_pile"], 
-                                         object_on_table == OBJECT_TO_INDEX["onion"])
-        picking_up_plate = jnp.logical_or(object_on_table == OBJECT_TO_INDEX["plate_pile"], 
-                                         object_on_table == OBJECT_TO_INDEX["plate"])
+        picking_up_onion = jnp.logical_or(object_on_table == OBJECT_TO_INDEX["onion_pile"],
+                                          object_on_table == OBJECT_TO_INDEX["onion"])
+        picking_up_plate = jnp.logical_or(object_on_table == OBJECT_TO_INDEX["plate_pile"],
+                                          object_on_table == OBJECT_TO_INDEX["plate"])
 
         # Agent can pick up the object if not restricted
         can_pick_this_object = jnp.logical_or(
