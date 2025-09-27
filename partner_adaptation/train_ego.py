@@ -92,6 +92,10 @@ def train_ppo_ego_agent(
             init_partner_hstate = partner_population.init_hstate(
                 config.num_uncontrolled_actors)
 
+            # near the top of train(...) right after you compute/know config.num_updates
+            eval_every = int(getattr(config, "eval_every", 10))  # evaluate every N updates
+            num_ckpts = int(getattr(config, "num_checkpoints", 1))  # 1 = only final
+
             def _env_step(runner_state, unused):
                 """
                 One step of the environment:
@@ -373,9 +377,8 @@ def train_ppo_ego_agent(
 
             # PPO Update and Checkpoint saving
             # -1 because we store a ckpt at the last update
-            ckpt_and_eval_interval = config.num_updates // max(
-                1, config.num_checkpoints - 1)
-            num_ckpts = config.num_checkpoints
+            # ckpt_and_eval_interval = config.num_updates // max(1, config.num_checkpoints - 1)
+            # num_ckpts = config.num_checkpoints
 
             # Build a PyTree that holds parameters for all FCP checkpoints
             def init_ckpt_array(params_pytree):
@@ -396,27 +399,31 @@ def train_ppo_ego_agent(
                 )
                 (train_state, rng, update_steps) = new_update_state
 
-                # update steps is 1-indexed because it was incremented at the end of the update step
-                to_store = jnp.logical_or(jnp.equal(jnp.mod(update_steps - 1, ckpt_and_eval_interval), 0),
-                                          jnp.equal(update_steps, config.num_updates))
+                # To eval or not to eval
+                to_eval = jnp.logical_or(
+                    jnp.equal(jnp.mod(update_steps - 1, eval_every), 0),
+                    jnp.equal(update_steps, config.num_updates),
+                )
 
-                def store_and_eval_ckpt(args):
-                    ckpt_arr, cidx, rng, prev_eval_ret_info, prev_eval_infos = args
-                    new_ckpt_arr = jax.tree.map(
-                        lambda c_arr, p: c_arr.at[cidx].set(p),
-                        ckpt_arr, train_state.params
-                    )
+                # Only store a checkpoint at the very end when num_ckpts == 1
+                to_store_ckpt = jnp.equal(update_steps, config.num_updates)
+
+
+                def do_eval(args):
+                    rng, prev_eval_last_info, prev_eval_infos = args
 
                     eval_partner_indices = jnp.arange(num_total_partners)
-                    gathered_params = partner_population.gather_agent_params(
-                        partner_params, eval_partner_indices)
+                    gathered_params = partner_population.gather_agent_params(partner_params, eval_partner_indices)
 
                     rng, eval_rng = jax.random.split(rng)
                     eval_eps_last_infos = jax.vmap(lambda x: run_episodes(
-                        eval_rng, env, agent_0_param=train_state.params, agent_0_policy=ego_policy,
+                        eval_rng, env,
+                        agent_0_param=train_state.params, agent_0_policy=ego_policy,
                         agent_1_param=x, agent_1_policy=partner_population.policy_cls,
                         max_episode_steps=max_episode_steps,
-                        num_eps=config.num_eval_episodes))(gathered_params)
+                        env_id_idx=env_id_idx,
+                        num_eps=config.num_eval_episodes
+                    ))(gathered_params)
 
                     eval_infos = []
                     for eval_policy, params, idx in eval_partner:
@@ -427,23 +434,37 @@ def train_ppo_ego_agent(
                             agent_1_param=x, agent_1_policy=eval_policy.policy_cls,
                             max_episode_steps=max_episode_steps,
                             env_id_idx=idx,
-                            num_eps=config.num_eval_episodes))(params)
+                            num_eps=config.num_eval_episodes
+                        ))(params)
                         eval_infos.append((idx, eval_info))
 
-                    return (new_ckpt_arr, cidx + 1, rng, eval_eps_last_infos, eval_infos)
+                    return (rng, eval_eps_last_infos, eval_infos)
+
+                def skip_eval(args):
+                    return args  # keep previous eval results
+
+                def store_ckpt(args):
+                    ckpt_arr, cidx = args
+                    new_ckpt_arr = jax.tree.map(lambda c_arr, p: c_arr.at[cidx].set(p),
+                                                checkpoint_array, train_state.params)
+                    return (new_ckpt_arr, cidx + 1)
 
                 def skip_ckpt(args):
                     return args
 
-                (checkpoint_array, ckpt_idx, rng, eval_last_infos, eval_infos) = jax.lax.cond(
-                    to_store, store_and_eval_ckpt, skip_ckpt, (
-                        checkpoint_array, ckpt_idx, rng, init_eval_last_info, init_eval_infos)
+                (checkpoint_array, ckpt_idx) = jax.lax.cond(
+                    jnp.logical_and(to_store_ckpt, num_ckpts == 1),
+                    store_ckpt, skip_ckpt, (checkpoint_array, ckpt_idx)
+                )
+
+                (rng, eval_last_infos, eval_infos) = jax.lax.cond(
+                    to_eval, do_eval, skip_eval, (rng, init_eval_last_info, init_eval_infos)
                 )
 
                 metric["eval_ep_last_info"] = eval_last_infos
                 metric["eval_infos"] = eval_infos
-                return ((train_state, rng, update_steps),
-                        checkpoint_array, ckpt_idx, eval_last_infos, eval_infos), metric
+                return ((train_state, rng, update_steps), checkpoint_array, ckpt_idx, eval_last_infos,
+                        eval_infos), metric
 
             checkpoint_array = init_ckpt_array(train_state.params)
             ckpt_idx = 0
@@ -451,8 +472,7 @@ def train_ppo_ego_agent(
             rng, rng_eval, rng_train = jax.random.split(rng, 3)
             # Init eval return infos
             eval_partner_indices = jnp.arange(num_total_partners)
-            gathered_params = partner_population.gather_agent_params(
-                partner_params, eval_partner_indices)
+            gathered_params = partner_population.gather_agent_params(partner_params, eval_partner_indices)
             eval_eps_last_infos = jax.vmap(lambda x: run_episodes(
                 rng_eval, env,
                 agent_0_param=train_state.params, agent_0_policy=ego_policy,
@@ -479,8 +499,7 @@ def train_ppo_ego_agent(
             rng_train, partner_rng = jax.random.split(rng_train)
 
             update_runner_state = (train_state, rng_train, update_steps)
-            state_with_ckpt = (update_runner_state,
-                               checkpoint_array, ckpt_idx, eval_eps_last_infos, eval_infos)
+            state_with_ckpt = (update_runner_state, checkpoint_array, ckpt_idx, eval_eps_last_infos, eval_infos)
 
             state_with_ckpt, metrics = jax.lax.scan(
                 _update_step_with_ckpt,
@@ -488,8 +507,7 @@ def train_ppo_ego_agent(
                 xs=None,
                 length=config.num_updates
             )
-            (final_runner_state, checkpoint_array, final_ckpt_idx,
-             eval_eps_last_infos, eval_infos) = state_with_ckpt
+            (final_runner_state, checkpoint_array, final_ckpt_idx, eval_eps_last_infos, eval_infos) = state_with_ckpt
             out = {
                 "final_params": final_runner_state[0].params,
                 "metrics": metrics,  # shape (NUM_UPDATES, ...)
@@ -540,8 +558,8 @@ def mean_over_all_but_updates(arr, num_updates: int):
             # last resort: set num_updates to the length of the chosen axis
             num_updates = int(a.shape[upd_ax])
 
-    a = np.moveaxis(a, upd_ax, 0)     # (num_updates, ...)
-    a = a.reshape(num_updates, -1)    # (num_updates, rest)
+    a = np.moveaxis(a, upd_ax, 0)  # (num_updates, ...)
+    a = a.reshape(num_updates, -1)  # (num_updates, rest)
     return a.mean(axis=1)
 
 
@@ -569,7 +587,6 @@ def _stat_mean_at_step(stat_data, step: int) -> float:
     return float(arr_sq[i])
 
 
-
 def _extract_partner_id(idx):
     """
     Robustly turn idx into an int.
@@ -586,9 +603,9 @@ def _extract_partner_id(idx):
     # and grab the first element if needed
     if hasattr(idx, "shape"):
         arr = np.asarray(idx)
-        if arr.shape == ():         # scalar
+        if arr.shape == ():  # scalar
             return int(arr.item())
-        if arr.size > 0:            # vector or higher-dim
+        if arr.size > 0:  # vector or higher-dim
             return int(arr.reshape(-1)[0])
         return 0
 
@@ -695,10 +712,10 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
             avg_soups = [float(average_ego_soups_per_iter[step])]
             metrics = add_eval_metrics(avg_rewards, avg_soups, layout_names, max_soup_dict, metrics)
 
-        metrics["Train/EgoValueLoss"]   = float(average_ego_value_losses[step])
-        metrics["Train/EgoActorLoss"]   = float(average_ego_actor_losses[step])
+        metrics["Train/EgoValueLoss"] = float(average_ego_value_losses[step])
+        metrics["Train/EgoActorLoss"] = float(average_ego_actor_losses[step])
         metrics["Train/EgoEntropyLoss"] = float(average_ego_entropy_losses[step])
-        metrics["Train/EgoGradNorm"]    = float(average_ego_grad_norms[step])
+        metrics["Train/EgoGradNorm"] = float(average_ego_grad_norms[step])
         metrics["train_step"] = int(step)
 
         wandb.log(metrics, commit=True)
