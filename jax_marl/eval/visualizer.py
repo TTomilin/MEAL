@@ -4,6 +4,7 @@ from collections import namedtuple
 import numpy as np
 import pygame
 import wandb
+from PIL import Image
 
 import jax_marl.eval.grid_rendering as rendering
 from jax_marl.environments.overcooked.common import OBJECT_TO_INDEX, COLOR_TO_INDEX, COLORS
@@ -404,7 +405,32 @@ class OvercookedVisualizer:
         file_name = f"task_{task_idx}_{task_name}"
         file_path = f"{exp_dir}/{file_name}.gif"
 
-        iio.imwrite(file_path, frames, loop=0, fps=10)
+        # 1) Build PIL images
+        pil_frames = [Image.fromarray(f, mode="RGB") for f in frames]
+
+        # 2) Create a single global palette from the first frame (adaptive, 256 colors)
+        base_pal_img = pil_frames[0].convert("P", palette=Image.ADAPTIVE, colors=256)
+        global_palette = base_pal_img.getpalette()
+
+        # 3) Quantize every frame to that same palette; disable dithering to avoid color noise
+        quantized = []
+        for im in pil_frames:
+            q = im.quantize(palette=base_pal_img, dither=Image.NONE)
+            q.putpalette(global_palette)
+            quantized.append(q)
+
+        # 4) Save the GIF using the shared palette (disposal=2 avoids trails between frames)
+        duration_ms = int(1000 / 10)  # fps=10 -> 100 ms/frame
+        quantized[0].save(
+            file_path,
+            save_all=True,
+            append_images=quantized[1:],
+            optimize=False,           # important: don't let Pillow re-optimize colors
+            duration=duration_ms,
+            loop=0,
+            disposal=2
+        )
+
         if wandb.run is not None:
             wandb.log({file_name: wandb.Video(file_path, format="gif")})
 
