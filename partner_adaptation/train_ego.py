@@ -520,23 +520,29 @@ def add_seed_axis_if_missing(x, expected_ndim_with_seed):
 
 
 def mean_over_all_but_updates(arr, num_updates: int):
-    """Returns shape (num_updates,), averaging every axis except the updates axis."""
+    # force integer
+    num_updates = int(float(num_updates))
+
     a = np.asarray(arr)
     if a.size == 0:
         return np.zeros((num_updates,), dtype=float)
 
-    # Try to locate the updates axis by size match
+    # locate an axis equal to num_updates; else heuristic
     cand = [i for i, s in enumerate(a.shape) if s == num_updates]
-    if cand:
-        upd_ax = cand[0]
-    else:
-        # Fallback heuristics: (seeds, updates, ...)->1, (updates, ...)->0
-        upd_ax = 1 if a.ndim >= 3 else 0
+    upd_ax = cand[0] if cand else (1 if a.ndim >= 3 else 0)
 
-    # Move updates to front, flatten the rest, then mean
-    a = np.moveaxis(a, upd_ax, 0)  # (num_updates, ...)
-    a = a.reshape(num_updates, -1)  # (num_updates, rest)
-    return a.mean(axis=1)  # (num_updates,)
+    # Ensure the chosen axis actually matches num_updates; if not, fall back
+    if a.shape[upd_ax] != num_updates:
+        # try the first axis if it matches
+        if a.ndim > 0 and a.shape[0] == num_updates:
+            upd_ax = 0
+        else:
+            # last resort: set num_updates to the length of the chosen axis
+            num_updates = int(a.shape[upd_ax])
+
+    a = np.moveaxis(a, upd_ax, 0)     # (num_updates, ...)
+    a = a.reshape(num_updates, -1)    # (num_updates, rest)
+    return a.mean(axis=1)
 
 
 def _extract_partner_id(idx):
