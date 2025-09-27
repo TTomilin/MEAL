@@ -240,6 +240,34 @@ def compute_metrics(
             # Average Performance (AP) – last eval of mean curve
             AP_seeds.append(np.nanmean(env_mat, axis=0)[-1])
 
+            # Forgetting (F) – curve-based forgetting that considers when forgetting occurs
+            f_vals = []
+            final_idx = env_mat.shape[1] - 1
+
+            # Process all series (NaN values have been replaced with zeros)
+            for i in range(seq_len):
+                task_curve = env_mat[i, : final_idx + 1]
+
+                # Calculate when training for task i ends in the evaluation timeline
+                # Training for task i ends at (i + 1) * chunk in the training timeline
+                # Map this proportionally to the evaluation timeline
+                training_end_step = (i + 1) * chunk
+                if n_train > 0:
+                    # Map training timeline to evaluation timeline proportionally
+                    training_end_idx = int((training_end_step / n_train) * len(task_curve))
+                    # Ensure the index is within bounds
+                    training_end_idx = min(training_end_idx, len(task_curve) - 1)
+                else:
+                    # Fallback: use the end of the curve
+                    training_end_idx = len(task_curve) - 1
+
+                # Calculate curve-based forgetting using end-of-training performance
+                if any(task_curve > 0.0):  # If end-of-training performance is 0 or negative, no meaningful forgetting can be calculated
+                    curve_forgetting = _calculate_curve_based_forgetting(task_curve, training_end_idx)
+                    f_vals.append(curve_forgetting)
+
+            F_seeds.append(float(np.nanmean(f_vals)))
+
             # Forward Transfer (FT) – normalized area between CL and baseline curves
             if seed not in baseline_data:
                 print(f"[warn] missing baseline data for seed {seed}")
@@ -318,34 +346,6 @@ def compute_metrics(
                 FT_seeds.append(float(np.nanmean(ft_vals)))
             else:
                 FT_seeds.append(np.nan)
-
-            # Forgetting (F) – curve-based forgetting that considers when forgetting occurs
-            f_vals = []
-            final_idx = env_mat.shape[1] - 1
-
-            # Process all series (NaN values have been replaced with zeros)
-            for i in range(seq_len):
-                task_curve = env_mat[i, : final_idx + 1]
-
-                # Calculate when training for task i ends in the evaluation timeline
-                # Training for task i ends at (i + 1) * chunk in the training timeline
-                # Map this proportionally to the evaluation timeline
-                training_end_step = (i + 1) * chunk
-                if n_train > 0:
-                    # Map training timeline to evaluation timeline proportionally
-                    training_end_idx = int((training_end_step / n_train) * len(task_curve))
-                    # Ensure the index is within bounds
-                    training_end_idx = min(training_end_idx, len(task_curve) - 1)
-                else:
-                    # Fallback: use the end of the curve
-                    training_end_idx = len(task_curve) - 1
-
-                # Calculate curve-based forgetting using end-of-training performance
-                if any(task_curve > 0.0):  # If end-of-training performance is 0 or negative, no meaningful forgetting can be calculated
-                    curve_forgetting = _calculate_curve_based_forgetting(task_curve, training_end_idx)
-                    f_vals.append(curve_forgetting)
-
-            F_seeds.append(float(np.nanmean(f_vals)))
 
         # Aggregate across seeds
         A_mean, A_ci = _mean_ci(AP_seeds)
