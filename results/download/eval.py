@@ -80,7 +80,8 @@ def discover_eval_keys(run: Run, include_dormant_ratio: bool = False) -> List[st
 def fetch_full_series(run: Run, key: str) -> List[float]:
     """Fetch every recorded value for a single key via scan_history."""
     vals: List[float] = []
-    for row in run.scan_history(keys=[key], page_size=10000):
+    page_size = 1e6 if run.config['seq_length'] > 20 else 1e4
+    for row in run.scan_history(keys=[key], page_size=page_size):
         v = row.get(key)
         if v is not None:
             vals.append(v)
@@ -203,7 +204,7 @@ def discover_partner_keys(run: Run) -> List[str]:
 # ---------------------------------------------------------------------------
 def main() -> None:
     args = cli()
-    api = wandb.Api()
+    api = wandb.Api(timeout=180)
     base_workspace = Path(__file__).resolve().parent.parent
     ext = 'json' if args.format == 'json' else 'npz'
 
@@ -309,7 +310,9 @@ def main() -> None:
                 # effective_seq_len = seq_len * args.repeat_sequence
                 print(f"[info] {run.name} using repeat_sequence={args.repeat_sequence}, seq_len={seq_len}")
 
-        out_base = (base_workspace / args.output / algo / cl_method / experiment /  exp_path / f"seed_{seed}")
+        agents_string = f"agents_{num_agents}" if args.num_agents else ""
+
+        out_base = (base_workspace / args.output / algo / cl_method / experiment / agents_string / exp_path / f"seed_{seed}")
 
         print(f"[info] Processing {run.name} with setting: {experiment}")
         print(f"[info] Output path: {out_base}")
