@@ -93,7 +93,7 @@ def train_ppo_ego_agent(
                 config.num_uncontrolled_actors)
 
             # near the top of train(...) right after you compute/know config.num_updates
-            eval_every = int(getattr(config, "eval_every", 10))  # evaluate every N updates
+            eval_every = int(getattr(config, "eval_every", 1))  # evaluate every N updates
             num_ckpts = int(getattr(config, "num_checkpoints", 1))  # 1 = only final
 
             def _env_step(runner_state, unused):
