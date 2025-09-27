@@ -45,9 +45,11 @@ def compute_metrics(
     AP_seeds, F_seeds, FT_seeds = [], [], []
 
     # Load baseline data once for forward transfer calculation
+    repo_root = Path(__file__).resolve().parent.parent
     baseline_data = {}
     baseline_folder = (
-        data_root
+        repo_root
+        / data_root
         / algo
         / "single"
         / f"level_{level}"
@@ -83,7 +85,8 @@ def compute_metrics(
             baseline_data[seed] = baseline_training_files
 
     base_folder = (
-            data_root
+            repo_root
+            / data_root
             / algo
             / method
             / f"level_{level}"
@@ -97,18 +100,33 @@ def compute_metrics(
             print(f"[debug] seed directory does not exist: {sd}")
             continue
 
+
+
         # Per‑environment evaluation curves
-        env_files = sorted([
-            f for f in sd.glob("*_soup.*") if "training" not in f.name
-        ])
-        if len(env_files) != seq_len:
-            print(
-                f"[warn] expected {seq_len} env files, found {len(env_files)} "
-                f"for {algo} {method} level_{level} agents_{num_agents} seed_{seed}"
-            )
+        env_series: List[List[float]] = []
+        present_task_ids: List[int] = []
+        for i in range(seq_len):
+            # find eval file for task i; ignore training files
+            cand = sorted([p for p in sd.glob(f"{i}_*_soup.json") if "training" not in p.name])
+            if not cand:
+                # try a looser pattern (older dumps)
+                cand = sorted([p for p in sd.glob(f"{i}_*soup.*") if "training" not in p.name])
+            if not cand:
+                # no eval file for this task; skip it
+                print(f"[info] missing eval for task {i}, seed {seed} — skipping this task")
+                continue
+            env_series.append(load_series(cand[0]))
+            present_task_ids.append(i)
+
+        if len(env_series) == 0:
+            print(f"[warn] no eval curves found for seed {seed}; skipping seed")
             continue
 
-        env_series = [load_series(f) for f in env_files]
+
+
+
+
+
         L = max(len(s) for s in env_series)
         env_mat = np.vstack([
             np.pad(s, (0, L - len(s)), constant_values=s[-1]) for s in env_series
@@ -125,7 +143,7 @@ def compute_metrics(
         else:
             training = load_series(training_fp)
             n_train = len(training)
-            chunk = n_train // seq_len
+            chunk = max(1, n_train // seq_len)
 
             # Forward Transfer (FT) – normalized area between CL and baseline curves
             if seed not in baseline_data:
@@ -133,10 +151,11 @@ def compute_metrics(
                 FT_seeds.append(np.nan)
             else:
                 ft_vals = []
-                for i in range(seq_len):
+                for i in present_task_ids:
                     # Calculate AUC for CL method (task i)
                     start_idx = i * chunk
                     end_idx = (i + 1) * chunk
+                    end_idx = min(end_idx, n_train)  # clamp
                     cl_task_curve = training[start_idx:end_idx]
 
                     # AUCi = (1/τ) * ∫ pi(t) dt, where τ is the task duration
@@ -151,6 +170,10 @@ def compute_metrics(
                         print(f"[warn] CL AUC is NaN/inf/-inf for task {i}, seed {seed}, method {method}")
                         continue  # Skip this task
 
+                    # guard index in baseline array
+                    if i >= len(baseline_data[seed]):
+                        print(f"[warn] missing baseline index for task {i}, seed {seed}")
+                        continue
                     # Calculate AUC for baseline method (task i)
                     baseline_task_curve = baseline_data[seed][i]
                     if baseline_task_curve is not None:
@@ -208,7 +231,7 @@ def compute_metrics(
         f_vals = []
         final_idx = env_mat.shape[1] - 1
         fw_start = max(0, final_idx - end_window_evals + 1)
-        for i in range(seq_len):
+        for i in range(env_mat.shape[0]):
             final_avg = np.nanmean(env_mat[i, fw_start : final_idx + 1])
             best_perf = np.nanmax(env_mat[i, : final_idx + 1])
             f_vals.append(max(best_perf - final_avg, 0.0))
@@ -286,7 +309,7 @@ def _fmt(mean: float, ci: float, best: bool, better: str = "max", show_ci: bool 
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Compare results between different numbers of agents")
-    p.add_argument("--data_root", default="results/data", help="Root directory containing the data")
+    p.add_argument("--data_root", default="data", help="Root directory containing the data")
     p.add_argument("--algorithm", default="ippo", help="Algorithm to analyze")
     p.add_argument("--method", default="EWC", help="Continual learning method to compare")
     p.add_argument("--strategy", default="generate", help="Strategy name")
