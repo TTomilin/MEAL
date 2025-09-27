@@ -539,6 +539,31 @@ def mean_over_all_but_updates(arr, num_updates: int):
     return a.mean(axis=1)  # (num_updates,)
 
 
+def _extract_partner_id(idx):
+    """
+    Robustly turn idx into an int.
+    Handles: int, numpy scalar/array, jax scalar/array, lists/tuples (even nested).
+    Falls back to 0 if empty.
+    """
+    # If it's a list/tuple, recurse on the first element that exists
+    if isinstance(idx, (list, tuple)):
+        if not idx:
+            return 0
+        return _extract_partner_id(idx[0])
+
+    # If it looks like an array (NumPy or JAX), make a NumPy view
+    # and grab the first element if needed
+    if hasattr(idx, "shape"):
+        arr = np.asarray(idx)
+        if arr.shape == ():         # scalar
+            return int(arr.item())
+        if arr.size > 0:            # vector or higher-dim
+            return int(arr.reshape(-1)[0])
+        return 0
+
+    return int(idx)
+
+
 def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layout_names=None):
     """Process training metrics and log them using the provided logger.
 
@@ -588,31 +613,7 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
         return_per_partner = return_per_partner.sum(axis=-1)
         return_per_partner = add_seed_axis_if_missing(return_per_partner, expected_ndim_with_seed=4)
         average_return_per_partner_per_iters = np.mean(return_per_partner, axis=(0, 2, 3))
-
-        # Create a check to verify and handle the dimension of idx
-        # Depending on the dimension of idx, we might need to do [0] once or twice
-        if hasattr(idx, '__len__') and not isinstance(idx, str):
-            # idx is array-like (list, tuple, numpy array, etc.)
-            if len(idx) == 0:
-                # Empty container - shouldn't happen in practice, but handle gracefully
-                partner_id = 0
-            elif hasattr(idx[0], '__len__') and not isinstance(idx[0], str) and len(idx[0]) > 0:
-                # idx is nested (e.g., [[0]], [(0,)], etc.) AND idx[0] is not empty
-                partner_id = idx[0][0]
-            else:
-                # idx is single-level array-like (e.g., [0], (0,), etc.) OR idx[0] is empty
-                # For the case where idx has shape (1, 0), idx[0] will be empty array
-                # In this case, we should extract a meaningful partner ID
-                if hasattr(idx[0], '__len__') and len(idx[0]) == 0:
-                    # idx[0] is empty (like shape (1, 0) case), use the outer index if available
-                    # This handles the case where idx has shape (1, 0) - we can't use idx[0][0]
-                    # but we can try to infer the partner ID from context or use a default
-                    partner_id = 0  # Default fallback
-                else:
-                    partner_id = idx[0]
-        else:
-            # idx is a scalar (int, float, etc.)
-            partner_id = idx
+        partner_id = _extract_partner_id(idx)
 
         per_partner_per_iter[f"Eval/EgoReturn_Partner{partner_id}"] = average_return_per_partner_per_iters
 
