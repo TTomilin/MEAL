@@ -545,6 +545,31 @@ def mean_over_all_but_updates(arr, num_updates: int):
     return a.mean(axis=1)
 
 
+def _stat_mean_at_step(stat_data, step: int) -> float:
+    """
+    Accepts shapes:
+      - (U,)           -> mean only
+      - (U, 2)         -> (mean, std)
+      - higher-dim     -> if last dim >=2, use [:, 0] as mean; else squeeze
+    Returns a scalar float for the requested step (clamped to available length).
+    """
+    arr = np.asarray(stat_data)
+    if arr.ndim == 0:
+        return float(arr)
+    if arr.ndim == 1:
+        i = min(step, arr.shape[0] - 1)
+        return float(arr[i])
+    # ndim >= 2
+    if arr.shape[-1] >= 2:
+        mean_series = arr[(slice(None),) * (arr.ndim - 1) + (0,)]
+        i = min(step, mean_series.shape[0] - 1)
+        return float(mean_series[i])
+    arr_sq = np.squeeze(arr)
+    i = min(step, arr_sq.shape[0] - 1)
+    return float(arr_sq[i])
+
+
+
 def _extract_partner_id(idx):
     """
     Robustly turn idx into an int.
@@ -638,43 +663,42 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
     average_ego_entropy_losses = mean_over_all_but_updates(all_ego_entropy_losses, config.num_updates)
     average_ego_grad_norms = mean_over_all_but_updates(all_ego_grad_norms, config.num_updates)
 
-    # Log metrics for each update step
-    num_updates = len(average_ego_value_losses)
+    # ---- figure out how many steps to log safely ----
+    num_updates = int(len(average_ego_value_losses))
+
+    # also cap by the shortest train_stat series (handles 1-D or 2-D stats)
+    if train_stats:
+        shortest = min(max(1, np.asarray(v).shape[0]) for v in train_stats.values())
+        num_updates = min(num_updates, int(shortest))
+
     for step in range(num_updates):
-        # Create metrics dict for unified logging
         metrics = {}
 
-        # Add training metrics
+        # robust stat extraction (works for 1-D or (mean,std))
         for stat_name, stat_data in train_stats.items():
-            # second dimension contains the mean and std of the metric
-            stat_mean = stat_data[step, 0]
+            stat_mean = _stat_mean_at_step(stat_data, step)
             metrics[f"Train/Ego_{stat_name}"] = stat_mean
 
-        metrics["Eval/EgoReturn"] = average_ego_rets_per_iter[step]
+        metrics["Eval/EgoReturn"] = float(average_ego_rets_per_iter[step])
 
-        # Add soup metrics if available
         if average_ego_soups_per_iter is not None:
-            metrics["Eval/EgoSoup"] = average_ego_soups_per_iter[step]
+            metrics["Eval/EgoSoup"] = float(average_ego_soups_per_iter[step])
 
-        # Add per-partner metrics
         for partner_name, partner_data in per_partner_per_iter.items():
-            metrics[partner_name] = partner_data[step]
+            metrics[partner_name] = float(partner_data[step])
 
         for partner_name, partner_data in per_partner_soup_per_iter.items():
-            metrics[partner_name] = partner_data[step]
+            metrics[partner_name] = float(partner_data[step])
 
-        # Use add_eval_metrics for unified soup calculation if parameters are provided
         if max_soup_dict is not None and layout_names is not None and average_ego_soups_per_iter is not None:
-            # Create lists for add_eval_metrics function
-            avg_rewards = [average_ego_rets_per_iter[step]]
-            avg_soups = [average_ego_soups_per_iter[step]]
+            avg_rewards = [float(average_ego_rets_per_iter[step])]
+            avg_soups = [float(average_ego_soups_per_iter[step])]
             metrics = add_eval_metrics(avg_rewards, avg_soups, layout_names, max_soup_dict, metrics)
 
-        metrics["Train/EgoValueLoss"] = average_ego_value_losses[step]
-        metrics["Train/EgoActorLoss"] = average_ego_actor_losses[step]
-        metrics["Train/EgoEntropyLoss"] = average_ego_entropy_losses[step]
-        metrics["Train/EgoGradNorm"] = average_ego_grad_norms[step]
-        metrics["train_step"] = step
+        metrics["Train/EgoValueLoss"]   = float(average_ego_value_losses[step])
+        metrics["Train/EgoActorLoss"]   = float(average_ego_actor_losses[step])
+        metrics["Train/EgoEntropyLoss"] = float(average_ego_entropy_losses[step])
+        metrics["Train/EgoGradNorm"]    = float(average_ego_grad_norms[step])
+        metrics["train_step"] = int(step)
 
-        # Log all metrics at once
         wandb.log(metrics, commit=True)
