@@ -219,6 +219,7 @@ def plot():
     stem = args.plot_name or (
             "avg_cumulative_" + ("methods" if args.compare_by == "method" else "levels")
     )
+    stem += f"_seq_{args.seq_len}"
     # Add level suffix if not already present
     if "_level" not in stem:
         stem += f"_level_{args.level}"

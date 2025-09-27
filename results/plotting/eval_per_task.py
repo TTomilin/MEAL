@@ -113,6 +113,7 @@ def plot():
     # Add method name to filename if only a single method is given
     if len(methods) == 1:
         name += f"_{methods[0]}"
+    name += f"_seq_{args.seq_len}"
     # Add level suffix if not already present
     if "_level" not in name:
         name += f"_level_{args.level}"
