@@ -211,10 +211,10 @@ def plot():
         ax.xaxis.set_major_locator(MaxNLocator(nbins=6))   # ~5–6 ticks
         ax.xaxis.set_minor_locator(plt.NullLocator())
         ax.xaxis.set_major_formatter(ScalarFormatter(useMathText=True))
-        ax.tick_params(axis="x", labelsize=8)
+        ax.tick_params(axis="x", labelsize=12)
 
         # Left y stays as-is
-        ax.tick_params(axis="y", labelsize=8)
+        ax.tick_params(axis="y", labelsize=12)
 
         # Top: show every 10th task index (at task centers)
         ax_top = ax.twiny()
@@ -229,7 +229,7 @@ def plot():
 
         ax_top.set_xticks(top_ticks)
         ax_top.set_xticklabels(top_labels)
-        ax_top.tick_params(axis="x", labelsize=8, pad=2)
+        ax_top.tick_params(axis="x", labelsize=11, pad=2)
         # no minor ticks up top
         ax_top.xaxis.set_minor_locator(plt.NullLocator())
 
