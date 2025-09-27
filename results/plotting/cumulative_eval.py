@@ -198,8 +198,40 @@ def plot():
 
     # Add task boundaries and nice axes.
     boundaries = [i * args.steps_per_task for i in range(args.seq_len + 1)]
-    add_task_boundaries(ax, boundaries, color="grey", linewidth=0.5)
-    setup_task_axes(ax, boundaries, args.seq_len, fontsize=8)
+    if args.seq_len <= 20:
+        add_task_boundaries(ax, boundaries, color="grey", linewidth=0.5)
+        setup_task_axes(ax, boundaries, args.seq_len, fontsize=8)
+    else:
+        # ── many tasks: keep all thin boundaries, but de-clutter labels
+        add_task_boundaries(ax, boundaries, color="grey", linewidth=0.4)
+
+        # Bottom: show fewer x ticks (environment steps)
+        from matplotlib.ticker import MaxNLocator, ScalarFormatter
+        ax.set_xlim(0, total_steps)
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=6))   # ~5–6 ticks
+        ax.xaxis.set_minor_locator(plt.NullLocator())
+        ax.xaxis.set_major_formatter(ScalarFormatter(useMathText=True))
+        ax.tick_params(axis="x", labelsize=8)
+
+        # Left y stays as-is
+        ax.tick_params(axis="y", labelsize=8)
+
+        # Top: show every 10th task index (at task centers)
+        ax_top = ax.twiny()
+        ax_top.set_xlim(ax.get_xlim())
+
+        steps = args.steps_per_task
+        centers = (np.arange(args.seq_len) + 0.5) * steps
+        # every 10th task: 10, 20, 30, ... (1-indexed in labels)
+        keep_idx = np.arange(9, args.seq_len, 10)  # 9→task 10, 19→task 20, ...
+        top_ticks = centers[keep_idx]
+        top_labels = [f"Task {idx+1}" for idx in keep_idx]  # 1-indexed label
+
+        ax_top.set_xticks(top_ticks)
+        ax_top.set_xticklabels(top_labels)
+        ax_top.tick_params(axis="x", labelsize=8, pad=2)
+        # no minor ticks up top
+        ax_top.xaxis.set_minor_locator(plt.NullLocator())
 
     # Final decorations.
     legend_items = args.methods if args.compare_by == "method" else args.levels
