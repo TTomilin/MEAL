@@ -538,34 +538,39 @@ def main():
     MAX_POTS  = max(int(np.array(e.layout["pot_idx"]).shape[0])  for e in envs)
 
     def _pad_pos(pos, target_len):
-        # pos: (k, 2) with k >= 1 in Overcooked; pad by repeating last row
+        pos = jnp.asarray(pos, jnp.uint32)          # ensure dtype matches
         k = pos.shape[0]
         pad = target_len - k
         if pad <= 0:
             return pos
-        last = pos[-1]                              # (2,)
-        pad_block = jnp.repeat(last[None, :], pad, axis=0)  # (pad,2)
-        return jnp.concatenate([pos, pad_block], axis=0)    # (target_len, 2)
+        last = pos[-1]
+        pad_block = jnp.repeat(last[None, :], pad, axis=0)
+        return jnp.concatenate([pos, pad_block], axis=0)
 
-    # Prebind reset/step branches (never pass env into jit)
+    def pad_state(log_state):
+        es = log_state.env_state
+        es = es.replace(
+            goal_pos=_pad_pos(es.goal_pos, MAX_GOALS),
+            pot_pos =_pad_pos(es.pot_pos,  MAX_POTS),
+        )
+        return log_state.replace(env_state=es)
+
     def _make_reset_fn(e):
         def _f(key):
-            obs, st = e.reset(key)  # st is LogEnvState(env_state=State(...))
-            es = st.env_state
-            es = es.replace(
-                goal_pos=_pad_pos(es.goal_pos, MAX_GOALS),
-                pot_pos =_pad_pos(es.pot_pos,  MAX_POTS),
-            )
-            st = st.replace(env_state=es)
+            obs, st = e.reset(key)
+            st = pad_state(st)
             return obs, st
         return _f
 
-    _reset_branches = tuple(_make_reset_fn(e) for e in envs)
-    _step_branches  = tuple((lambda e: (lambda k, s, a: e.step(k, s, a)))(e) for e in envs)
+    def _make_step_fn(e):
+        def _f(key, state, actions):
+            obs, st, rew, done, info = e.step(key, state, actions)
+            st = pad_state(st)        # keep the pytree type **constant** every step
+            return obs, st, rew, done, info
+        return _f
 
-    # Prebind reset/step branches so we never pass env into jit:
-    _reset_branches = tuple((lambda e: (lambda k: e.reset(k)))(e) for e in envs)
-    _step_branches = tuple((lambda e: (lambda k, s, a: e.step(k, s, a)))(e) for e in envs)
+    _reset_branches = tuple(_make_reset_fn(e) for e in envs)
+    _step_branches  = tuple(_make_step_fn(e)  for e in envs)
 
     def env_reset(key, env_idx):
         env_idx = jnp.asarray(env_idx, jnp.int32)
@@ -583,6 +588,8 @@ def main():
 
     agents = temp_env.agents
     num_agents = temp_env.num_agents
+
+    max_steps_by_task = jnp.array([e.max_steps for e in envs], dtype=jnp.int32)
 
     def linear_schedule(count):
         '''
@@ -1065,7 +1072,7 @@ def main():
             agent_0_soup = info["soups"]["agent_0"].sum()
             agent_1_soup = info["soups"]["agent_1"].sum()
             soup_delivered = agent_0_soup + agent_1_soup
-            episode_frac = config.num_steps / env.max_steps
+            episode_frac = config.num_steps / jnp.take(max_steps_by_task, env_idx)
             metrics["Soup/agent_0_soup"] = agent_0_soup
             metrics["Soup/agent_1_soup"] = agent_1_soup
             metrics["Soup/total"] = soup_delivered
@@ -1094,7 +1101,7 @@ def main():
                 def log_metrics(metrics, update_step):
                     if config.evaluation:
                         avg_rewards, avg_soups = evaluate_model(train_state_eval, eval_rng)
-                        episode_frac = config.eval_num_steps / env.max_steps
+                        episode_frac = config.eval_num_steps / jnp.take(max_steps_by_task, env_idx)
                         avg_soups = [soup * episode_frac for soup, env_name in zip(avg_soups, env_names)]
                         metrics = add_eval_metrics(avg_rewards, avg_soups, env_names, max_soup_dict, metrics)
 
