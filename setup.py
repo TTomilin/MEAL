@@ -16,7 +16,6 @@ install_requires = [
     "dotmap==1.3.30",
     "evosax==0.1.5",
     "distrax==0.1.5",
-    "brax==0.10.3",
     "orbax-checkpoint",
     "gymnax==0.0.6",
     "safetensors==0.4.2",
