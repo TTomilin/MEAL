@@ -1,7 +1,5 @@
-# requirements are alligned with nvcr.io/nvidia/jax:23.10-py3 image
-# jax[cuda12] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-# jaxlib==0.4.25+cuda12.cudnn89 -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-jax[cuda12]  # CUDA 12.6
+jax[cuda12]==0.4.35
+jaxlib==0.4.35
 flax==0.10.2
 chex==0.1.84
 optax==0.1.7
@@ -13,7 +11,6 @@ gymnax==0.0.6
 safetensors==0.4.2
 flashbax==0.1.0
 scipy==1.12.0
-# less sensitive libs
 wandb==0.18.7
 pytest==8.3.3
 imageio==2.36.0

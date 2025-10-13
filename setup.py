@@ -10,6 +10,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 # Main dependencies required for the package
 install_requires = [
     "jax[cuda12]==0.4.35",  # JAX with CUDA 12.6 support
+    "jaxlib==0.4.35",
     "flax==0.10.2",
     "chex==0.1.84",
     "optax==0.1.7",
