@@ -6,7 +6,7 @@ import distrax
 from flax.core.frozen_dict import FrozenDict
 
 from experiments.utils import build_reg_weights, _prep_obs
-from experiments.cl_methods.base import RegCLMethod, CLState
+from experiments.continual.base import RegCLMethod, CLState
 
 
 class EWC(RegCLMethod):

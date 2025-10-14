@@ -13,15 +13,14 @@ from flax.core.frozen_dict import freeze, unfreeze
 from flax.training.train_state import TrainState
 from jax._src.flatten_util import ravel_pytree
 
-from experiments.architectures.cnn import ActorCritic as CNNActorCritic
-from experiments.architectures.mlp import ActorCritic as MLPActorCritic
+from experiments.model.decoupled_mlp import Actor, Critic
 from experiments.utils import *
-from experiments.cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
+from experiments.continual.agem import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
     update_agem_memory
-from experiments.cl_methods.EWC import EWC
-from experiments.cl_methods.FT import FT
-from experiments.cl_methods.L2 import L2
-from experiments.cl_methods.MAS import MAS
+from experiments.continual.ewc import EWC
+from experiments.continual.ft import FT
+from experiments.continual.l2 import L2
+from experiments.continual.mas import MAS
 from meal.environments.difficulty_config import apply_difficulty_to_config
 from meal.environments.overcooked.upper_bound import estimate_max_soup
 from meal.eval.visualizer import OvercookedVisualizer
@@ -35,7 +34,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     # TRAINING / PPO PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
-    alg_name: str = "ippo"
+    alg_name: str = "mappo"
     lr: float = 3e-4
     anneal_lr: bool = False
     num_envs: int = 16
@@ -72,6 +71,7 @@ class Config:
     cl_method: Optional[str] = None
     reg_coef: Optional[float] = None
     use_task_id: bool = True
+    use_agent_id: bool = True
     use_multihead: bool = True
     shared_backbone: bool = False
     normalize_importance: bool = False
@@ -94,7 +94,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
-    env_name: str = "overcooked"
+    env_name: str = "overcooked_po"
     seq_length: int = 10
     repeat_sequence: int = 1
     strategy: str = "generate"
@@ -119,6 +119,7 @@ class Config:
     # EVALUATION PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
     evaluation: bool = True
+    eval_forward_transfer: bool = False
     eval_num_steps: int = 1000
     eval_num_episodes: int = 5
     record_gif: bool = False
@@ -150,6 +151,51 @@ class Config:
 ############################
 ######  MAIN FUNCTION  #####
 ############################
+
+
+def create_global_state_for_critic(obs_dict, agent_list, num_envs, use_cnn=False):
+    """
+    Create global state for MAPPO critic by concatenating all agents' observations.
+    For MAPPO, the critic should receive concatenated observations from all agents,
+    not batched observations.
+
+    Args:
+        obs_dict: Dictionary of observations for each agent
+        agent_list: List of agent names
+        num_envs: Number of parallel environments
+        use_cnn: Whether to use CNN mode (preserves spatial dimensions)
+
+    Returns:
+        Global state with appropriate shape for the critic network:
+        - For MLP: (num_envs, total_obs_dim) where total_obs_dim is flattened
+        - For CNN: (num_envs, height, width, total_channels) where channels are concatenated
+    """
+    # Stack observations from all agents: (num_agents, num_envs, ...)
+    agent_obs = jnp.stack([obs_dict[agent] for agent in agent_list])
+
+    if use_cnn:
+        # For CNN mode: preserve spatial dimensions and concatenate along channel dimension
+        # Expected shape: (num_agents, num_envs, height, width, channels)
+        # Transpose to: (num_envs, num_agents, height, width, channels)
+        agent_obs = jnp.transpose(agent_obs, (1, 0, 2, 3, 4))
+
+        # Concatenate along the channel dimension for each spatial position
+        # Shape: (num_envs, height, width, num_agents * channels)
+        global_state = jnp.concatenate([agent_obs[:, i] for i in range(agent_obs.shape[1])], axis=-1)
+    else:
+        # For MLP mode: flatten all dimensions except the first two
+        # Original shape: (num_agents, num_envs, ...) where ... can be multiple dimensions
+        # Reshape to: (num_agents, num_envs, flattened_obs_dim)
+        agent_obs = agent_obs.reshape(agent_obs.shape[0], agent_obs.shape[1], -1)
+
+        # Transpose to (num_envs, num_agents, flattened_obs_dim)
+        agent_obs = jnp.transpose(agent_obs, (1, 0, 2))
+
+        # Concatenate along the last dimension to create global state
+        # Shape: (num_envs, num_agents * flattened_obs_dim)
+        global_state = agent_obs.reshape(num_envs, -1)
+
+    return global_state
 
 
 def main():
@@ -238,10 +284,9 @@ def main():
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
     network = "cnn" if config.use_cnn else "mlp"
     run_name = f'{config.alg_name}_{config.cl_method}_{difficulty}_{network}_seq{seq_length}_{strategy}_seed_{seed}_{timestamp}'
-    exp_dir = os.path.join("../runs", run_name)
+    exp_dir = os.path.join("runs", run_name)
 
     # Initialize WandB
-    load_dotenv()
     wandb_tags = config.tags if config.tags is not None else []
     wandb.login(key=os.environ.get("WANDB_API_KEY"))
     wandb.init(
@@ -443,7 +488,11 @@ def main():
                     '''
                     network_apply = train_state.apply_fn
                     params = train_state.params
-                    pi, value, _ = network_apply(params, obs, env_idx=eval_idx)
+
+                    # For evaluation, we only need the actor network for action selection
+                    pi, _ = network_apply(params, obs, env_idx=eval_idx, network_type='actor')
+                    value = None  # We don't need value during evaluation
+
                     action = jnp.squeeze(pi.sample(seed=rng), axis=0)
                     return action, value
 
@@ -523,69 +572,11 @@ def main():
         env_names.append(env_name)
         max_soup_dict[env_name] = estimate_max_soup(env_layout, env.max_steps, n_agents=env.num_agents)
 
-    max_steps_by_task = jnp.array([e.max_steps for e in envs], dtype=jnp.int32)
-    max_soup_by_task = jnp.array([max_soup_dict[name] for name in env_names], dtype=jnp.float32)
-
-    # --- FIX: normalize variable-length fields across tasks (goals, pots) ---
-    # compute maxima across tasks
-    MAX_GOALS = max(int(np.array(e.layout["goal_idx"]).shape[0]) for e in envs)
-    MAX_POTS = max(int(np.array(e.layout["pot_idx"]).shape[0]) for e in envs)
-
-    def _pad_pos(pos, target_len):
-        pos = jnp.asarray(pos, jnp.uint32)  # ensure dtype matches
-        k = pos.shape[0]
-        pad = target_len - k
-        if pad <= 0:
-            return pos
-        last = pos[-1]
-        pad_block = jnp.repeat(last[None, :], pad, axis=0)
-        return jnp.concatenate([pos, pad_block], axis=0)
-
-    def pad_state(log_state):
-        es = log_state.env_state
-        es = es.replace(
-            goal_pos=_pad_pos(es.goal_pos, MAX_GOALS),
-            pot_pos=_pad_pos(es.pot_pos, MAX_POTS),
-        )
-        return log_state.replace(env_state=es)
-
-    def _make_reset_fn(e):
-        def _f(key):
-            obs, st = e.reset(key)
-            st = pad_state(st)
-            return obs, st
-
-        return _f
-
-    def _make_step_fn(e):
-        def _f(key, state, actions):
-            obs, st, rew, done, info = e.step(key, state, actions)
-            st = pad_state(st)  # keep the pytree type **constant** every step
-            return obs, st, rew, done, info
-
-        return _f
-
-    _reset_branches = tuple(_make_reset_fn(e) for e in envs)
-    _step_branches = tuple(_make_step_fn(e) for e in envs)
-
-    def env_reset(key, env_idx):
-        env_idx = jnp.asarray(env_idx, jnp.int32)
-        return jax.lax.switch(env_idx, _reset_branches, key)
-
-    def env_step(key, state, actions, env_idx):
-        env_idx = jnp.asarray(env_idx, jnp.int32)
-        return jax.lax.switch(env_idx, _step_branches, key, state, actions)
-
     # set extra config parameters based on the environment
     temp_env = envs[0]
     config.num_actors = temp_env.num_agents * config.num_envs
     config.num_updates = config.steps_per_task // config.num_steps // config.num_envs
     config.minibatch_size = (config.num_actors * config.num_steps) // config.num_minibatches
-
-    agents = temp_env.agents
-    num_agents = temp_env.num_agents
-
-    max_steps_by_task = jnp.array([e.max_steps for e in envs], dtype=jnp.int32)
 
     def linear_schedule(count):
         '''
@@ -595,21 +586,90 @@ def main():
         frac = 1.0 - (count // (config.num_minibatches * config.update_epochs)) / config.num_updates
         return config.lr * frac
 
-    ac_cls = CNNActorCritic if config.use_cnn else MLPActorCritic
-
-    network = ac_cls(temp_env.action_space().n, config.activation, seq_length, config.use_multihead,
-                     config.shared_backbone, config.big_network, config.use_task_id, config.regularize_heads,
-                     config.use_layer_norm)
-
+    # MAPPO always uses decoupled Actor and Critic networks
     obs_dim = temp_env.observation_space().shape
     if not config.use_cnn:
-        obs_dim = np.prod(obs_dim)
+        local_obs_dim = np.prod(obs_dim)  # Individual agent observation dimension
+        global_obs_dim = local_obs_dim * temp_env.num_agents  # Global state dimension
+    else:
+        local_obs_dim = obs_dim  # Keep original shape for CNN
+        global_obs_dim = (obs_dim[0], obs_dim[1], obs_dim[2] * temp_env.num_agents)  # Stack channels for CNN
 
-    # Initialize the network
+    # Create separate actor and critic networks
+    actor_network = Actor(
+        action_dim=temp_env.action_space().n,
+        activation=config.activation,
+        num_tasks=seq_length,
+        use_multihead=config.use_multihead,
+        use_task_id=config.use_task_id,
+        use_cnn=config.use_cnn,
+        use_layer_norm=config.use_layer_norm,
+        use_agent_id=config.use_agent_id,
+        num_agents=temp_env.num_agents,
+        num_envs=config.num_envs
+    )
+
+    critic_network = Critic(
+        activation=config.activation,
+        num_tasks=seq_length,
+        use_multihead=config.use_multihead,
+        use_task_id=config.use_task_id,
+        use_cnn=config.use_cnn,
+        use_layer_norm=config.use_layer_norm
+    )
+
+    # Initialize both networks
     rng = jax.random.PRNGKey(seed)
-    rng, network_rng = jax.random.split(rng)
-    init_x = jnp.zeros((1, *obs_dim)) if config.use_cnn else jnp.zeros((1, obs_dim,))
-    network_params = network.init(network_rng, init_x, env_idx=jnp.array(0, jnp.int32))
+    rng, actor_rng, critic_rng = jax.random.split(rng, 3)
+
+    # Actor uses local observations
+    if config.use_cnn:
+        actor_init_x = jnp.zeros((1, *local_obs_dim))
+    else:
+        actor_init_x = jnp.zeros((1, local_obs_dim))
+    actor_params = actor_network.init(actor_rng, actor_init_x, env_idx=0)
+
+    # Critic uses global state (concatenated observations from all agents)
+    if config.use_cnn:
+        critic_init_x = jnp.zeros((1, *global_obs_dim))
+    else:
+        critic_init_x = jnp.zeros((1, global_obs_dim))
+    critic_params = critic_network.init(critic_rng, critic_init_x, env_idx=0)
+
+    # Combine parameters into a single structure for compatibility
+    network_params = {
+        'actor': actor_params,
+        'critic': critic_params
+    }
+
+    # Create a wrapper network object for compatibility with functions expecting unified interface
+    class DecoupledNetworkWrapper:
+        """
+        Wrapper class to provide unified network interface for decoupled actor/critic networks.
+        This allows EWC and other functions to work with decoupled networks.
+        """
+
+        def __init__(self, actor_net, critic_net):
+            self.actor_network = actor_net
+            self.critic_network = critic_net
+
+        def apply(self, params, obs, *, env_idx=0):
+            """
+            Apply method that mimics unified network behavior.
+            For EWC and similar functions, we primarily need the actor network's policy output.
+            """
+            # Use actor network for policy (which is what EWC needs for Fisher computation)
+            if isinstance(params, dict) and 'actor' in params:
+                # Decoupled parameters structure
+                pi = self.actor_network.apply(params['actor'], obs, env_idx=env_idx)
+                # For compatibility, return None for value (EWC doesn't need it)
+                return pi, None
+            else:
+                # Fallback for unified parameters structure
+                pi = self.actor_network.apply(params, obs, env_idx=env_idx)
+                return pi, None
+
+    network = DecoupledNetworkWrapper(actor_network, critic_network)
 
     # Initialize the optimizer
     tx = optax.chain(
@@ -617,20 +677,37 @@ def main():
         optax.adam(learning_rate=linear_schedule if config.anneal_lr else config.lr, eps=1e-5)
     )
 
+    # JIT compile the separate networks
+    actor_network.apply = jax.jit(actor_network.apply)
+    critic_network.apply = jax.jit(critic_network.apply)
+
+    # Create a combined apply function for compatibility
+    def combined_apply_fn(params, obs, *, env_idx=0, network_type='both'):
+        if network_type == 'actor':
+            return actor_network.apply(params['actor'], obs, env_idx=env_idx), None
+        elif network_type == 'critic':
+            return None, critic_network.apply(params['critic'], obs, env_idx=env_idx)
+        else:  # both
+            pi = actor_network.apply(params['actor'], obs, env_idx=env_idx)
+            value = critic_network.apply(params['critic'], obs, env_idx=env_idx)
+            return pi, value
+
     # Initialize the training state
     train_state = TrainState.create(
-        apply_fn=network.apply,
+        apply_fn=combined_apply_fn,
         params=network_params,
         tx=tx
     )
 
-    @jax.jit
-    def train_on_environment(rng, train_state, cl_state, env_idx):
+    @partial(jax.jit, static_argnums=(2, 4))
+    def train_on_environment(rng, train_state, env, cl_state, env_idx):
         '''
-        Trains the network using IPPO
+        Trains the network using MAPPO
         @param rng: random number generator
         returns the runner state and the metrics
         '''
+
+        print(f"Training on environment: {env.task_id} - {env.layout_name}")
 
         # reset the learning rate and the optimizer
         tx = optax.chain(
@@ -643,7 +720,7 @@ def main():
         # Initialize and reset the environment
         rng, env_rng = jax.random.split(rng)
         reset_rng = jax.random.split(env_rng, config.num_envs)
-        obsv, env_state = jax.vmap(lambda k: env_reset(k, env_idx), in_axes=(0,))(reset_rng)
+        obsv, env_state = jax.vmap(env.reset, in_axes=(0,))(reset_rng)
 
         reward_shaping_horizon = config.steps_per_task / 2
         rew_shaping_anneal = optax.linear_schedule(
@@ -675,10 +752,23 @@ def main():
                 rng, _rng = jax.random.split(rng)
 
                 # prepare the observations for the network
-                obs_batch = batchify(last_obs, agents, config.num_actors, not config.use_cnn)  # (num_actors, obs_dim)
+                obs_batch = batchify(last_obs, env.agents, config.num_actors, not config.use_cnn)
+                # print("obs_shape", obs_batch.shape)
 
-                # apply the policy network to the observations to get the suggested actions and their values
-                pi, value, _ = network.apply(train_state.params, obs_batch, env_idx=env_idx)
+                # For MAPPO: Create global state for centralized critic
+                # The critic should receive concatenated observations from all agents
+                global_state = create_global_state_for_critic(last_obs, env.agents, config.num_envs, config.use_cnn)
+
+                # MAPPO: Actor uses local observations, Critic uses global state
+                pi = train_state.apply_fn(train_state.params, obs_batch, env_idx=env_idx, network_type='actor')[0]
+                # Critic outputs one value per environment (not per agent)
+                value_per_env = \
+                train_state.apply_fn(train_state.params, global_state, env_idx=env_idx, network_type='critic')[1]
+                # Tile the values to match the batch structure (one value per agent, but same value for agents in same env)
+                value = jnp.repeat(value_per_env, len(env.agents), axis=0)
+
+                # Store the global state batch for use in loss computation (repeat for each agent)
+                global_state_batch = jnp.repeat(global_state, len(env.agents), axis=0)
 
                 # Sample and action from the policy
                 action = pi.sample(seed=_rng)
@@ -686,7 +776,7 @@ def main():
                 log_prob = pi.log_prob(action)
 
                 # format the actions to be compatible with the environment
-                env_act = unbatchify(action, agents, config.num_envs, num_agents)
+                env_act = unbatchify(action, env.agents, config.num_envs, env.num_agents)
                 env_act = {k: v.flatten() for k, v in env_act.items()}
 
                 # STEP ENV
@@ -695,9 +785,9 @@ def main():
                 rng_step = jax.random.split(_rng, config.num_envs)
 
                 # simultaniously step all environments with the selected actions (parallelized over the number of environments with vmap)
-                obsv_next, env_state_next, reward, done, info = jax.vmap(
-                    lambda kk, st, ac: env_step(kk, st, ac, env_idx), in_axes=(0, 0, 0)
-                )(rng_step, env_state, env_act)
+                obsv, env_state, reward, done, info = jax.vmap(env.step, in_axes=(0, 0, 0))(
+                    rng_step, env_state, env_act
+                )
 
                 current_timestep = update_step * config.num_steps * config.num_envs
 
@@ -726,13 +816,14 @@ def main():
                                                     info["shaped_reward"]
                                                     )
 
-                transition = Transition(
-                    batchify(done, agents, config.num_actors, not config.use_cnn).squeeze(),
+                transition = Transition_MAPPO(
+                    batchify(done, env.agents, config.num_actors, not config.use_cnn).squeeze(),
                     action,
                     value,
-                    batchify(reward, agents, config.num_actors).squeeze(),
+                    batchify(reward, env.agents, config.num_actors).squeeze(),
                     log_prob,
-                    obs_batch
+                    obs_batch,  # Use local observations for actor
+                    global_state_batch  # Store real global state for critic
                 )
 
                 # Increment steps_for_env by the number of parallel envs
@@ -753,10 +844,14 @@ def main():
             train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
 
             # create a batch of the observations that is compatible with the network
-            last_obs_batch = batchify(last_obs, agents, config.num_actors, not config.use_cnn)
+            last_obs_batch = batchify(last_obs, env.agents, config.num_actors, not config.use_cnn)
 
-            # apply the network to the batch of observations to get the value of the last state
-            _, last_val, _ = network.apply(train_state.params, last_obs_batch, env_idx=env_idx)
+            # Compute last value for MAPPO: Critic uses global state, outputs one value per environment
+            last_global_state = create_global_state_for_critic(last_obs, env.agents, config.num_envs, config.use_cnn)
+            _, last_val_per_env = train_state.apply_fn(train_state.params, last_global_state, env_idx=env_idx,
+                                                       network_type='critic')
+            # Tile the last values to match the batch structure (one value per agent, but same value for agents in same env)
+            last_val = jnp.repeat(last_val_per_env, len(env.agents), axis=0)
 
             def _calculate_gae(traj_batch, last_val):
                 '''
@@ -825,11 +920,15 @@ def main():
                         @param traj_batch: the trajectory batch
                         @param gae: the generalized advantage estimate
                         @param targets: the targets
-                        @param network: the network
                         returns the total loss and the value loss, actor loss, and entropy
                         '''
-                        # apply the network to the observations in the trajectory batch
-                        pi, value, _ = network.apply(params, traj_batch.obs, env_idx=env_idx)
+                        # MAPPO: Actor uses local observations, Critic uses stored global state
+                        local_obs = traj_batch.obs  # Local observations for actor
+                        global_state = traj_batch.global_state  # Real global state for critic (no reconstruction needed!)
+
+                        # Apply networks separately
+                        pi = actor_network.apply(params['actor'], local_obs, env_idx=env_idx)
+                        value = critic_network.apply(params['critic'], global_state, env_idx=env_idx)
                         log_prob = pi.log_prob(traj_batch.action)
 
                         # calculate critic loss
@@ -843,9 +942,17 @@ def main():
                         ratio = jnp.exp(log_prob - traj_batch.log_prob)
                         gae = (gae - gae.mean()) / (gae.std() + 1e-8)
                         loss_actor_unclipped = ratio * gae
-                        loss_actor_clipped = (jnp.clip(ratio, 1.0 - config.clip_eps, 1.0 + config.clip_eps) * gae)
+                        loss_actor_clipped = (
+                                jnp.clip(
+                                    ratio,
+                                    1.0 - config.clip_eps,
+                                    1.0 + config.clip_eps,
+                                )
+                                * gae
+                        )
 
-                        loss_actor = -jnp.minimum(loss_actor_unclipped, loss_actor_clipped)
+                        loss_actor = -jnp.minimum(loss_actor_unclipped,
+                                                  loss_actor_clipped)
                         loss_actor = loss_actor.mean()
                         entropy = pi.entropy().mean()
 
@@ -1068,11 +1175,11 @@ def main():
             agent_0_soup = info["soups"]["agent_0"].sum()
             agent_1_soup = info["soups"]["agent_1"].sum()
             soup_delivered = agent_0_soup + agent_1_soup
-            episode_frac = config.num_steps / jnp.take(max_steps_by_task, env_idx)
+            episode_frac = config.num_steps / env.max_steps
             metrics["Soup/agent_0_soup"] = agent_0_soup
             metrics["Soup/agent_1_soup"] = agent_1_soup
             metrics["Soup/total"] = soup_delivered
-            metrics["Soup/scaled"] = soup_delivered / (jnp.take(max_soup_by_task, env_idx) * episode_frac)
+            metrics["Soup/scaled"] = soup_delivered / (max_soup_dict[env_names[env_idx]] * episode_frac)
             metrics.pop('soups', None)
 
             # Rewards section
@@ -1097,7 +1204,7 @@ def main():
                 def log_metrics(metrics, update_step):
                     if config.evaluation:
                         avg_rewards, avg_soups = evaluate_model(train_state_eval, eval_rng)
-                        episode_frac = config.eval_num_steps / jnp.take(max_steps_by_task, env_idx)
+                        episode_frac = config.eval_num_steps / env.max_steps
                         avg_soups = [soup * episode_frac for soup, env_name in zip(avg_soups, env_names)]
                         metrics = add_eval_metrics(avg_rewards, avg_soups, env_names, max_soup_dict, metrics)
 
@@ -1155,13 +1262,16 @@ def main():
         else:
             visualizer = OvercookedVisualizer(num_agents=temp_env.num_agents)
 
+        evaluation_matrix = None
+        if config.eval_forward_transfer:
+            evaluation_matrix = jnp.zeros(((len(envs) + 1), len(envs)))
+            rng, eval_rng = jax.random.split(rng)
+            evaluations = evaluate_model(train_state, eval_rng)
+            evaluation_matrix = evaluation_matrix.at[0, :].set(evaluations)
+
         for i, (rng, env) in enumerate(zip(env_rngs, envs)):
             # --- Train on environment i using the *current* ewc_state ---
-
-            print(f"Training on environment: {i}")
-
-            env_idx = jnp.asarray(i, jnp.int32)
-            runner_state, metrics = train_on_environment(rng, train_state, cl_state, env_idx)
+            runner_state, metrics = train_on_environment(rng, train_state, env, cl_state, i)
             train_state = runner_state[0]
             cl_state = runner_state[6]
 
@@ -1174,19 +1284,27 @@ def main():
             if config.record_gif:
                 # Generate & log a GIF after finishing task i
                 env_name = f"{i}__{env.layout_name}"
-                states = record_gif_of_episode(config, train_state, env, network, env_idx=env_idx,
-                                               max_steps=config.gif_len)
+                states = record_gif_of_episode(config, train_state, env, network, env_idx=i, max_steps=config.gif_len)
                 # Pass environment instance to PO visualizer for view highlighting
                 if config.env_name == "overcooked_po":
-                    visualizer.animate(states, agent_view_size=5, task_idx=env_idx, task_name=env_name, exp_dir=exp_dir,
+                    visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir,
                                        env=env)
                 else:
-                    visualizer.animate(states, agent_view_size=5, task_idx=env_idx, task_name=env_name, exp_dir=exp_dir)
+                    visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir)
+
+            if config.eval_forward_transfer:
+                # Evaluate at the end of training to get the average performance of the task right after training
+                evaluations = evaluate_model(train_state, rng)
+                evaluation_matrix = evaluation_matrix.at[i, :].set(evaluations)
 
             # save the model
             repo_root = Path(__file__).resolve().parent.parent
             path = f"{repo_root}/checkpoints/overcooked/{config.cl_method}/{run_name}/model_env_{i + 1}"
             save_params(path, train_state, env_kwargs=env.layout, layout_name=env.layout_name, config=config)
+
+            if config.eval_forward_transfer:
+                # calculate the forward transfer and backward transfer
+                pass
 
             if config.single_task_idx is not None:
                 break  # stop after the first env

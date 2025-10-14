@@ -14,14 +14,14 @@ import jax.numpy as jnp
 from dataclasses import dataclass
 
 # Import the algorithms
-from experiments.IPPO_CL import Config as IPPOConfig
-from experiments.PPO_CL import Config as PPOConfig
-from experiments.architectures.mlp import ActorCritic as MLPActorCritic
-from experiments.architectures.cnn import ActorCritic as CNNActorCritic
+from experiments.ippo import Config as IPPOConfig
+from experiments.ppo import Config as PPOConfig
+from experiments.model.mlp import ActorCritic as MLPActorCritic
+from experiments.model.cnn import ActorCritic as CNNActorCritic
 from meal.registration import make
 from meal.wrappers.baselines import LogWrapper
 from experiments.utils import batchify
-from experiments.cl_methods.FT import FT
+from experiments.continual.ft import FT
 
 
 @dataclass

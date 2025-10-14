@@ -10,10 +10,10 @@ import tyro
 from flax.core.frozen_dict import freeze, unfreeze
 from gymnax.wrappers.purerl import LogWrapper
 
-from experiments.architectures.CBP_actorcritic import ActorCritic
+from experiments.model.CBP_actorcritic import ActorCritic
 from experiments.utils import *
-from experiments.cl_methods.CBP import (cbp_step,
-                                        TrainStateCBP)
+from experiments.continual.cbp import (cbp_step,
+                                       TrainStateCBP)
 from meal.eval.visualizer import OvercookedVisualizer
 from meal.registration import make
 from meal.wrappers.baselines import LogWrapper

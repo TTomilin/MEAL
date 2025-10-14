@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 from flax.core.frozen_dict import freeze, unfreeze
 from tensorboardX import SummaryWriter
 
-from experiments.architectures.Q_MLP import QNetwork
+from experiments.model.Q_MLP import QNetwork
 from experiments.utils import batchify, unbatchify
 from experiments.experimental.utils_vdn import (
     Timestep,
@@ -26,11 +26,11 @@ from experiments.experimental.utils_vdn import (
     batchify as vdn_batchify,
     unbatchify as vdn_unbatchify
 )
-from experiments.cl_methods.AGEM import AGEM
-from experiments.cl_methods.EWC import EWC
-from experiments.cl_methods.FT import FT
-from experiments.cl_methods.L2 import L2
-from experiments.cl_methods.MAS import MAS
+from experiments.continual.agem import AGEM
+from experiments.continual.ewc import EWC
+from experiments.continual.ft import FT
+from experiments.continual.l2 import L2
+from experiments.continual.mas import MAS
 from jax_marl import make
 from meal.environments.difficulty_config import apply_difficulty_to_config
 from meal.environments.env_selection import generate_sequence

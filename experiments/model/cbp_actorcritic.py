@@ -2,7 +2,7 @@ import flax.linen as nn
 import jax.numpy as jnp
 import distrax
 from flax.linen.initializers import constant, orthogonal
-from experiments.cl_methods.CBP import CBPDense
+from experiments.continual.cbp import CBPDense
 
 
 

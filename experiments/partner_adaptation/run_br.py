@@ -15,16 +15,16 @@ import wandb
 from dotenv import load_dotenv
 from gym import make
 
-from experiments.architectures.cnn import ActorCritic as CNNActorCritic
-from experiments.architectures.mlp import ActorCritic as MLPActorCritic
+from experiments.model.cnn import ActorCritic as CNNActorCritic
+from experiments.model.mlp import ActorCritic as MLPActorCritic
 # Import utility functions from baselines
 from experiments.utils import record_gif_of_episode
 # Import continual learning methods
-from experiments.cl_methods.AGEM import AGEM, init_agem_memory
-from experiments.cl_methods.EWC import EWC
-from experiments.cl_methods.FT import FT
-from experiments.cl_methods.L2 import L2
-from experiments.cl_methods.MAS import MAS
+from experiments.continual.agem import AGEM, init_agem_memory
+from experiments.continual.ewc import EWC
+from experiments.continual.ft import FT
+from experiments.continual.l2 import L2
+from experiments.continual.mas import MAS
 from meal.environments.overcooked.layouts import easy_layouts
 from meal.environments.overcooked.upper_bound import estimate_max_soup
 from meal.eval.visualizer import OvercookedVisualizer

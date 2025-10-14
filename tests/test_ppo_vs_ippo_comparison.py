@@ -15,9 +15,9 @@ from meal.environments.overcooked.layouts import cramped_room
 from meal.environments.overcooked.overcooked import Overcooked
 from meal.environments.overcooked.overcooked_n_agent import Overcooked as OvercookedNAgent
 
-from experiments.PPO_CL import Config as PPOConfig
-from experiments.IPPO_CL import Config as IPPOConfig
-from experiments.architectures.mlp import ActorCritic as MLPActorCritic
+from experiments.ppo import Config as PPOConfig
+from experiments.ippo import Config as IPPOConfig
+from experiments.model.mlp import ActorCritic as MLPActorCritic
 from experiments.utils import batchify, unbatchify
 
 

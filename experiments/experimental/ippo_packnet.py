@@ -11,9 +11,9 @@ import tyro
 from flax.core.frozen_dict import freeze, unfreeze
 from flax.training.train_state import TrainState
 
-from experiments.architectures.decoupled_mlp import Actor, Critic
+from experiments.model.decoupled_mlp import Actor, Critic
 from experiments.utils import *
-from experiments.cl_methods.Packnet import Packnet, PacknetState
+from experiments.continual.packnet import Packnet, PacknetState
 from meal.environments.difficulty_config import apply_difficulty_to_config
 from meal.environments.overcooked.upper_bound import estimate_max_soup
 from meal.eval.visualizer import OvercookedVisualizer

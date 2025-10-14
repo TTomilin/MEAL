@@ -20,8 +20,8 @@ from flax.serialization import from_bytes
 from meal.eval.visualizer import OvercookedVisualizer
 from meal.registration import make
 from meal.environments.env_selection import generate_sequence
-from experiments.architectures.mlp import ActorCritic as MLPActorCritic
-from experiments.architectures.cnn import ActorCritic as CNNActorCritic
+from experiments.model.mlp import ActorCritic as MLPActorCritic
+from experiments.model.cnn import ActorCritic as CNNActorCritic
 
 
 def load_checkpoint(ckpt_path: Path, train_state: TrainState) -> TrainState:
