@@ -17,4 +17,5 @@ def make(env_id: str, **env_kwargs):
 
     return env
 
+
 registered_envs = ["overcooked", "overcooked_single", "overcooked_po", "overcooked_n_agent"]

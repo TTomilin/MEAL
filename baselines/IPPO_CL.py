@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 
+import numpy as np
 from jax._src.flatten_util import ravel_pytree
 
 from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
@@ -10,7 +11,6 @@ from cl_methods.FT import FT
 from cl_methods.L2 import L2
 from cl_methods.MAS import MAS
 
-os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
 from typing import Sequence, Any, Optional, List
 
 import flax
@@ -19,8 +19,6 @@ from flax.core.frozen_dict import freeze, unfreeze
 from flax.training.train_state import TrainState
 
 from jax_marl.registration import make
-from jax_marl.eval.visualizer import OvercookedVisualizer
-from jax_marl.eval.visualizer_po import OvercookedVisualizerPO
 from jax_marl.wrappers.baselines import LogWrapper
 from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
 from architectures.mlp import ActorCritic as MLPActorCritic
@@ -127,7 +125,7 @@ class Config:
     evaluation: bool = True
     eval_num_steps: int = 1000
     eval_num_episodes: int = 5
-    record_gif: bool = True
+    record_gif: bool = False
     gif_len: int = 300
     log_interval: int = 75
 
@@ -247,7 +245,6 @@ def main():
     exp_dir = os.path.join("runs", run_name)
 
     # Initialize WandB
-    load_dotenv()
     wandb_tags = cfg.tags if cfg.tags is not None else []
     wandb.login(key=os.environ.get("WANDB_API_KEY"))
     wandb.init(
@@ -1114,12 +1111,7 @@ def main():
         # split the random number generator for training on the environments
         rng, *env_rngs = jax.random.split(rng, len(envs) + 1)
 
-        # Create appropriate visualizer based on environment type
-        if cfg.env_name == "overcooked_po":
-            visualizer = OvercookedVisualizerPO(num_agents=temp_env.num_agents)
-        else:
-            visualizer = OvercookedVisualizer(num_agents=temp_env.num_agents)
-
+        visualizer = None
         for i, (rng, env) in enumerate(zip(env_rngs, envs)):
             # --- Train on environment i using the *current* ewc_state ---
             runner_state, metrics = train_on_environment(rng, train_state, env, cl_state, i)
@@ -1133,6 +1125,8 @@ def main():
             cl_state = cl.update_state(cl_state, train_state.params, importance)
 
             if cfg.record_gif:
+                if visualizer is None:
+                    visualizer = create_visualizer(temp_env.num_agents, cfg.env_name)
                 # Generate & log a GIF after finishing task i
                 env_name = f"{i}__{env.layout_name}"
                 states = record_gif_of_episode(cfg, train_state, env, network, env_idx=i, max_steps=cfg.gif_len)

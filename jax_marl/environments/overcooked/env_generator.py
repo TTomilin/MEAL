@@ -24,17 +24,14 @@ from typing import List, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
 import numpy as np
-from PIL import Image
 from flax.core.frozen_dict import FrozenDict
 
 from jax_marl.environments import OvercookedNAgent as Overcooked
-from jax_marl.eval.visualizer import OvercookedVisualizer, TILE_PIXELS
+from jax_marl.environments.overcooked.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
 from jax_marl.environments.overcooked.env_validator import (
     evaluate_grid, UNPASSABLE_TILES, INTERACTIVE_TILES
 )
-from jax_marl.environments.overcooked.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
 
 
 ###############################################################################
@@ -79,6 +76,7 @@ def layout_grid_to_dict(grid_str: str) -> FrozenDict:
         layout_dict[k] = jnp.array(layout_dict[k], dtype=jnp.int32)
 
     return FrozenDict(layout_dict)
+
 
 ###############################################################################
 # ─── Generator ───────────────────────────────────────────────────────────────
@@ -181,8 +179,8 @@ def remove_unreachable_items(grid: List[List[str]]) -> bool:
         is_reachable = False
         for di, dj in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
             ni, nj = i + di, j + dj
-            if (0 <= ni < height and 0 <= nj < width and 
-                (ni, nj) in all_reachable):
+            if (0 <= ni < height and 0 <= nj < width and
+                    (ni, nj) in all_reachable):
                 is_reachable = True
                 break
 
@@ -277,12 +275,14 @@ def generate_random_layout(
             # 4. Remove unreachable items --------------------------------------
             items_removed = remove_unreachable_items(grid)
             if items_removed:
-                print(f"[Attempt {attempt}] Removed unreachable interactive tiles and replaced unreachable floor tiles with walls.")
+                print(
+                    f"[Attempt {attempt}] Removed unreachable interactive tiles and replaced unreachable floor tiles with walls.")
 
             # 5. Ensure exactly 2 pots are in the layout -----------------------------
             pot_count = sum(1 for row in grid for cell in row if cell == POT)
             if pot_count < 2:
-                print(f"[Attempt {attempt}] Only {pot_count} pots remain after removing unreachable items. Adding more pots.")
+                print(
+                    f"[Attempt {attempt}] Only {pot_count} pots remain after removing unreachable items. Adding more pots.")
                 additional_pots_needed = 2 - pot_count
                 if not place_tiles(grid, POT, additional_pots_needed, rng):
                     print(f"[Attempt {attempt}] Could not add more pots. Retrying...")
@@ -300,6 +300,7 @@ def generate_random_layout(
         f"Failed to generate a solvable layout in {max_attempts} attempts."
     )
 
+
 ###############################################################################
 # ─── Matplotlib preview ─────────────────────────────────────────────────────
 ###############################################################################
@@ -314,6 +315,7 @@ _TILE_COLOUR = {
     FLOOR: (1, 1, 1),
 }
 
+
 def mpl_show(grid_str: str, title: str | None = None):
     rows = grid_str.strip().split("\n")
     height, width = len(rows), len(rows[0])
@@ -321,6 +323,8 @@ def mpl_show(grid_str: str, title: str | None = None):
     for y, row in enumerate(rows):
         for x, ch in enumerate(row):
             img[y, x] = _TILE_COLOUR[ch]
+
+    import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(width / 2, height / 2))
     ax.imshow(img, interpolation="nearest")
@@ -334,6 +338,7 @@ def mpl_show(grid_str: str, title: str | None = None):
     plt.tight_layout()
     plt.show()
 
+
 ###############################################################################
 # ─── Overcooked viewer ──────────────────────────────────────────────────────
 ###############################################################################
@@ -342,13 +347,16 @@ def _crop_to_grid(state, view_size: int):
     pad = view_size - 1  # 5→4 because map has +1 outer wall
     return state.maze_map[pad:-pad, pad:-pad, :]
 
+
 def oc_show(layout: FrozenDict, num_agents: int = 2):
+    from jax_marl.eval.visualizer import OvercookedVisualizer, TILE_PIXELS
     env = Overcooked(layout=layout, layout_name="random_gen", random_reset=False, num_agents=num_agents)
     _, state = env.reset(jax.random.PRNGKey(0))
     grid = np.asarray(_crop_to_grid(state, env.agent_view_size))
     vis = OvercookedVisualizer(num_agents)
     vis.render_grid(grid, tile_size=TILE_PIXELS, agent_dir_idx=state.agent_dir_idx)
     vis.show(block=True)
+
 
 ###############################################################################
 # ─── CLI ────────────────────────────────────────────────────────────────────
@@ -363,13 +371,15 @@ def main(argv=None):
     parser.add_argument("--width-min", type=int, default=10, help="minimum layout width")
     parser.add_argument("--width-max", type=int, default=11, help="maximum layout width")
     parser.add_argument("--wall-density", type=float, default=0.35, help="fraction of unpassable internal cells")
-    parser.add_argument("--difficulty", type=str, choices=["easy", "med", "medium", "hard"], 
+    parser.add_argument("--difficulty", type=str, choices=["easy", "med", "medium", "hard"],
                         help="difficulty level (overrides height, width, and wall density)")
     parser.add_argument("--num-envs", type=int, default=1, help="number of environments to generate")
     parser.add_argument("--show", action="store_true", help="preview with matplotlib")
     parser.add_argument("--oc", action="store_true", help="open JAX‑MARL Overcooked viewer")
     parser.add_argument("--save", action="store_true", help="save PNG to assets/screenshots/generated/")
     args = parser.parse_args(argv)
+
+    from jax_marl.eval.visualizer import OvercookedVisualizer, TILE_PIXELS
 
     # Override parameters based on difficulty
     if args.difficulty:
@@ -400,7 +410,7 @@ def main(argv=None):
             seed=env_seed,
         )
         layouts.append((grid_str, layout, env_seed))
-        print(f"Environment {i+1}/{args.num_envs}:")
+        print(f"Environment {i + 1}/{args.num_envs}:")
         print(grid_str)
 
     if args.show and layouts:
@@ -435,6 +445,8 @@ def main(argv=None):
                     # If the filename doesn't follow the pattern, ignore it
                     pass
 
+        from PIL import Image
+
         # Save each generated environment
         for i, (_, layout, env_seed) in enumerate(layouts):
             env = Overcooked(layout=layout, layout_name="generated", random_reset=False, num_agents=args.num_agents)
@@ -448,7 +460,7 @@ def main(argv=None):
             file_name = f"{args.num_agents}_agents_gen_{file_index}.png"
 
             Image.fromarray(img).save(out_dir / file_name)
-            print(f"Saved generated layout {i+1}/{len(layouts)} to {out_dir / file_name}")
+            print(f"Saved generated layout {i + 1}/{len(layouts)} to {out_dir / file_name}")
 
 
 if __name__ == "__main__":

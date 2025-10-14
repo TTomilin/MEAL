@@ -5,12 +5,7 @@ from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
-import numpy as np
-import seaborn as sns
-import wandb
-from dotenv import load_dotenv
 from flax.core.frozen_dict import FrozenDict
-from matplotlib import pyplot as plt
 from tensorboardX import SummaryWriter
 
 from jax_marl.environments.env_selection import generate_sequence
@@ -201,10 +196,6 @@ def generate_sequence_of_tasks(config):
         seed=config.seed
     )
 
-    # for layout_config in config.env_kwargs:
-    #     layout_name = layout_config["layout"]
-    #     layout_config["layout"] = overcooked_layouts[layout_name]
-
     return config
 
 
@@ -224,20 +215,21 @@ def initialize_logging_setup(config, run_name, exp_dir):
     """
     Initializes WandB and TensorBoard logging setup.
     """
-    # Initialize WandB
-    load_dotenv()
-    wandb_tags = config.tags if config.tags is not None else []
-    wandb.login(key=os.environ.get("WANDB_API_KEY"))
-    wandb.init(
-        project=config.project,
-        config=config,
-        sync_tensorboard=True,
-        mode=config.wandb_mode,
-        name=run_name,
-        id=run_name,
-        tags=wandb_tags,
-        group=config.group
-    )
+    if config.use_wandb:
+        import wandb
+        # Initialize WandB
+        wandb_tags = config.tags if config.tags is not None else []
+        wandb.login(key=os.environ.get("WANDB_API_KEY"))
+        wandb.init(
+            project=config.project,
+            config=config,
+            sync_tensorboard=True,
+            mode=config.wandb_mode,
+            name=run_name,
+            id=run_name,
+            tags=wandb_tags,
+            group=config.group
+        )
 
     # Set up Tensorboard
     writer = SummaryWriter(exp_dir)
@@ -310,3 +302,10 @@ def record_gif_of_episode(config, train_state, env, network, env_idx=0, max_step
         states.append(state)
 
     return states
+
+
+def create_visualizer(num_agents, env_name):
+    from jax_marl.eval.visualizer import OvercookedVisualizer
+    from jax_marl.eval.visualizer_po import OvercookedVisualizerPO
+    # Create appropriate visualizer based on environment type
+    return OvercookedVisualizerPO(num_agents) if env_name == "overcooked_po" else OvercookedVisualizer(num_agents)

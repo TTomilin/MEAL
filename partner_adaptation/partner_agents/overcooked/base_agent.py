@@ -5,8 +5,9 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 from jax import lax
-from jax_marl.environments.overcooked.overcooked import Actions
+
 from jax_marl.environments.overcooked.common import OBJECT_TO_INDEX
+from jax_marl.environments.overcooked.overcooked import Actions
 
 
 @struct.dataclass
@@ -164,7 +165,7 @@ class BaseAgent:
     def _get_occupied_mask(self, obs: jnp.ndarray) -> jnp.ndarray:
         """Get mask showing all occupied spaces based on observation."""
         other_agent_mask = obs[:, :, 1] > 0  # Channel 1: other agent position
-        pot_mask = obs[:, :, 10] > 0       # Channel 10: pot locations
+        pot_mask = obs[:, :, 10] > 0  # Channel 10: pot locations
         # Channel 11: counter/wall locations
         wall_mask = obs[:, :, 11] > 0
         onion_pile_mask = obs[:, :, 12] > 0  # Channel 12: onion pile locations
@@ -204,6 +205,7 @@ class BaseAgent:
 
     def _get_idx_with_pref(self, distances: jnp.ndarray, pref: str, rng_key: jax.random.PRNGKey) -> int:
         """Get the index of the object with the given preference."""
+
         def _argmin_rand(arr, rng):
             '''Argmin with random tie-breaking.'''
             min_val = jnp.min(arr)
@@ -225,7 +227,8 @@ class BaseAgent:
         else:
             raise ValueError(f"Invalid preference: {pref}")
 
-    def _get_free_counter(self, obs: jnp.ndarray, agent_y: int, agent_x: int, pref: str, rng_key: jax.random.PRNGKey) -> Tuple[int, int]:
+    def _get_free_counter(self, obs: jnp.ndarray, agent_y: int, agent_x: int, pref: str, rng_key: jax.random.PRNGKey) -> \
+    Tuple[int, int]:
         """Find the nearest free counter space.
 
         Args:
@@ -280,14 +283,15 @@ class BaseAgent:
         # nonfull pots have 0, 1, or 2 onions and are not cooking and do not have a ready soup
         nonfull_pot_layer = jnp.logical_and(pot_layer > 0,
                                             jnp.logical_and(pot_status < 3,
-                                                            jnp.logical_and(pot_cooking_time == 0, soup_ready_layer == 0)))
+                                                            jnp.logical_and(pot_cooking_time == 0,
+                                                                            soup_ready_layer == 0)))
         nonfull_pot_mask = nonfull_pot_layer[pot_positions[:,
-                                                           0], pot_positions[:, 1]]
+                                             0], pot_positions[:, 1]]
 
         # get ready pots
         ready_pot_layer = jnp.logical_and(pot_layer > 0, soup_ready_layer > 0)
         ready_pot_mask = ready_pot_layer[pot_positions[:,
-                                                       0], pot_positions[:, 1]]
+                                         0], pot_positions[:, 1]]
 
         return nonfull_pot_mask, ready_pot_mask
 
@@ -505,7 +509,7 @@ class BaseAgent:
         # Set scores to large negative number for invalid moves
         scores = jnp.where(
             jnp.array([up_valid, down_valid, right_valid,
-                      left_valid, stay_valid]),
+                       left_valid, stay_valid]),
             scores,
             -1000.0
         )
@@ -533,7 +537,8 @@ class BaseAgent:
         )
         return action, key
 
-    def _go_to_obj(self, obs: jnp.ndarray, obj_type: str, pref: str, rng_key: jax.random.PRNGKey) -> Tuple[int, jax.random.PRNGKey]:
+    def _go_to_obj(self, obs: jnp.ndarray, obj_type: str, pref: str, rng_key: jax.random.PRNGKey) -> Tuple[
+        int, jax.random.PRNGKey]:
         """Go to the nearest object of the given type."""
         agent_y, agent_x = self._get_agent_pos(obs)
 
@@ -560,7 +565,8 @@ class BaseAgent:
                                              nearest_free_y, nearest_free_x, obs, rng_key)
         return action, rng_key
 
-    def _go_to_obj_and_interact(self, obs: jnp.ndarray, obj_type: str, pref: str, rng_key: jax.random.PRNGKey) -> Tuple[int, jax.random.PRNGKey]:
+    def _go_to_obj_and_interact(self, obs: jnp.ndarray, obj_type: str, pref: str, rng_key: jax.random.PRNGKey) -> Tuple[
+        int, jax.random.PRNGKey]:
         """Go to the object of the given type and interact with it."""
         agent_y, agent_x = self._get_agent_pos(obs)
 

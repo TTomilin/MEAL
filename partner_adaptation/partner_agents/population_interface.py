@@ -1,4 +1,5 @@
 from functools import partial
+
 import jax
 
 
@@ -27,9 +28,11 @@ class AgentPopulation:
             pop_params: pytree of parameters for the population of agents of shape (pop_size, ...).
             agent_indices: indices with shape (num_envs,), each in [0, pop_size)
         '''
+
         def gather_leaf(leaf):
             # leaf shape: (num_envs,  ...)
             return jax.vmap(lambda idx: leaf[idx])(agent_indices)
+
         return jax.tree.map(gather_leaf, pop_params)
 
     def get_actions(self, pop_params, agent_indices, obs, done, avail_actions, hstate, rng,

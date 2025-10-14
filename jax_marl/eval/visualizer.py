@@ -2,9 +2,7 @@ import math
 from collections import namedtuple
 
 import numpy as np
-import pygame
 import wandb
-from PIL import Image
 
 import jax_marl.eval.grid_rendering as rendering
 from jax_marl.environments.overcooked.common import OBJECT_TO_INDEX, COLOR_TO_INDEX, COLORS
@@ -17,7 +15,7 @@ MockObject = namedtuple('MockObject', ['name', 'ingredients'])
 # INDEX_TO_COLOR = [k for k,v in COLOR_TO_INDEX.items()]
 INDEX_TO_COLOR = [k for k, _ in sorted(COLOR_TO_INDEX.items(), key=lambda p: p[1])]
 
-TILE_PIXELS = 64  # Increased from 32 to 64 for higher resolution
+TILE_PIXELS = 64
 
 
 def _colour_to_agent_index(col_idx: int) -> int:
@@ -49,7 +47,7 @@ class OvercookedVisualizer:
     """
     tile_cache: dict[tuple, np.ndarray] = {}
 
-    def __init__(self, num_agents: int = 2, use_old_rendering: bool = False, 
+    def __init__(self, num_agents: int = 2, use_old_rendering: bool = False,
                  pot_full_status: int = 20, pot_empty_status: int = 23):
         self.window: Window | None = None
         self._num_agents = num_agents
@@ -134,7 +132,8 @@ class OvercookedVisualizer:
                 # Determine ingredients and status
                 # Convert JAX array to Python integer
                 pot_status_int = int(pot_status)
-                num_onions = min(3, self.pot_empty_status - pot_status_int) if pot_status_int >= self.pot_full_status else 3
+                num_onions = min(3,
+                                 self.pot_empty_status - pot_status_int) if pot_status_int >= self.pot_full_status else 3
                 ingredients = ['onion'] * num_onions
 
                 # Create a position tuple for the object
@@ -245,6 +244,7 @@ class OvercookedVisualizer:
 
     def render(self, agent_view_size, state, highlight=True, tile_size=TILE_PIXELS):
         """Method for rendering the state in a window. Esp. useful for interactive mode."""
+        import pygame
         if self.use_old_rendering:
             return self._render_state(agent_view_size, state, highlight, tile_size)
         else:
@@ -315,8 +315,9 @@ class OvercookedVisualizer:
         `state_seq` is the list you built in `record_gif(...)`; every item must
         expose a `.maze_map`, `.agent_dir_idx`, `.agent_inv`, etc.
         """
-        import imageio.v3 as iio
         import os
+        import pygame
+        from PIL import Image
 
         padding = agent_view_size - 1  # 5→4 because map has +1 outer wall
 
@@ -425,7 +426,7 @@ class OvercookedVisualizer:
             file_path,
             save_all=True,
             append_images=quantized[1:],
-            optimize=False,           # important: don't let Pillow re-optimize colors
+            optimize=False,  # important: don't let Pillow re-optimize colors
             duration=duration_ms,
             loop=0,
             disposal=2

@@ -145,7 +145,7 @@ class Config:
     test_num_envs: int = 32
     eval_num_steps: int = 1000
     eval_num_episodes: int = 5
-    record_gif: bool = True
+    record_gif: bool = False
     gif_len: int = 300
     log_interval: int = 75
 

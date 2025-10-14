@@ -122,7 +122,7 @@ class TrainConfig:
 
     # Eval
     num_eval_episodes: int = 20
-    record_gif: bool = True  # Record and upload gifs after each partner training
+    record_gif: bool = False  # Record and upload gifs after each partner training
     gif_len: int = 100  # Maximum steps for gif recording
 
     log_train_out: bool = True

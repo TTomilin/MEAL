@@ -1,14 +1,14 @@
 '''Main entry point for running teammate generation algorithms.'''
-import os
-import jax
-import pickle
-import wandb
-import tyro
 import json
+import os
+import pickle
+from dataclasses import asdict, dataclass
+
+import jax
+import tyro
+import wandb
 
 from jax_marl.environments.overcooked.layouts import overcooked_layouts
-
-from dataclasses import asdict, dataclass
 from partner_adaptation.partner_generation.BRDiv import run_brdiv
 from partner_adaptation.partner_generation.utils import frozendict_from_layout_repr
 
@@ -96,11 +96,11 @@ class TrainConfig:
         self.num_updates = int(self.total_timesteps //
                                (self.num_agents * self.num_steps * self.num_envs))
         self.minibatch_size = self.num_actors * \
-            self.num_steps // self.num_minibatches
+                              self.num_steps // self.num_minibatches
         self.minibatch_size_ego = ((
-            self.num_game_agents-1) * self.num_actors * self.num_steps) // self.num_minibatches
+                                           self.num_game_agents - 1) * self.num_actors * self.num_steps) // self.num_minibatches
         self.minibatch_size_br = (
-            self.num_actors * self.num_steps) // self.num_minibatches
+                                         self.num_actors * self.num_steps) // self.num_minibatches
 
         print("Number of updates: ", self.num_updates)
 
@@ -158,7 +158,7 @@ def run_training():
         print(f"Saved to {save_dir}/config.pckl")
 
     if config.layout_name != "":
-        layout_dict = {"layout":  overcooked_layouts[config.layout_name]}
+        layout_dict = {"layout": overcooked_layouts[config.layout_name]}
     else:
         layouts = read_layouts(config)
         layout_dict = {"layout": frozendict_from_layout_repr(

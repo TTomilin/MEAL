@@ -1,39 +1,33 @@
 import json
-import os
+from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
-
-from jax._src.flatten_util import ravel_pytree
-
-from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
-    update_agem_memory
-from cl_methods.FT import FT
-from cl_methods.L2 import L2
-from cl_methods.MAS import MAS
-
-os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
 from typing import Sequence, Any, Optional, List
 
 import flax
 import optax
+import tyro
+import wandb
 from flax.core.frozen_dict import freeze, unfreeze
 from flax.training.train_state import TrainState
+from jax._src.flatten_util import ravel_pytree
+from tensorboardX import SummaryWriter
 
-from jax_marl.registration import make
+from architectures.cnn import ActorCritic as CNNActorCritic
+from architectures.mlp import ActorCritic as MLPActorCritic
+from baselines.utils import *
+from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
+    update_agem_memory
+from cl_methods.EWC import EWC
+from cl_methods.FT import FT
+from cl_methods.L2 import L2
+from cl_methods.MAS import MAS
+from jax_marl.environments.difficulty_config import apply_difficulty_to_config
+from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
 from jax_marl.eval.visualizer import OvercookedVisualizer
 from jax_marl.eval.visualizer_po import OvercookedVisualizerPO
+from jax_marl.registration import make
 from jax_marl.wrappers.baselines import LogWrapper
-from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
-from architectures.mlp import ActorCritic as MLPActorCritic
-from architectures.cnn import ActorCritic as CNNActorCritic
-from baselines.utils import *
-from cl_methods.EWC import EWC
-from jax_marl.environments.difficulty_config import apply_difficulty_to_config
-
-import wandb
-from functools import partial
-from dataclasses import dataclass, field
-import tyro
-from tensorboardX import SummaryWriter
 
 
 @dataclass
@@ -127,7 +121,7 @@ class Config:
     evaluation: bool = True
     eval_num_steps: int = 1000
     eval_num_episodes: int = 5
-    record_gif: bool = True
+    record_gif: bool = False
     gif_len: int = 300
     log_interval: int = 75
 
@@ -535,10 +529,10 @@ def main():
     # --- FIX: normalize variable-length fields across tasks (goals, pots) ---
     # compute maxima across tasks
     MAX_GOALS = max(int(np.array(e.layout["goal_idx"]).shape[0]) for e in envs)
-    MAX_POTS  = max(int(np.array(e.layout["pot_idx"]).shape[0])  for e in envs)
+    MAX_POTS = max(int(np.array(e.layout["pot_idx"]).shape[0]) for e in envs)
 
     def _pad_pos(pos, target_len):
-        pos = jnp.asarray(pos, jnp.uint32)          # ensure dtype matches
+        pos = jnp.asarray(pos, jnp.uint32)  # ensure dtype matches
         k = pos.shape[0]
         pad = target_len - k
         if pad <= 0:
@@ -551,7 +545,7 @@ def main():
         es = log_state.env_state
         es = es.replace(
             goal_pos=_pad_pos(es.goal_pos, MAX_GOALS),
-            pot_pos =_pad_pos(es.pot_pos,  MAX_POTS),
+            pot_pos=_pad_pos(es.pot_pos, MAX_POTS),
         )
         return log_state.replace(env_state=es)
 
@@ -560,17 +554,19 @@ def main():
             obs, st = e.reset(key)
             st = pad_state(st)
             return obs, st
+
         return _f
 
     def _make_step_fn(e):
         def _f(key, state, actions):
             obs, st, rew, done, info = e.step(key, state, actions)
-            st = pad_state(st)        # keep the pytree type **constant** every step
+            st = pad_state(st)  # keep the pytree type **constant** every step
             return obs, st, rew, done, info
+
         return _f
 
     _reset_branches = tuple(_make_reset_fn(e) for e in envs)
-    _step_branches  = tuple(_make_step_fn(e)  for e in envs)
+    _step_branches = tuple(_make_step_fn(e) for e in envs)
 
     def env_reset(key, env_idx):
         env_idx = jnp.asarray(env_idx, jnp.int32)

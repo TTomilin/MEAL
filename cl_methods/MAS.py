@@ -17,8 +17,8 @@ class MAS(RegCLMethod):
                    regularize_critic: bool,
                    regularize_heads: bool) -> CLState:
         return CLState(
-            old_params=jax.tree_map(lambda x: x.copy(), params),
-            importance=jax.tree_map(jnp.zeros_like, params),
+            old_params=jax.tree.map(lambda x: x.copy(), params),
+            importance=jax.tree.map(jnp.zeros_like, params),
             mask=build_reg_weights(params, regularize_critic, regularize_heads)
         )
 

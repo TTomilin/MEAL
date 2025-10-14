@@ -408,7 +408,6 @@ def train_ppo_ego_agent(
                 # Only store a checkpoint at the very end when num_ckpts == 1
                 to_store_ckpt = jnp.equal(update_steps, config.num_updates)
 
-
                 def do_eval(args):
                     rng, prev_eval_last_info, prev_eval_infos = args
 

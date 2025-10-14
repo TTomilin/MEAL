@@ -1,13 +1,14 @@
 import abc
-from typing import Tuple, Dict
-import chex
 from functools import partial
+from typing import Tuple, Dict
+
+import chex
 import jax
 import jax.numpy as jnp
 
 from partner_adaptation.partner_agents.mlp_actor_critic import ActorCritic
-from partner_adaptation.partner_agents.mlp_actor_critic import ActorWithDoubleCritic
 from partner_adaptation.partner_agents.mlp_actor_critic import ActorWithConditionalCritic
+from partner_adaptation.partner_agents.mlp_actor_critic import ActorWithDoubleCritic
 
 
 class AgentPolicy(abc.ABC):

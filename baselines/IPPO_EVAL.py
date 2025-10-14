@@ -1,39 +1,30 @@
 import json
-import os
+from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
-
-from jax._src.flatten_util import ravel_pytree
-
-from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
-    update_agem_memory
-from cl_methods.FT import FT
-from cl_methods.L2 import L2
-from cl_methods.MAS import MAS
-
-os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
-from typing import Sequence, Any, Optional, List
+from typing import Sequence, Optional, List
 
 import flax
 import optax
+import tyro
+import wandb
 from flax.core.frozen_dict import freeze, unfreeze
 from flax.training.train_state import TrainState
+from jax._src.flatten_util import ravel_pytree
 
-from jax_marl.registration import make
-from jax_marl.eval.visualizer import OvercookedVisualizer
-from jax_marl.eval.visualizer_po import OvercookedVisualizerPO
-from jax_marl.wrappers.baselines import LogWrapper
-from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
-from architectures.mlp import ActorCritic as MLPActorCritic
 from architectures.cnn import ActorCritic as CNNActorCritic
+from architectures.mlp import ActorCritic as MLPActorCritic
 from baselines.utils import *
+from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
+    update_agem_memory
 from cl_methods.EWC import EWC
+from cl_methods.FT import FT
+from cl_methods.L2 import L2
+from cl_methods.MAS import MAS
 from jax_marl.environments.difficulty_config import apply_difficulty_to_config
-
-import wandb
-from functools import partial
-from dataclasses import dataclass, field
-import tyro
-from tensorboardX import SummaryWriter
+from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
+from jax_marl.registration import make
+from jax_marl.wrappers.baselines import LogWrapper
 
 
 @dataclass
@@ -128,7 +119,7 @@ class Config:
     evaluation: bool = True
     eval_num_steps: int = 1000
     eval_num_episodes: int = 5
-    record_gif: bool = True
+    record_gif: bool = False
     gif_len: int = 300
     log_interval: int = 5
 
@@ -608,7 +599,6 @@ def main():
 
                 reward = jax.lax.switch(mode_index, [case_sparse, case_individual, case_shared], operand=None)
 
-
                 transition = Transition(
                     batchify(done, env.agents, cfg.num_actors, not cfg.use_cnn).squeeze(),
                     action,
@@ -731,7 +721,7 @@ def main():
                                     ratio,
                                     1.0 - cfg.clip_eps,
                                     1.0 + cfg.clip_eps,
-                                    )
+                                )
                                 * gae
                         )
 
@@ -822,8 +812,10 @@ def main():
 
                     # Use JAX-compatible conditional logic
                     is_agem = (cfg.cl_method.lower() == "agem")  # Python bool; bake into trace
+
                     def do_proj(_):
                         return apply_agem_projection()
+
                     def skip_proj(_):
                         return no_agem_projection()
 
@@ -964,15 +956,15 @@ def main():
             soups_stack = jnp.stack([info["soups"][a] for a in env.agents], axis=0)  # (N_agents, T, E)
 
             # Sum over time and agents → soups per env for this fragment
-            soups_per_env = soups_stack.sum(axis=(0, 1))     # (E,)
+            soups_per_env = soups_stack.sum(axis=(0, 1))  # (E,)
 
             # Average per env (this is the right quantity to compare to a per-env bound)
-            avg_per_env = soups_per_env.mean()               # scalar
+            avg_per_env = soups_per_env.mean()  # scalar
 
             # Total across all parallel envs (raw count)
-            total_all_envs = soups_per_env.sum()             # scalar
+            total_all_envs = soups_per_env.sum()  # scalar
 
-            episode_frac = cfg.num_steps / env.max_steps     # usually 1.0 if num_steps == max_steps
+            episode_frac = cfg.num_steps / env.max_steps  # usually 1.0 if num_steps == max_steps
             per_env_upper_bound = max_soup_dict[env_names[env_idx]] * episode_frac
 
             metrics["Soup/avg_per_env"] = avg_per_env
@@ -1003,7 +995,8 @@ def main():
             def evaluate_and_log(metrics_in, train_state_in, rng_in, update_step_in):
                 def do_eval(mets, ts, key, upd):
                     key, k_eval = jax.random.split(key)
-                    avg_r, total_soups = eval_current_env(ts, k_eval, env, cfg.eval_num_steps, cfg.eval_num_episodes, env_idx)
+                    avg_r, total_soups = eval_current_env(ts, k_eval, env, cfg.eval_num_steps, cfg.eval_num_episodes,
+                                                          env_idx)
 
                     # Scale soups by episode length (to make it comparable with max soup bound)
                     eval_episode_frac = cfg.eval_num_steps / env.max_steps
@@ -1022,6 +1015,7 @@ def main():
                         real_step = (int(env_counter) - 1) * cfg.num_updates + int(upd_cb)
                         for k, v in mets_cb.items():
                             writer.add_scalar(k, float(v), real_step)
+
                     jax.experimental.io_callback(cb, None, (mets, upd, env_idx + 1))
                     return key
 
@@ -1032,6 +1026,7 @@ def main():
                         real_step = (int(env_counter) - 1) * cfg.num_updates + int(upd_cb)
                         for k, v in mets_cb.items():
                             writer.add_scalar(k, float(v), real_step)
+
                     jax.experimental.io_callback(cb, None, (mets, upd, env_idx + 1))
                     return key
 
@@ -1075,12 +1070,7 @@ def main():
         # split the random number generator for training on the environments
         rng, *env_rngs = jax.random.split(rng, len(envs) + 1)
 
-        # Create appropriate visualizer based on environment type
-        if cfg.env_name == "overcooked_po":
-            visualizer = OvercookedVisualizerPO(num_agents=temp_env.num_agents)
-        else:
-            visualizer = OvercookedVisualizer(num_agents=temp_env.num_agents)
-
+        visualizer = None
         for i, (rng, env) in enumerate(zip(env_rngs, envs)):
             # --- Train on environment i using the *current* ewc_state ---
             runner_state, metrics = train_on_environment(rng, train_state, env, cl_state, i)
@@ -1094,6 +1084,8 @@ def main():
             cl_state = cl.update_state(cl_state, train_state.params, importance)
 
             if cfg.record_gif:
+                if visualizer is None:
+                    visualizer = create_visualizer(temp_env.num_agents, cfg.env_name)
                 # Generate & log a GIF after finishing task i
                 env_name = layout_names[i]
                 states = record_gif_of_episode(cfg, train_state, env, network, i, cfg.gif_len)
@@ -1194,7 +1186,6 @@ def main():
 
         print('model saved to', path)
 
-    # Run the model
     rng, train_rng = jax.random.split(rng)
     cl_state = cl.init_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads)
 

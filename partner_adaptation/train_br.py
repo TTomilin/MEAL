@@ -1,17 +1,15 @@
 '''Train an ego agent against a *single* partner agent.
 Supports training against both RL and heuristic partner agents.
 '''
-from functools import partial
-import time
 import logging
+import time
+from functools import partial
 
 import jax
 import jax.numpy as jnp
 
-
 from partner_adaptation.partner_agents.population_interface import AgentPopulation
 from partner_adaptation.partner_generation.utils import get_metric_names
-
 from partner_adaptation.train_ego import train_ppo_ego_agent, log_metrics
 
 log = logging.getLogger(__name__)
@@ -85,6 +83,7 @@ class HeuristicPolicyPopulation(AgentPopulation):
                                               avail_actions=avail_actions, hstate=hstate,
                                               rng=rng, env_state=env_state,
                                               aux_obs=None, test_mode=False)
+
         vmapped_get_action = jax.vmap(_policy_cls_get_action)
         actions, new_hstate = vmapped_get_action(
             params=gathered_params,
@@ -104,7 +103,9 @@ class HeuristicPolicyPopulation(AgentPopulation):
 
 
 def run_br_training(
-        config, env, partner_agent_config, ego_policy, ego_params, partner_policy, partner_params=None, partner_test_mode=False, env_id_idx=0, eval_partner=[], max_soup_dict=None, layout_names=None, cl=None, cl_state=None):
+        config, env, partner_agent_config, ego_policy, ego_params, partner_policy, partner_params=None,
+        partner_test_mode=False, env_id_idx=0, eval_partner=[], max_soup_dict=None, layout_names=None, cl=None,
+        cl_state=None):
     '''Run ego agent training against a single partner agent.
 
     Args:

@@ -1,29 +1,23 @@
 import json
-import os
-
-os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
+from dataclasses import dataclass, field
+from functools import partial
 from typing import Sequence, Any, Optional, List
 
 import flax
 import flax.linen as nn
 import optax
+import tyro
 from flax.core.frozen_dict import freeze, unfreeze
 from flax.training.train_state import TrainState
 
-from jax_marl.registration import make
-from jax_marl.eval.visualizer import OvercookedVisualizer
-from jax_marl.wrappers.baselines import LogWrapper
-from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
-from baselines.utils import *
-from jax_marl.environments.difficulty_config import apply_difficulty_to_config
-
-# Packnet specific imports
 from architectures.decoupled_mlp import Actor, Critic
+from baselines.utils import *
 from cl_methods.Packnet import Packnet, PacknetState
-
-from functools import partial
-from dataclasses import dataclass, field
-import tyro
+from jax_marl.environments.difficulty_config import apply_difficulty_to_config
+from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
+from jax_marl.eval.visualizer import OvercookedVisualizer
+from jax_marl.registration import make
+from jax_marl.wrappers.baselines import LogWrapper
 
 
 @dataclass
@@ -124,7 +118,7 @@ class Config:
     eval_forward_transfer: bool = False
     eval_num_steps: int = 1000
     eval_num_episodes: int = 5
-    record_gif: bool = True
+    record_gif: bool = False
     gif_len: int = 300
     log_interval: int = 75
 

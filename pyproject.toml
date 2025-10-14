@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "MEAL"
+version = "0.1.0"
+description = "MEAL: A Benchmark for Continual Multi-Agent Reinforcement Learning"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Tristan Tomilin", email = "tristan.tomilin@hotmail.com" },
+]
+license = { text = "MIT" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "jax",
+    "flax",
+    "chex",
+    "tyro",
+    "distrax",
+    "tensorboard",
+    "tensorboardX",
+    "wandb",
+]
+
+[project.optional-dependencies]
+viz = [
+    "scipy",
+    "imageio",
+    "pygame",
+    "matplotlib",
+    "pillow",
+    "seaborn",
+    "ipython",
+    "ipywidgets",
+]
+utils = [
+    "optax",
+    "numpy",
+    "tqdm",
+    "pandas",
+    "orbax-checkpoint",
+    "pytest",
+]
+
+[project.urls]
+Homepage = "https://github.com/TTomilin/MEAL"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
+exclude = []
+
+[tool.setuptools]
+include-package-data = true

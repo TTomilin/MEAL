@@ -1,8 +1,10 @@
 from functools import partial
+from typing import Tuple, Dict, Any
+
 import jax
 import jax.numpy as jnp
+
 from jax_marl.environments.overcooked.overcooked import Actions
-from typing import Tuple, Dict, Any
 from partner_adaptation.partner_agents.overcooked.base_agent import BaseAgent, AgentState
 
 

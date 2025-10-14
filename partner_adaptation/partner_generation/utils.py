@@ -1,13 +1,10 @@
-import jax
-import jax.numpy as jnp
+import re
+from functools import partial
 from typing import NamedTuple
 
-import re
+import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
-
-from functools import partial
-
 
 KEYS_WITH_ARRAYS = [
     "wall_idx",
@@ -172,14 +169,15 @@ def _create_minibatches(traj_batch, advantages, targets, init_hstate, num_actors
                 x,
                 [x.shape[0], num_minibatches, -1]
                 + list(x.shape[2:]),
-            ), 1, 0,),
+            ), 1, 0, ),
         shuffled_batch,
     )
 
     return minibatches
 
 
-def _create_minibatches_no_time(traj_batch, advantages, targets, init_hstate, num_actors, num_minibatches, batch_size, perm_rng):
+def _create_minibatches_no_time(traj_batch, advantages, targets, init_hstate, num_actors, num_minibatches, batch_size,
+                                perm_rng):
     # reshape the batch to be compatible with the network
     batch = (init_hstate, traj_batch, advantages, targets)
     batch = jax.tree_util.tree_map(

@@ -6,26 +6,25 @@ python teammate_generation/run.py algorithm=brdiv/lbf task=lbf label=test_brdiv 
 
 Limitations: does not support recurrent actors.
 '''
-import time
 import logging
-from typing import NamedTuple
+import time
 from functools import partial
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
-from flax.training.train_state import TrainState
 import wandb
+from flax.training.train_state import TrainState
 
-from partner_adaptation.partner_agents.agent_interface import ActorWithConditionalCriticPolicy
-from partner_adaptation.partner_agents.population_interface import AgentPopulation
 from jax_marl.registration import make
 from jax_marl.wrappers.baselines import LogWrapper
-
-from partner_adaptation.partner_generation.utils import get_metric_names
-from partner_adaptation.partner_generation.save_load_utils import save_train_run
+from partner_adaptation.partner_agents.agent_interface import ActorWithConditionalCriticPolicy
+from partner_adaptation.partner_agents.population_interface import AgentPopulation
 from partner_adaptation.partner_generation.run_episodes import run_episodes
+from partner_adaptation.partner_generation.save_load_utils import save_train_run
+from partner_adaptation.partner_generation.utils import get_metric_names
 from partner_adaptation.partner_generation.utils import unbatchify, _create_minibatches
 
 log = logging.getLogger(__name__)
@@ -65,12 +64,14 @@ def gather_params(partner_params_pytree, idx_vec):
     Return a new pytree where each leaf has shape (num_envs, ...). Each leaf has a sampled
     partner's parameters for each environment.
     """
+
     # We'll define a function that gathers from each leaf
     # where leaf has shape (n_seeds, m_ckpts, ...), we want [idx_vec[i]] for each i.
     # We'll vmap a slicing function.
     def gather_leaf(leaf):
         def slice_one(idx):
             return leaf[idx]  # shape (...)
+
         return jax.vmap(slice_one)(idx_vec)
 
     return jax.tree.map(gather_leaf, partner_params_pytree)
@@ -83,7 +84,7 @@ def train_brdiv_partners(train_rng, env, config, conf_policy, br_policy):
     def make_brdiv_agents(config):
         def linear_schedule(count):
             frac = 1.0 - (count // (config.num_minibatches *
-                          config.update_epochs)) / config.num_updates
+                                    config.update_epochs)) / config.num_updates
             return config.lr * frac
 
         def train(rng):
@@ -184,14 +185,14 @@ def train_brdiv_partners(train_rng, env, config, conf_policy, br_policy):
                 # Determine final indices based on whether resampling was needed for each env
                 updated_conf_ids = jnp.where(
                     needs_resample,
-                    resampled_conf_ids,     # Use newly sampled index if True
-                    last_conf_ids           # Else, keep index from previous step
+                    resampled_conf_ids,  # Use newly sampled index if True
+                    last_conf_ids  # Else, keep index from previous step
                 )
 
                 updated_br_ids = jnp.where(
                     needs_resample,
-                    resampled_br_ids,       # Use newly sampled index if True
-                    last_br_ids             # Else, keep index from previous step
+                    resampled_br_ids,  # Use newly sampled index if True
+                    last_br_ids  # Else, keep index from previous step
                 )
 
                 # Reset the hidden states for resampled conf and br if they are not None
@@ -275,7 +276,7 @@ def train_brdiv_partners(train_rng, env, config, conf_policy, br_policy):
                 def _compute_rewards(conf_id, br_id, agent_rew):
                     return jax.lax.cond(jnp.equal(
                         jnp.argmax(conf_id, axis=-
-                                   1), jnp.argmax(br_id, axis=-1)
+                        1), jnp.argmax(br_id, axis=-1)
                     ),
                         lambda x: x,
                         lambda x: -x,
@@ -326,10 +327,10 @@ def train_brdiv_partners(train_rng, env, config, conf_policy, br_policy):
                         transition.reward,
                     )
                     delta = reward + config.gamma * \
-                        next_value * (1 - done) - value
+                            next_value * (1 - done) - value
                     gae = (
-                        delta
-                        + config.gamma * config.gae_lambda * (1 - done) * gae
+                            delta
+                            + config.gamma * config.gae_lambda * (1 - done) * gae
                     )
                     return (gae, value), gae
 
@@ -358,6 +359,7 @@ def train_brdiv_partners(train_rng, env, config, conf_policy, br_policy):
                         br_param, br_policy,
                         config.num_steps, config.num_eval_episodes,
                     )
+
                 ep_infos = jax.vmap(run_episodes_fixed_rng)(
                     # leaves where shape is (pop_size*pop_size, ...)
                     gathered_conf_model_params, gathered_br_model_params,
@@ -397,7 +399,7 @@ def train_brdiv_partners(train_rng, env, config, conf_policy, br_policy):
 
                         # Value loss
                         value_pred_clipped = traj_batch.value + (
-                            value - traj_batch.value
+                                value - traj_batch.value
                         ).clip(
                             -config.clip_eps, config.clip_eps)
                         value_losses = jnp.square(value - target_v)
@@ -408,7 +410,7 @@ def train_brdiv_partners(train_rng, env, config, conf_policy, br_policy):
                             lambda x: jnp.zeros_like(x).astype(jnp.float32),
                             lambda x: x,
                             (loss_weights * jnp.maximum(value_losses,
-                             value_losses_clipped)).sum() / (loss_weights.sum() + 1e-8)
+                                                        value_losses_clipped)).sum() / (loss_weights.sum() + 1e-8)
                         )
 
                         n = config.partner_pop_size
@@ -421,8 +423,8 @@ def train_brdiv_partners(train_rng, env, config, conf_policy, br_policy):
 
                         is_sp = jnp.equal(jnp.argmax(
                             traj_batch.self_onehot_id, axis=-1), jnp.argmax(traj_batch.oppo_onehot_id, axis=-1))
-                        sp_weight = (1 + 2*config.xp_loss_weights) * (n/2)
-                        xp_weight = config.xp_loss_weights * (n / (2 * (n-1)))
+                        sp_weight = (1 + 2 * config.xp_loss_weights) * (n / 2)
+                        xp_weight = config.xp_loss_weights * (n / (2 * (n - 1)))
                         actor_weights = jnp.where(is_sp, sp_weight, xp_weight)
 
                         # Policy gradient loss
@@ -438,8 +440,8 @@ def train_brdiv_partners(train_rng, env, config, conf_policy, br_policy):
                             lambda x: jnp.zeros_like(x).astype(jnp.float32),
                             lambda x: x,
                             -(
-                                loss_weights*jnp.minimum(pg_loss_1, pg_loss_2)
-                            ).sum()/(loss_weights.sum() + 1e-8)
+                                    loss_weights * jnp.minimum(pg_loss_1, pg_loss_2)
+                            ).sum() / (loss_weights.sum() + 1e-8)
                         )
 
                         # Entropy
@@ -487,7 +489,8 @@ def train_brdiv_partners(train_rng, env, config, conf_policy, br_policy):
                         grads=grads_conf_new)
                     train_state_br = train_state_br.apply_gradients(
                         grads=grads_br_new)
-                    return (train_state_conf, train_state_br), ((loss_val_conf, aux_vals_conf), (loss_val_br, aux_vals_br))
+                    return (train_state_conf, train_state_br), ((loss_val_conf, aux_vals_conf),
+                                                                (loss_val_br, aux_vals_br))
 
                 (
                     train_state_conf, train_state_br,
@@ -608,7 +611,8 @@ def train_brdiv_partners(train_rng, env, config, conf_policy, br_policy):
                     _update_epoch, update_state, None, config.update_epochs)
                 all_train_state_conf, all_train_state_br = update_state[:2]
                 (_, (value_loss_conf, pg_loss_conf, entropy_conf)), (_,
-                                                                     (value_loss_br, pg_loss_br, entropy_br)) = all_losses
+                                                                     (value_loss_br, pg_loss_br,
+                                                                      entropy_br)) = all_losses
 
                 # Metrics
                 metric = traj_batch_conf.info
@@ -645,7 +649,7 @@ def train_brdiv_partners(train_rng, env, config, conf_policy, br_policy):
 
             def _update_step_with_ckpt(state_with_ckpt, unused):
                 (update_runner_state, checkpoint_array_conf, checkpoint_array_br, ckpt_idx,
-                    eval_info) = state_with_ckpt
+                 eval_info) = state_with_ckpt
 
                 # Single PPO update
                 new_runner_state, metric = _update_step(
@@ -655,7 +659,7 @@ def train_brdiv_partners(train_rng, env, config, conf_policy, br_policy):
 
                 # Decide if we store a checkpoint
                 # update steps is 1-indexed because it was incremented at the end of the update step
-                to_store = jnp.logical_or(jnp.equal(jnp.mod(update_steps-1, ckpt_and_eval_interval), 0),
+                to_store = jnp.logical_or(jnp.equal(jnp.mod(update_steps - 1, ckpt_and_eval_interval), 0),
                                           jnp.equal(update_steps, config.num_updates))
 
                 def store_and_eval_ckpt(args):
@@ -755,6 +759,7 @@ def train_brdiv_partners(train_rng, env, config, conf_policy, br_policy):
             return out
 
         return train
+
     # ------------------------------
     # Actually run the adversarial teammate training
     # ------------------------------
@@ -775,7 +780,7 @@ def get_brdiv_population(config, out, env):
     s = env.observation_space().shape
     partner_policy = ActorWithConditionalCriticPolicy(
         action_dim=env.action_space(env.agents[1]).n,
-        obs_dim=s[0]*s[1]*s[2],
+        obs_dim=s[0] * s[1] * s[2],
         pop_size=brdiv_pop_size,  # used to create onehot agent id
         activation=config.activation
     )
@@ -791,7 +796,7 @@ def get_brdiv_population(config, out, env):
 
 def run_brdiv(config):
     env = make(config.env_name, **
-               {"random_agent_start": True, **config.layout})
+    {"random_agent_start": True, **config.layout})
     env = LogWrapper(env)
     print("Starting BRDiv training...")
     start = time.time()
@@ -804,12 +809,12 @@ def run_brdiv(config):
     s = env.observation_space().shape
     conf_policy = ActorWithConditionalCriticPolicy(
         action_dim=env.action_space(env.agents[0]).n,
-        obs_dim=s[0]*s[1]*s[2],
+        obs_dim=s[0] * s[1] * s[2],
         pop_size=config.partner_pop_size,
     )
     br_policy = ActorWithConditionalCriticPolicy(
         action_dim=env.action_space(env.agents[0]).n,
-        obs_dim=s[0]*s[1]*s[2],
+        obs_dim=s[0] * s[1] * s[2],
         pop_size=config.partner_pop_size,
     )
 

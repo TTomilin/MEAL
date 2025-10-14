@@ -1,40 +1,33 @@
 import json
-import os
+from dataclasses import dataclass, field
+from datetime import datetime
+from functools import partial
 from pathlib import Path
-
-from jax._src.flatten_util import ravel_pytree
-
-from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
-    update_agem_memory
-from cl_methods.FT import FT
-from cl_methods.L2 import L2
-from cl_methods.MAS import MAS
-
-os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
 from typing import Sequence, Any, Optional, List
 
 import flax
 import optax
+import tyro
+import wandb
 from flax.core.frozen_dict import freeze, unfreeze
 from flax.training.train_state import TrainState
+from jax._src.flatten_util import ravel_pytree
+from tensorboardX import SummaryWriter
 
-from jax_marl.registration import make
-from jax_marl.eval.visualizer import OvercookedVisualizer
-from jax_marl.eval.visualizer_po import OvercookedVisualizerPO
-from jax_marl.wrappers.baselines import LogWrapper
-from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
-from architectures.cnn import ActorCritic as CNNActorCritic
 from architectures.decoupled_mlp import Actor, Critic
 from baselines.utils import *
+from cl_methods.AGEM import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
+    update_agem_memory
 from cl_methods.EWC import EWC
+from cl_methods.FT import FT
+from cl_methods.L2 import L2
+from cl_methods.MAS import MAS
 from jax_marl.environments.difficulty_config import apply_difficulty_to_config
-
-import wandb
-from functools import partial
-from dataclasses import dataclass, field
-import tyro
-from tensorboardX import SummaryWriter
-from datetime import datetime
+from jax_marl.environments.overcooked.upper_bound import estimate_max_soup
+from jax_marl.eval.visualizer import OvercookedVisualizer
+from jax_marl.eval.visualizer_po import OvercookedVisualizerPO
+from jax_marl.registration import make
+from jax_marl.wrappers.baselines import LogWrapper
 
 
 @dataclass
@@ -130,7 +123,7 @@ class Config:
     eval_forward_transfer: bool = False
     eval_num_steps: int = 1000
     eval_num_episodes: int = 5
-    record_gif: bool = True
+    record_gif: bool = False
     gif_len: int = 300
     log_interval: int = 75
 
@@ -295,7 +288,6 @@ def main():
     exp_dir = os.path.join("runs", run_name)
 
     # Initialize WandB
-    load_dotenv()
     wandb_tags = config.tags if config.tags is not None else []
     wandb.login(key=os.environ.get("WANDB_API_KEY"))
     wandb.init(
@@ -771,7 +763,8 @@ def main():
                 # MAPPO: Actor uses local observations, Critic uses global state
                 pi = train_state.apply_fn(train_state.params, obs_batch, env_idx=env_idx, network_type='actor')[0]
                 # Critic outputs one value per environment (not per agent)
-                value_per_env = train_state.apply_fn(train_state.params, global_state, env_idx=env_idx, network_type='critic')[1]
+                value_per_env = \
+                train_state.apply_fn(train_state.params, global_state, env_idx=env_idx, network_type='critic')[1]
                 # Tile the values to match the batch structure (one value per agent, but same value for agents in same env)
                 value = jnp.repeat(value_per_env, len(env.agents), axis=0)
 
@@ -1414,8 +1407,6 @@ def main():
 
     # apply the loop_over_envs function to the environments
     loop_over_envs(train_rng, train_state, cl_state, envs)
-
-
 
 
 if __name__ == "__main__":

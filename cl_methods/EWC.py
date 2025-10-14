@@ -29,8 +29,8 @@ class EWC(RegCLMethod):
     def init_state(self, params, regularize_critic, regularize_heads) -> CLState:
         mask = build_reg_weights(params, regularize_critic=regularize_critic, regularize_heads=regularize_heads)
         return CLState(
-            old_params=jax.tree_map(lambda x: x.copy(), params),
-            importance=jax.tree_map(jnp.zeros_like, params),
+            old_params=jax.tree.map(lambda x: x.copy(), params),
+            importance=jax.tree.map(jnp.zeros_like, params),
             mask=mask
         )
 

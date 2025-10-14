@@ -1,13 +1,14 @@
+# suppress logging from orbax
+import logging
 import os
 import pickle
-import orbax.checkpoint
-from flax.training import orbax_utils
+
 import jax
 import jax.numpy as jnp
 import numpy as np
+import orbax.checkpoint
+from flax.training import orbax_utils
 
-# suppress logging from orbax
-import logging
 logger = logging.getLogger("absl")
 logger.setLevel(logging.ERROR)
 
