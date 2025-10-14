@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import List, Tuple, Set, Dict
 
-from meal.environments.overcooked.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
+from meal.env.overcooked.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
 
 ###############################################################################
 # ─── Symbolic constants ──────────────────────────────────────────────────────

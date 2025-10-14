@@ -9,14 +9,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 import imageio.v3 as iio
 import jax
 import jax.numpy as jnp
-import numpy as np
-import pygame
 from flax.core import FrozenDict
 
-from meal.environments.overcooked.layouts import cramped_room
-from meal.environments.overcooked.overcooked_n_agent import POT_FULL_STATUS, DELIVERY_REWARD
-from meal.environments.overcooked.overcooked_po import OvercookedPO
-from meal.eval.visualizer_po import OvercookedVisualizerPO
+from meal.env.overcooked.layouts import cramped_room
+from meal.env.overcooked.overcooked_n_agent import POT_FULL_STATUS, DELIVERY_REWARD
+from meal.env.overcooked.overcooked_po import OvercookedPO
+from meal.visualization.visualizer_po import OvercookedVisualizerPO
 
 # ---------------------------------------------------------------------
 # 1. Set up PO env (deterministic reset -> we know the spawn)

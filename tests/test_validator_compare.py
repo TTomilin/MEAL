@@ -14,14 +14,14 @@ import sys
 from pathlib import Path
 from typing import List, Tuple
 
-from meal.environments.overcooked import layout_grid_to_dict
+from meal.env.overcooked import layout_grid_to_dict
 
 # ==== project imports ========================================================
 # put project root on import path so the jax‑marl package can be resolved when
 # running the script directly from the repo root
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
-from meal.environments.overcooked.env_validator import (
+from meal.env.overcooked.env_validator import (
     evaluate_grid as original_evaluate,
 )
 
@@ -43,9 +43,9 @@ import numpy as np
 
 from flax.core import FrozenDict
 
-from meal.environments import Overcooked
+from meal.env import Overcooked
 from meal.gridworld.grid_viz import TILE_PIXELS
-from meal.eval.visualizer import OvercookedVisualizer
+from meal.visualization.visualizer import OvercookedVisualizer
 
 
 # =============================================================================

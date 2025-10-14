@@ -32,9 +32,9 @@ from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
 from jax_marl import make
-from meal.environments.difficulty_config import apply_difficulty_to_config
-from meal.environments.env_selection import generate_sequence
-from meal.environments.overcooked.upper_bound import estimate_max_soup
+from meal.env.difficulty_config import apply_difficulty_to_config
+from meal.env.env_selection import generate_sequence
+from meal.env.overcooked.upper_bound import estimate_max_soup
 from meal.wrappers.baselines import (
     LogWrapper,
     CTRolloutManager,

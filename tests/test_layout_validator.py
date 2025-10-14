@@ -11,14 +11,14 @@ import jax.numpy as jnp
 import numpy as np
 from flax.core import FrozenDict
 
-from meal.environments import Overcooked
-from meal.environments.overcooked.env_generator import (
+from meal.env import Overcooked
+from meal.env.overcooked.env_generator import (
     generate_random_layout, layout_grid_to_dict
 )
-from meal.environments.overcooked.env_validator import (
+from meal.env.overcooked.env_validator import (
     evaluate_grid, WALL, FLOOR, AGENT, GOAL, ONION_PILE, POT
 )
-from meal.eval.visualizer import OvercookedVisualizer, TILE_PIXELS
+from meal.visualization.visualizer import OvercookedVisualizer, TILE_PIXELS
 
 
 def create_invalid_layout(issue_type, seed=None):

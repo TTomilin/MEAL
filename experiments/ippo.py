@@ -19,12 +19,12 @@ from flax.training.train_state import TrainState
 
 from meal.registration import make
 from meal.wrappers.baselines import LogWrapper
-from meal.environments.overcooked.upper_bound import estimate_max_soup
+from meal.env.overcooked.upper_bound import estimate_max_soup
 from experiments.model.mlp import ActorCritic as MLPActorCritic
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.utils import *
 from experiments.continual.ewc import EWC
-from meal.environments.difficulty_config import apply_difficulty_to_config
+from meal.env.difficulty_config import apply_difficulty_to_config
 
 import wandb
 from functools import partial

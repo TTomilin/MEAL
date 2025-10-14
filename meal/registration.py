@@ -1,6 +1,6 @@
-from meal.environments import Overcooked
-from meal.environments.overcooked.overcooked_n_agent import Overcooked as OvercookedNAgent
-from meal.environments.overcooked.overcooked_po import OvercookedPO
+from meal.env import Overcooked
+from meal.env.overcooked.overcooked_n_agent import Overcooked as OvercookedNAgent
+from meal.env.overcooked.overcooked_po import OvercookedPO
 
 
 def make(env_id: str, **env_kwargs):

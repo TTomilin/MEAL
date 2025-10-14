@@ -13,9 +13,9 @@ import numpy as np
 import pygame
 from flax.core import FrozenDict
 
-from meal.environments.overcooked.layouts import cramped_room
-from meal.environments.overcooked.overcooked_n_agent import POT_FULL_STATUS, Overcooked
-from meal.eval.visualizer import OvercookedVisualizer
+from meal.env.overcooked.layouts import cramped_room
+from meal.env.overcooked.overcooked_n_agent import POT_FULL_STATUS, Overcooked
+from meal.visualization.visualizer import OvercookedVisualizer
 
 # ---------------------------------------------------------------------
 # 1. Set up env (deterministic reset -> we know the spawn)

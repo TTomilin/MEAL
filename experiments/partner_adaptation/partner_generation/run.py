@@ -8,7 +8,7 @@ import jax
 import tyro
 import wandb
 
-from meal.environments.overcooked.layouts import overcooked_layouts
+from meal.env.overcooked.layouts import overcooked_layouts
 from experiments.partner_adaptation.partner_generation.BRDiv import run_brdiv
 from experiments.partner_adaptation.partner_generation.utils import frozendict_from_layout_repr
 

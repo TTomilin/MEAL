@@ -25,9 +25,9 @@ from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
-from meal.environments.overcooked.layouts import easy_layouts
-from meal.environments.overcooked.upper_bound import estimate_max_soup
-from meal.eval.visualizer import OvercookedVisualizer
+from meal.env.overcooked.layouts import easy_layouts
+from meal.env.overcooked.upper_bound import estimate_max_soup
+from meal.visualization.visualizer import OvercookedVisualizer
 from meal.registration import make
 from meal.wrappers.baselines import LogWrapper
 from experiments.partner_adaptation.partner_agents.agent_interface import ActorWithConditionalCriticPolicy, MLPActorCriticPolicyCL

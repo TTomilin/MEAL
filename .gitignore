@@ -19,6 +19,7 @@ outputs/
 models/
 checkpoints/
 experiments/results/data/
+*layouts*.json
 *.dat
 .idea
 *.iml

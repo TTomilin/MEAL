@@ -17,9 +17,9 @@ import optax
 from flax.training.train_state import TrainState
 from flax.serialization import from_bytes
 
-from meal.eval.visualizer import OvercookedVisualizer
+from meal.visualization.visualizer import OvercookedVisualizer
 from meal.registration import make
-from meal.environments.env_selection import generate_sequence
+from meal.env.env_selection import generate_sequence
 from experiments.model.mlp import ActorCritic as MLPActorCritic
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 

@@ -4,10 +4,10 @@ from collections import namedtuple
 import numpy as np
 import wandb
 
-import jax_marl.eval.grid_rendering as rendering
-from meal.environments.overcooked.common import OBJECT_TO_INDEX, COLOR_TO_INDEX, COLORS
-from meal.eval.visualization.state_visualizer import StateVisualizer
-from meal.eval.window import Window
+from meal.visualization.rendering import grid_ops as rendering
+from meal.env.overcooked.common import OBJECT_TO_INDEX, COLOR_TO_INDEX, COLORS
+from meal.visualization.rendering.state_visualizer import StateVisualizer
+from meal.visualization.window import Window
 
 # Define a namedtuple for mock objects to be used in visualization
 MockObject = namedtuple('MockObject', ['name', 'ingredients'])
@@ -264,7 +264,7 @@ class OvercookedVisualizer:
 
             # Create a minimal state object for rendering
             from collections import namedtuple
-            from meal.eval.visualization.actions import Direction
+            from meal.visualization.rendering.actions import Direction
 
             # Create a mapping from environment direction indices to visualization direction tuples
             ENV_DIR_IDX_TO_VIZ_DIR = {
@@ -344,7 +344,7 @@ class OvercookedVisualizer:
             # Use the new rendering logic
             frames = []
             from collections import namedtuple
-            from meal.eval.visualization.actions import Direction
+            from meal.visualization.rendering.actions import Direction
 
             # Create a mapping from environment direction indices to visualization direction tuples
             ENV_DIR_IDX_TO_VIZ_DIR = {
@@ -457,7 +457,7 @@ class OvercookedVisualizer:
 
             # Create a minimal state object for rendering
             from collections import namedtuple
-            from meal.eval.visualization.actions import Direction
+            from meal.visualization.rendering.actions import Direction
 
             # Create a mapping from environment direction indices to visualization direction tuples
             ENV_DIR_IDX_TO_VIZ_DIR = {

@@ -8,10 +8,10 @@ import numpy as np
 import pygame
 from flax.core import FrozenDict
 
-from meal.environments.overcooked.common import OBJECT_TO_INDEX
-from meal.environments.overcooked.layouts import cramped_room
-from meal.environments.overcooked.overcooked_n_agent import Overcooked
-from meal.eval.visualizer import OvercookedVisualizer
+from meal.env.overcooked.common import OBJECT_TO_INDEX
+from meal.env.overcooked.layouts import cramped_room
+from meal.env.overcooked.overcooked_n_agent import Overcooked
+from meal.visualization.visualizer import OvercookedVisualizer
 
 # ---------------------------------------------------------------------
 # 1.  Create 3-agent env (deterministic spawn → we know the layout)
@@ -40,7 +40,7 @@ def add_frame(st):
 
     # Use the new visualization logic
     from collections import namedtuple
-    from meal.eval.visualization.actions import Direction
+    from meal.visualization.rendering.actions import Direction
 
     # Convert grid to format expected by StateVisualizer
     grid_str = viz._convert_grid_to_str(grid)

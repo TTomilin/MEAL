@@ -1,7 +1,7 @@
 import pygame
 from pygame.locals import DOUBLEBUF, HWSURFACE, QUIT, RESIZABLE, VIDEORESIZE
 
-from meal.eval.visualization.utils import load_from_json
+from meal.visualization.utils import load_from_json
 
 
 def run_static_resizeable_window(surface, fps=30):

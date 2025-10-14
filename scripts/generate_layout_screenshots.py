@@ -5,13 +5,13 @@ import jax
 import numpy as np
 from PIL import Image
 
-from meal.environments import Overcooked
-from meal.environments.overcooked.layouts import (
+from meal.env import Overcooked
+from meal.env.overcooked.layouts import (
     hard_layouts,
     medium_layouts,
     easy_layouts,
 )
-from meal.eval.visualizer import OvercookedVisualizer, TILE_PIXELS
+from meal.visualization.visualizer import OvercookedVisualizer, TILE_PIXELS
 
 
 def crop_to_minimal(state, agent_view_size: int):

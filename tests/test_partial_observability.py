@@ -11,10 +11,10 @@ import argparse
 import jax
 import jax.numpy as jnp
 import numpy as np
-from meal.environments.overcooked.overcooked_po import OvercookedPO
-from meal.eval.visualizer_po import OvercookedVisualizerPO
-from meal.environments.overcooked.env_generator import generate_random_layout
-from meal.environments.difficulty_config import get_difficulty_params
+from meal.env.overcooked.overcooked_po import OvercookedPO
+from meal.visualization.visualizer_po import OvercookedVisualizerPO
+from meal.env.overcooked.env_generator import generate_random_layout
+from meal.env.difficulty_config import get_difficulty_params
 
 # For GIF creation
 try:

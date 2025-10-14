@@ -1,6 +1,6 @@
 import numpy as np
-from meal.eval.visualizer import OvercookedVisualizer
-from meal.environments.overcooked.common import COLORS, OBJECT_TO_INDEX
+from meal.visualization.visualizer import OvercookedVisualizer
+from meal.env.overcooked.common import OBJECT_TO_INDEX
 
 class OvercookedVisualizerPO(OvercookedVisualizer):
     """Visualizer for Partially Observable Overcooked with view area highlighting"""
@@ -82,7 +82,7 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
 
             # Create mock players and objects for new rendering
             from collections import namedtuple
-            from meal.eval.visualization.actions import Direction
+            from meal.visualization.rendering.actions import Direction
 
             # Create a mapping from environment direction indices to visualization direction tuples
             ENV_DIR_IDX_TO_VIZ_DIR = {

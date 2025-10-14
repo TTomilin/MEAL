@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Dump the key stages of one procedurally-generated Overcooked kitchen.
+Store the key stages of a procedurally generated Overcooked kitchen.
 
 Usage examples
 --------------
@@ -20,22 +20,17 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from meal.environments.overcooked.common import (
+from meal.env.overcooked.common import (
     FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT,
     OBJECT_TO_INDEX, COLOR_TO_INDEX,
 )
-from meal.environments.overcooked.env_generator import (
-    place_tiles, remove_unreachable_items,
-)
-from meal.environments.overcooked.env_validator import evaluate_grid
-from meal.eval.visualizer import OvercookedVisualizer
+from meal.env.overcooked.env_generator import place_tiles, remove_unreachable_items
+from meal.env.overcooked.env_validator import evaluate_grid
+from meal.visualization.visualizer import OvercookedVisualizer
 
 # ──────────────────────────────────────────────────────────────────────────
 # Configurable output folder
-OUT_DIR = (
-        Path(__file__).resolve().parent.parent.parent
-        / "assets" / "screenshots" / "env_generation"
-)
+OUT_DIR = Path(__file__).resolve().parent.parent / "assets" / "screenshots" / "env_generation"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -144,7 +139,7 @@ def main():
         w_rng = (args.w_min or 6, args.w_max or 11)
         density = args.density if args.density is not None else 0.20
 
-    seed = args.seed if args.seed is not None else random.randint(0, 2**31 - 1)
+    seed = args.seed if args.seed is not None else random.randint(0, 2 ** 31 - 1)
     rng = random.Random(seed)
     vis = OvercookedVisualizer()
 

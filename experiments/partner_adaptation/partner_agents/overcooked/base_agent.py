@@ -6,8 +6,8 @@ import jax.numpy as jnp
 from flax import struct
 from jax import lax
 
-from meal.environments.overcooked.common import OBJECT_TO_INDEX
-from meal.environments.overcooked.overcooked import Actions
+from meal.env.overcooked.common import OBJECT_TO_INDEX
+from meal.env.overcooked.overcooked import Actions
 
 
 @struct.dataclass

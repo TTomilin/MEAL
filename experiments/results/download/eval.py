@@ -104,7 +104,7 @@ def get_layout_from_config(cfg: dict) -> tuple[str, dict]:
         tuple: (layout_name, layout_dict) where layout_dict is the actual layout configuration
     """
     # Import here to avoid circular imports
-    from meal.environments.overcooked.layouts import easy_layouts, medium_layouts, hard_layouts, overcooked_layouts
+    from meal.env.overcooked.layouts import easy_layouts, medium_layouts, hard_layouts, overcooked_layouts
 
     layout_name = cfg.get("layout_name", "")
 
@@ -164,7 +164,7 @@ def calculate_max_soup(layout_dict: dict, max_steps: int = 400, n_agents: int = 
 
     try:
         # Import here to avoid circular imports
-        from meal.environments.overcooked.upper_bound import estimate_max_soup
+        from meal.env.overcooked.upper_bound import estimate_max_soup
         return estimate_max_soup(layout_dict, max_steps, n_agents=n_agents)
     except Exception as e:
         print(f"Warning: Failed to calculate max soup: {e}, using default of 1.0")

@@ -27,9 +27,9 @@ import jax.numpy as jnp
 import numpy as np
 from flax.core.frozen_dict import FrozenDict
 
-from meal.environments import OvercookedNAgent as Overcooked
-from meal.environments.overcooked.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
-from meal.environments.overcooked.env_validator import (
+from meal.env import OvercookedNAgent as Overcooked
+from meal.env.overcooked.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
+from meal.env.overcooked.env_validator import (
     evaluate_grid, UNPASSABLE_TILES, INTERACTIVE_TILES
 )
 
@@ -349,7 +349,7 @@ def _crop_to_grid(state, view_size: int):
 
 
 def oc_show(layout: FrozenDict, num_agents: int = 2):
-    from meal.eval.visualizer import OvercookedVisualizer, TILE_PIXELS
+    from meal.visualization.visualizer import OvercookedVisualizer, TILE_PIXELS
     env = Overcooked(layout=layout, layout_name="random_gen", random_reset=False, num_agents=num_agents)
     _, state = env.reset(jax.random.PRNGKey(0))
     grid = np.asarray(_crop_to_grid(state, env.agent_view_size))
@@ -379,7 +379,7 @@ def main(argv=None):
     parser.add_argument("--save", action="store_true", help="save PNG to assets/screenshots/generated/")
     args = parser.parse_args(argv)
 
-    from meal.eval.visualizer import OvercookedVisualizer, TILE_PIXELS
+    from meal.visualization.visualizer import OvercookedVisualizer, TILE_PIXELS
 
     # Override parameters based on difficulty
     if args.difficulty:

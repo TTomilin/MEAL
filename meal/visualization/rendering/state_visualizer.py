@@ -4,12 +4,12 @@ import os
 
 import pygame
 
-from meal.eval.visualization.actions import Direction, Action
-from meal.eval.visualization.pygame_utils import MultiFramePygameImage, run_static_resizeable_window, \
+from meal.visualization.rendering.actions import Direction, Action
+from meal.visualization.rendering.spritesheet import MultiFramePygameImage, run_static_resizeable_window, \
     scale_surface_by_factor, blit_on_new_surface_of_size
-from meal.eval.visualization.static import GRAPHICS_DIR, FONTS_DIR
-from meal.eval.visualization.utils import cumulative_rewards_from_rew_list, generate_temporary_file_path
-from meal.eval.visualization.visualization_utils import show_ipython_images_slider, show_image_in_ipython
+from meal.visualization.static import GRAPHICS_DIR, FONTS_DIR
+from meal.visualization.utils import cumulative_rewards_from_rew_list, generate_temporary_file_path
+from meal.visualization.utils.ipy_image_widgets import show_ipython_images_slider, show_image_in_ipython
 
 roboto_path = os.path.join(FONTS_DIR, "Roboto-Regular.ttf")
 

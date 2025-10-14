@@ -8,7 +8,7 @@ import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 from tensorboardX import SummaryWriter
 
-from meal.environments.env_selection import generate_sequence
+from meal.env.env_selection import generate_sequence
 
 
 class Transition(NamedTuple):
@@ -305,7 +305,7 @@ def record_gif_of_episode(config, train_state, env, network, env_idx=0, max_step
 
 
 def create_visualizer(num_agents, env_name):
-    from meal.eval.visualizer import OvercookedVisualizer
-    from meal.eval.visualizer_po import OvercookedVisualizerPO
+    from meal.visualization.visualizer import OvercookedVisualizer
+    from meal.visualization.visualizer_po import OvercookedVisualizerPO
     # Create appropriate visualizer based on environment type
     return OvercookedVisualizerPO(num_agents) if env_name == "overcooked_po" else OvercookedVisualizer(num_agents)

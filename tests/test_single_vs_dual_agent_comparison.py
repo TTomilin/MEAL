@@ -19,10 +19,10 @@ import numpy as np
 import pygame
 from flax.core import FrozenDict
 
-from meal.environments.overcooked.layouts import cramped_room, asymm_advantages, coord_ring, layout_grid_to_dict
-from meal.environments.overcooked.overcooked_single import OvercookedSingle
-from meal.environments.overcooked.overcooked import Overcooked, DELIVERY_REWARD
-from meal.eval.visualizer import OvercookedVisualizer
+from meal.env.overcooked.layouts import cramped_room, asymm_advantages, coord_ring, layout_grid_to_dict
+from meal.env.overcooked.overcooked_single import OvercookedSingle
+from meal.env.overcooked.overcooked import Overcooked, DELIVERY_REWARD
+from meal.visualization.visualizer import OvercookedVisualizer
 
 
 def run_single_vs_dual_test(layout_name, layout, action_sequence, rng_seed=42, max_steps=400):

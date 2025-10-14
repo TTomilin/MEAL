@@ -15,10 +15,9 @@ import os
 
 from PIL import Image
 
-# Directory containing the graphics files
-GRAPHICS_DIR = os.path.join('jax_marl', 'eval', 'visualization', 'data', 'graphics_old')
+from meal.visualization.static import GRAPHICS_DIR
 
-# Scale factor for upscaling (2x, 3x, or 4x)
+# Scale factor for upscaling
 SCALE_FACTOR = 4
 
 

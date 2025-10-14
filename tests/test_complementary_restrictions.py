@@ -12,9 +12,9 @@ import jax.numpy as jnp
 import pygame
 from flax.core import FrozenDict
 
-from meal.environments.overcooked.layouts import cramped_room
-from meal.environments.overcooked.overcooked import Overcooked, OBJECT_TO_INDEX
-from meal.eval.visualizer import OvercookedVisualizer
+from meal.env.overcooked.layouts import cramped_room
+from meal.env.overcooked.overcooked import Overcooked, OBJECT_TO_INDEX
+from meal.visualization.visualizer import OvercookedVisualizer
 
 
 def test_complementary_restrictions():

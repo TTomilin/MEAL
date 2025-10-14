@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 # Import original validator
-from meal.environments.overcooked.env_validator import (
+from meal.env.overcooked.env_validator import (
     evaluate_grid as original_evaluate
 )
 

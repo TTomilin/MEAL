@@ -14,7 +14,7 @@ from experiments.model.CBP_actorcritic import ActorCritic
 from experiments.utils import *
 from experiments.continual.cbp import (cbp_step,
                                        TrainStateCBP)
-from meal.eval.visualizer import OvercookedVisualizer
+from meal.visualization.visualizer import OvercookedVisualizer
 from meal.registration import make
 from meal.wrappers.baselines import LogWrapper
 

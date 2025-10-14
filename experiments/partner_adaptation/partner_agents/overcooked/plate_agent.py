@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 
-from meal.environments.overcooked.overcooked import Actions
+from meal.env.overcooked.overcooked import Actions
 from .base_agent import BaseAgent, AgentState, Holding, Goal
 
 

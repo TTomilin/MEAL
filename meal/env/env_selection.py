@@ -5,10 +5,9 @@ import ast
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 
-from meal.environments.overcooked import hard_layouts, medium_layouts, easy_layouts, overcooked_layouts, \
-    single_layouts
-from meal.environments.overcooked.env_generator import generate_random_layout
-from meal.environments.difficulty_config import DIFFICULTY_PARAMS
+from meal.env.overcooked import hard_layouts, medium_layouts, easy_layouts, overcooked_layouts, single_layouts
+from meal.env.overcooked.env_generator import generate_random_layout
+from meal.env.difficulty_config import DIFFICULTY_PARAMS
 
 
 def _parse_layout_string(layout_str: str) -> FrozenDict:

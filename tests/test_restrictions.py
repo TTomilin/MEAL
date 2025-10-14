@@ -17,9 +17,9 @@ import jax.numpy as jnp
 import pygame
 from flax.core import FrozenDict
 from meal.registration import make
-from meal.environments.overcooked.layouts import layout_grid_to_dict
-from meal.environments.overcooked.overcooked import OBJECT_TO_INDEX
-from meal.eval.visualizer import OvercookedVisualizer
+from meal.env.overcooked.layouts import layout_grid_to_dict
+from meal.env.overcooked.overcooked import OBJECT_TO_INDEX
+from meal.visualization.visualizer import OvercookedVisualizer
 
 
 def test_experimental_conditions():

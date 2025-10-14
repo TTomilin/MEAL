@@ -8,7 +8,7 @@ import jax.numpy as jnp
 from flax import struct
 from jax import Array
 
-from meal.environments.multi_agent_env import MultiAgentEnv, State
+from meal.env.multi_agent_env import MultiAgentEnv, State
 
 
 class JaxMARLWrapper(object):
