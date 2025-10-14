@@ -40,93 +40,48 @@ learn and adapt to new environments without forgetting previously acquired skill
 
 ## Installation
 
-MEAL requires Python 3.10 and uses JAX with CUDA support by default.
+MEAL requires Python 3.10 and uses JAX with CUDA support by default. 
+We recommend creating an isolated Python environment first, then installing **MEAL** with pip.
 
-### Prerequisites
+### Create an Environment
 
-- Python 3.10
-- pip (latest version recommended)
-- For GPU acceleration: CUDA 12 compatible hardware and drivers
-
-### Option 1: Using Python venv
-
-1. Create a virtual environment:
+#### Option 1 — `venv`
 
 ```bash
 python3.10 -m venv .venv
-```
-
-2. Activate the virtual environment:
-
-```bash
-# On Linux/macOS
+# macOS/Linux
 source .venv/bin/activate
-
-# On Windows
-.venv\Scripts\activate
+# Windows (CMD)
+.\.venv\Scripts\activate.bat
+# Windows (PowerShell)
+.\.venv\Scripts\Activate.ps1
 ```
 
-3. Install the package:
+#### Option 2 — `Conda`
 
 ```bash
-# Install in development mode with all extras
-pip install -e ".[all]"
-
-# Or install only core dependencies
-pip install -e .
-```
-
-### Option 2: Using Conda
-
-1. Create and activate a conda environment:
-
-```bash
-# Create environment
-conda create -n meal python=3.10.15
-
-# Activate environment
+conda create -n meal python=3.10 -y
 conda activate meal
-
-# Install in development mode with all extras
-pip install -e ".[all]"
 ```
 
-### Installation Options
-
-MEAL provides several installation options through extras:
-
-- **Core installation**: `pip install -e .`
-- **With visualization tools**: `pip install -e ".[viz]"`
-- **With development tools**: `pip install -e ".[dev]"`
-- **With utility tools**: `pip install -e ".[utils]"`
-- **Complete installation**: `pip install -e ".[all]"`
-
-### Platform-Specific Instructions
-
-#### For macOS Users
-
-macOS doesn't support CUDA, so you need to install without CUDA support:
-
+### Install MEAL
 ```bash
-# First install without CUDA
-pip install jax
+# Core install
+pip install -e .
 
-# Then install MEAL (it will skip the CUDA dependency)
-pip install -e ".[all]"
+# Visualization tools
+pip install -e ".[viz]"
+
+# Utility tools
+pip install -e ".[utils]"
 ```
 
-#### For CPU-only Installation
-
-If you don't have a compatible GPU or prefer to run on CPU:
-
+### (Optional) GPU acceleration with JAX
 ```bash
-# First install JAX without CUDA
-pip install jax
-
-# Then install MEAL
-pip install -e ".[all]"
+pip install -U "jax[cuda12]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+# or for CUDA 11```
+pip install -U "jax[cuda11]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 ```
-
 
 ## Usage
 
@@ -134,7 +89,7 @@ pip install -e ".[all]"
 
 ```bash
 # Run IPPO with Elastic Weight Consolidation (EWC)
-python -m baselines.IPPO_CL --cl_method EWC
+python -m baselines.PPO_CL --cl_method EWC
 ```
 
 ### Environment Generation
@@ -176,7 +131,6 @@ Example of environment generation steps (generated using `jax_marl.viz.env_gen_s
     </tr>
   </table>
 </div>
-
 
 
 ## Environment Difficulty
