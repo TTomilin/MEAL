@@ -1,10 +1,6 @@
 .venv*/
 jaxmarl
 __pycache__/
-
-checkpoints
-
-# from the jaxmarl repo
 *.py[cod]
 *$py.class
 *.egg-info/
@@ -21,10 +17,9 @@ wandb/
 runs/
 outputs/
 models/
-/results/data/
-/results/data_nips/
+checkpoints/
+experiments/results/data/
 *.dat
-
 .idea
 *.iml
 events.out*
