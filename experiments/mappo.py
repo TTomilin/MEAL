@@ -26,7 +26,7 @@ from meal.env.overcooked.upper_bound import estimate_max_soup
 from meal.visualization.visualizer import OvercookedVisualizer
 from meal.visualization.visualizer_po import OvercookedVisualizerPO
 from meal.registration import make
-from meal.wrappers.baselines import LogWrapper
+from meal.wrappers.logging import LogWrapper
 
 
 @dataclass

@@ -29,7 +29,7 @@ from meal.env.overcooked.layouts import easy_layouts
 from meal.env.overcooked.upper_bound import estimate_max_soup
 from meal.visualization.visualizer import OvercookedVisualizer
 from meal.registration import make
-from meal.wrappers.baselines import LogWrapper
+from meal.wrappers.logging import LogWrapper
 from experiments.partner_adaptation.partner_agents.agent_interface import ActorWithConditionalCriticPolicy, MLPActorCriticPolicyCL
 from experiments.partner_adaptation.partner_agents.overcooked.agent_policy_wrappers import OvercookedIndependentPolicyWrapper, \
     OvercookedOnionPolicyWrapper, OvercookedPlatePolicyWrapper, OvercookedRandomPolicyWrapper, \

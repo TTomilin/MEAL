@@ -19,7 +19,7 @@ from experiments.ppo import Config as PPOConfig
 from experiments.model.mlp import ActorCritic as MLPActorCritic
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from meal.registration import make
-from meal.wrappers.baselines import LogWrapper
+from meal.wrappers.logging import LogWrapper
 from experiments.utils import batchify
 from experiments.continual.ft import FT
 

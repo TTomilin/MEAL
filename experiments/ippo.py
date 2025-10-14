@@ -18,7 +18,7 @@ from flax.core.frozen_dict import freeze, unfreeze
 from flax.training.train_state import TrainState
 
 from meal.registration import make
-from meal.wrappers.baselines import LogWrapper
+from meal.wrappers.logging import LogWrapper
 from meal.env.overcooked.upper_bound import estimate_max_soup
 from experiments.model.mlp import ActorCritic as MLPActorCritic
 from experiments.model.cnn import ActorCritic as CNNActorCritic

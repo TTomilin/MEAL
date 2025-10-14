@@ -16,7 +16,7 @@ from experiments.continual.cbp import (cbp_step,
                                        TrainStateCBP)
 from meal.visualization.visualizer import OvercookedVisualizer
 from meal.registration import make
-from meal.wrappers.baselines import LogWrapper
+from meal.wrappers.logging import LogWrapper
 
 
 @dataclass

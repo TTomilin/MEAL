@@ -35,10 +35,10 @@ from jax_marl import make
 from meal.env.difficulty_config import apply_difficulty_to_config
 from meal.env.env_selection import generate_sequence
 from meal.env.overcooked.upper_bound import estimate_max_soup
-from meal.wrappers.baselines import (
-    LogWrapper,
+from meal.wrappers.jaxmarl import (
     CTRolloutManager,
 )
+from meal.wrappers.logging import LogWrapper
 
 
 @dataclass

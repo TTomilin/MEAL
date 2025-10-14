@@ -19,7 +19,7 @@ import wandb
 from flax.training.train_state import TrainState
 
 from meal.registration import make
-from meal.wrappers.baselines import LogWrapper
+from meal.wrappers.logging import LogWrapper
 from experiments.partner_adaptation.partner_agents.agent_interface import ActorWithConditionalCriticPolicy
 from experiments.partner_adaptation.partner_agents.population_interface import AgentPopulation
 from experiments.partner_adaptation.partner_generation.run_episodes import run_episodes
