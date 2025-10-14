@@ -1,6 +1,6 @@
 import numpy as np
 from meal.visualization.visualizer import OvercookedVisualizer
-from meal.env.overcooked.common import OBJECT_TO_INDEX
+from meal.env.common import OBJECT_TO_INDEX
 
 class OvercookedVisualizerPO(OvercookedVisualizer):
     """Visualizer for Partially Observable Overcooked with view area highlighting"""

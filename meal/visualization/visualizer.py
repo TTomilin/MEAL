@@ -5,7 +5,7 @@ import numpy as np
 import wandb
 
 from meal.visualization.rendering import grid_ops as rendering
-from meal.env.overcooked.common import OBJECT_TO_INDEX, COLOR_TO_INDEX, COLORS
+from meal.env.common import OBJECT_TO_INDEX, COLOR_TO_INDEX, COLORS
 from meal.visualization.rendering.state_visualizer import StateVisualizer
 from meal.visualization.window import Window
 

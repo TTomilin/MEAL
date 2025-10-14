@@ -29,6 +29,7 @@ dependencies = [
     "tensorboard",
     "tensorboardX",
     "wandb",
+    "pyyaml",
 ]
 
 [project.optional-dependencies]

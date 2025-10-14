@@ -72,7 +72,7 @@ def _neighbourhood(indices: Sequence[int], w: int, wall: jnp.ndarray) -> List[Tu
 
 # ─── Core ─────────────────────────────────────────────────────────────────────
 
-def estimate_cycle_time(layout: Dict, *, n_agents: int = 2) -> float:
+def calculate_cycle_time(layout: Dict, n_agents: int = 2) -> float:
     """Upper‑bound steps for **one** cook‑deliver cycle."""
     h, w = int(layout["height"]), int(layout["width"])
     wall = jnp.zeros((h, w), dtype=bool)
@@ -97,26 +97,27 @@ def estimate_cycle_time(layout: Dict, *, n_agents: int = 2) -> float:
     # Single‑agent pessimistic: one agent does everything
     move_cost = 3 * d_onion + d_plate + 1 + d_goal + 3  # + hand‑offs
 
+    # TODO find the optimal delivery cycle for more than one agent
+
     return move_cost + COOK_TIME + OVERHEAD_PER_CYCLE
 
 
-def estimate_max_soup(layout: FrozenDict, episode_len: int, *, n_agents: int = 2) -> int:
-    cyc = estimate_cycle_time(layout, n_agents=n_agents)
+def calculate_max_soup(layout: FrozenDict, episode_len: int, *, n_agents: int = 2) -> int:
+    cyc = calculate_cycle_time(layout, n_agents=n_agents)
     if math.isinf(cyc) or cyc == 0:
         return 0
-    soups = episode_len // cyc
-    return int(soups * DELIVERY_REWARD)
+    return int(episode_len // cyc)
 
 
 # ─── Vectorised wrapper ────────────────────────────────────────────────────────
 @jax.jit
 def batched_max_reward(layouts: Sequence[Dict], episode_len: int, n_agents: int = 2) -> jnp.ndarray:
-    fn = jax.vmap(lambda lay: estimate_max_soup(lay, episode_len, n_agents=n_agents))
+    fn = jax.vmap(lambda lay: calculate_max_soup(lay, episode_len, n_agents=n_agents))
     return fn(jnp.array(layouts))
 
 
 # ─── Quick test ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    from meal.env.overcooked.layouts import overcooked_layouts
+    from meal.env.overcooked.presets import overcooked_layouts
 
-    print(estimate_max_soup(overcooked_layouts["cramped_room"], 400))
+    print(calculate_max_soup(overcooked_layouts["cramped_room"], 400))

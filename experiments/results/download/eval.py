@@ -104,19 +104,19 @@ def get_layout_from_config(cfg: dict) -> tuple[str, dict]:
         tuple: (layout_name, layout_dict) where layout_dict is the actual layout configuration
     """
     # Import here to avoid circular imports
-    from meal.env.overcooked.layouts import easy_layouts, medium_layouts, hard_layouts, overcooked_layouts
+    from meal.env.overcooked.presets import easy_layouts_legacy, medium_layouts_legacy, hard_layouts_legacy, overcooked_layouts
 
     layout_name = cfg.get("layout_name", "")
 
     if layout_name:
         # Layout name was explicitly specified
         # Try to find it in the available layouts
-        if layout_name in easy_layouts:
-            return layout_name, easy_layouts[layout_name]
-        elif layout_name in medium_layouts:
-            return layout_name, medium_layouts[layout_name]
-        elif layout_name in hard_layouts:
-            return layout_name, hard_layouts[layout_name]
+        if layout_name in easy_layouts_legacy:
+            return layout_name, easy_layouts_legacy[layout_name]
+        elif layout_name in medium_layouts_legacy:
+            return layout_name, medium_layouts_legacy[layout_name]
+        elif layout_name in hard_layouts_legacy:
+            return layout_name, hard_layouts_legacy[layout_name]
         elif layout_name in overcooked_layouts:
             return layout_name, overcooked_layouts[layout_name]
         else:
@@ -128,20 +128,20 @@ def get_layout_from_config(cfg: dict) -> tuple[str, dict]:
         layout_idx = cfg.get("layout_idx", 0)
 
         if layout_difficulty == "easy":
-            layout_names = list(easy_layouts.keys())
+            layout_names = list(easy_layouts_legacy.keys())
             if layout_idx < len(layout_names):
                 layout_name = layout_names[layout_idx]
-                return layout_name, easy_layouts[layout_name]
+                return layout_name, easy_layouts_legacy[layout_name]
         elif layout_difficulty == "medium":
-            layout_names = list(medium_layouts.keys())
+            layout_names = list(medium_layouts_legacy.keys())
             if layout_idx < len(layout_names):
                 layout_name = layout_names[layout_idx]
-                return layout_name, medium_layouts[layout_name]
+                return layout_name, medium_layouts_legacy[layout_name]
         elif layout_difficulty == "hard":
-            layout_names = list(hard_layouts.keys())
+            layout_names = list(hard_layouts_legacy.keys())
             if layout_idx < len(layout_names):
                 layout_name = layout_names[layout_idx]
-                return layout_name, hard_layouts[layout_name]
+                return layout_name, hard_layouts_legacy[layout_name]
 
         # Fallback: use layout_idx as name
         return f"layout_{layout_idx}", None
@@ -164,8 +164,8 @@ def calculate_max_soup(layout_dict: dict, max_steps: int = 400, n_agents: int = 
 
     try:
         # Import here to avoid circular imports
-        from meal.env.overcooked.upper_bound import estimate_max_soup
-        return estimate_max_soup(layout_dict, max_steps, n_agents=n_agents)
+        from meal.env.utils.max_soup_calculator import calculate_max_soup
+        return calculate_max_soup(layout_dict, max_steps, n_agents=n_agents)
     except Exception as e:
         print(f"Warning: Failed to calculate max soup: {e}, using default of 1.0")
         return 1.0

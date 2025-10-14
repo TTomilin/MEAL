@@ -11,9 +11,9 @@ from flax.core import FrozenDict
 from flax.training.train_state import TrainState
 import optax
 
-from meal.env.overcooked.layouts import cramped_room
-from meal.env.overcooked.overcooked import Overcooked
-from meal.env.overcooked.overcooked_n_agent import Overcooked as OvercookedNAgent
+from meal.env.overcooked.presets import cramped_room
+from meal.env.overcooked_legacy import Overcooked
+from meal.env.overcooked import Overcooked as OvercookedNAgent
 
 from experiments.ppo import Config as PPOConfig
 from experiments.ippo import Config as IPPOConfig

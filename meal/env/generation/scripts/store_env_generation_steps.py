@@ -20,12 +20,12 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from meal.env.overcooked.common import (
+from meal.env.common import (
     FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT,
     OBJECT_TO_INDEX, COLOR_TO_INDEX,
 )
-from meal.env.overcooked.env_generator import place_tiles, remove_unreachable_items
-from meal.env.overcooked.env_validator import evaluate_grid
+from meal.env.generation.layout_generator import place_tiles, remove_unreachable_items
+from meal.env.generation.layout_validator import evaluate_grid
 from meal.visualization.visualizer import OvercookedVisualizer
 
 # ──────────────────────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax.core.frozen_dict import freeze
 
-from meal.env.overcooked.overcooked_n_agent import Actions, Overcooked, POT_FULL_STATUS
+from meal.env.overcooked import Actions, Overcooked, POT_FULL_STATUS
 from meal.visualization.visualizer import OvercookedVisualizer
 
 # Import your env + viz

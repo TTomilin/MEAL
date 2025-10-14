@@ -32,9 +32,9 @@ from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
 from jax_marl import make
-from meal.env.difficulty_config import apply_difficulty_to_config
-from meal.env.env_selection import generate_sequence
-from meal.env.overcooked.upper_bound import estimate_max_soup
+from meal.env.utils.difficulty_config import apply_difficulty_to_config
+from meal.env.generation.sequence_loader import generate_sequence
+from meal.env.utils.max_soup_calculator import calculate_max_soup
 from meal.wrappers.jaxmarl import (
     CTRolloutManager,
 )
@@ -494,7 +494,7 @@ def main():
         env_name = env.layout_name
         envs.append(env)
         env_names.append(env_name)
-        max_soup_dict[env_name] = estimate_max_soup(env_layout, env.max_steps, n_agents=env.num_agents)
+        max_soup_dict[env_name] = calculate_max_soup(env_layout, env.max_steps, n_agents=env.num_agents)
 
     # Create train and test environments
     train_envs = []

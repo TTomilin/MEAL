@@ -10,8 +10,8 @@ import jax.numpy as jnp
 import numpy as np  # Added numpy import for assertions
 from flax.core import FrozenDict
 
-from meal.env.overcooked.layouts import cramped_room
-from meal.env.overcooked.overcooked import Overcooked, DELIVERY_REWARD
+from meal.env.overcooked.presets import cramped_room
+from meal.env.overcooked_legacy import Overcooked, DELIVERY_REWARD
 
 
 def simulate_reward_processing(reward, shaped_reward, sparse_rewards=False, individual_rewards=False,

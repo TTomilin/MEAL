@@ -3,9 +3,9 @@ from typing import Dict
 import chex
 import jax.numpy as jnp
 
-from meal.env import spaces
-from meal.env.overcooked.common import OBJECT_TO_INDEX
-from meal.env.overcooked.overcooked import Overcooked, State
+from meal.env.utils import spaces
+from meal.env.common import OBJECT_TO_INDEX
+from meal.env.overcooked_legacy import Overcooked, State
 
 # Constants for partial observability
 DEFAULT_VIEW_AHEAD = 3

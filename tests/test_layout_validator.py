@@ -12,10 +12,10 @@ import numpy as np
 from flax.core import FrozenDict
 
 from meal.env import Overcooked
-from meal.env.overcooked.env_generator import (
+from meal.env.generation.layout_generator import (
     generate_random_layout, layout_grid_to_dict
 )
-from meal.env.overcooked.env_validator import (
+from meal.env.generation.layout_validator import (
     evaluate_grid, WALL, FLOOR, AGENT, GOAL, ONION_PILE, POT
 )
 from meal.visualization.visualizer import OvercookedVisualizer, TILE_PIXELS

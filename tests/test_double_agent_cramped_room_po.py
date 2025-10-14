@@ -11,9 +11,9 @@ import jax
 import jax.numpy as jnp
 from flax.core import FrozenDict
 
-from meal.env.overcooked.layouts import cramped_room
-from meal.env.overcooked.overcooked_n_agent import POT_FULL_STATUS, DELIVERY_REWARD
-from meal.env.overcooked.overcooked_po import OvercookedPO
+from meal.env.overcooked.presets import cramped_room
+from meal.env.overcooked import POT_FULL_STATUS, DELIVERY_REWARD
+from meal.env.overcooked_po import OvercookedPO
 from meal.visualization.visualizer_po import OvercookedVisualizerPO
 
 # ---------------------------------------------------------------------

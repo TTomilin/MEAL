@@ -25,8 +25,8 @@ from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
-from meal.env.overcooked.layouts import easy_layouts
-from meal.env.overcooked.upper_bound import estimate_max_soup
+from meal.env.overcooked.presets import easy_layouts_legacy
+from meal.env.utils.max_soup_calculator import calculate_max_soup
 from meal.visualization.visualizer import OvercookedVisualizer
 from meal.registration import make
 from meal.wrappers.logging import LogWrapper
@@ -247,7 +247,7 @@ def run_training():
         print(f"Saved to {save_dir}/config.pckl")
 
     if config.layout_name != "":
-        layout_dict = {"layout": easy_layouts[config.layout_name]}
+        layout_dict = {"layout": easy_layouts_legacy[config.layout_name]}
     else:
         layouts = read_layouts(config)
         layout_dict = {"layout": frozendict_from_layout_repr(
@@ -259,7 +259,7 @@ def run_training():
 
     # Calculate max soup for the layout
     layout_name = config.layout_name if config.layout_name != "" else f"layout_{config.layout_idx}"
-    max_soup_dict = {layout_name: estimate_max_soup(config.layout["layout"], env.max_steps, n_agents=env.num_agents)}
+    max_soup_dict = {layout_name: calculate_max_soup(config.layout["layout"], env.max_steps, n_agents=env.num_agents)}
 
     # Initialize visualizer for gif recording
     visualizer = OvercookedVisualizer(num_agents=env.num_agents)

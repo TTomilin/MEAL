@@ -10,13 +10,13 @@ from flax.core.frozen_dict import FrozenDict
 from jax import lax
 
 from meal.env import MultiAgentEnv
-from meal.env import spaces
-from meal.env.overcooked.common import (
+from meal.env.utils import spaces
+from meal.env.common import (
     OBJECT_TO_INDEX,
     OBJECT_INDEX_TO_VEC,
     DIR_TO_VEC,
     make_overcooked_map)
-from meal.env.overcooked.layouts import overcooked_layouts as layouts
+from meal.env.overcooked.presets import overcooked_layouts as layouts
 
 BASE_REW_SHAPING_PARAMS = {
     "PLACEMENT_IN_POT_REW": 3,  # reward for putting ingredients

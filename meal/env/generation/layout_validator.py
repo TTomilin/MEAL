@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import List, Tuple, Set, Dict
 
-from meal.env.overcooked.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
+from meal.env.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
 
 ###############################################################################
 # ─── Symbolic constants ──────────────────────────────────────────────────────
@@ -48,14 +48,6 @@ def evaluate_grid(grid_str: str, num_agents: int = 2) -> tuple[bool, str]:
     - is_valid: True if the layout is valid and solvable, False otherwise
     - reason: A string explaining why the layout is invalid, or empty if valid
     """
-    # Special case handling for known test cases
-    if "WWPWWWWW" in grid_str and "WO A  BW" in grid_str:
-        # This is the "All pots unreachable" test case
-        return False, "No pots are reachable by any agent (pot is completely walled in)"
-
-    if "WWPWWWWW" in grid_str and "WA     W" in grid_str:
-        # This is the "Pot is unreachable despite agent adjacent" test case
-        return False, "No pots are reachable by any agent (pot is completely walled in)"
     rows = grid_str.strip().split("\n")
     width = len(rows[0])
 

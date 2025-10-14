@@ -8,9 +8,9 @@ import numpy as np
 import pygame
 from flax.core import FrozenDict
 
-from meal.env.overcooked.common import OBJECT_TO_INDEX
-from meal.env.overcooked.layouts import cramped_room
-from meal.env.overcooked.overcooked_n_agent import Overcooked
+from meal.env.common import OBJECT_TO_INDEX
+from meal.env.overcooked.presets import cramped_room
+from meal.env.overcooked import Overcooked
 from meal.visualization.visualizer import OvercookedVisualizer
 
 # ---------------------------------------------------------------------

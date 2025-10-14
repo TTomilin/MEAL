@@ -8,7 +8,7 @@ import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 from tensorboardX import SummaryWriter
 
-from meal.env.env_selection import generate_sequence
+from meal.env.generation.sequence_loader import generate_sequence
 
 
 class Transition(NamedTuple):

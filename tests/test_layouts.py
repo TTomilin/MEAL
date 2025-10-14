@@ -1,4 +1,4 @@
-from meal.env.overcooked.layouts import evaluate_grid
+from meal.env.overcooked.presets import evaluate_grid
 
 
 def test_grid_not_enough_elements():

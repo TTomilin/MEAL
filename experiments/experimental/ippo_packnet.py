@@ -14,8 +14,8 @@ from flax.training.train_state import TrainState
 from experiments.model.decoupled_mlp import Actor, Critic
 from experiments.utils import *
 from experiments.continual.packnet import Packnet, PacknetState
-from meal.env.difficulty_config import apply_difficulty_to_config
-from meal.env.overcooked.upper_bound import estimate_max_soup
+from meal.env.utils.difficulty_config import apply_difficulty_to_config
+from meal.env.utils.max_soup_calculator import calculate_max_soup
 from meal.visualization.visualizer import OvercookedVisualizer
 from meal.registration import make
 from meal.wrappers.logging import LogWrapper
@@ -477,7 +477,7 @@ def main():
 
         # Calculate maximum soup for this environment
         env_name = layout_names[i] if i < len(layout_names) else f"env_{i}"
-        max_soup_dict[env_name] = estimate_max_soup(env_layout, env.max_steps, n_agents=env.num_agents)
+        max_soup_dict[env_name] = calculate_max_soup(env_layout, env.max_steps, n_agents=env.num_agents)
 
     # set extra config parameters based on the environment
     temp_env = envs[0]

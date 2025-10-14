@@ -27,9 +27,9 @@ import jax.numpy as jnp
 import numpy as np
 from flax.core.frozen_dict import FrozenDict
 
-from meal.env import OvercookedNAgent as Overcooked
-from meal.env.overcooked.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
-from meal.env.overcooked.env_validator import (
+from meal.env import Overcooked
+from meal.env.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
+from meal.env.generation.layout_validator import (
     evaluate_grid, UNPASSABLE_TILES, INTERACTIVE_TILES
 )
 

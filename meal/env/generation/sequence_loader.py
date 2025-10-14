@@ -1,13 +1,14 @@
+import ast
 import json
 import random
 from typing import List, Dict, Any, Sequence, Tuple
-import ast
+
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 
-from meal.env.overcooked import hard_layouts, medium_layouts, easy_layouts, overcooked_layouts, single_layouts
-from meal.env.overcooked.env_generator import generate_random_layout
-from meal.env.difficulty_config import DIFFICULTY_PARAMS
+from meal.env.utils.difficulty_config import DIFFICULTY_PARAMS
+from meal.env.generation.layout_generator import generate_random_layout
+from meal.env.overcooked import hard_layouts_legacy, medium_layouts_legacy, easy_layouts_legacy, overcooked_layouts, single_layouts
 
 
 def _parse_layout_string(layout_str: str) -> FrozenDict:
@@ -80,9 +81,9 @@ def _parse_layout_string(layout_str: str) -> FrozenDict:
 def _resolve_pool(names: Sequence[str] | None) -> List[str]:
     """Turn user‐supplied `layout_names` into a concrete list of keys."""
     presets = {
-        "hard_levels": list(hard_layouts),
-        "medium_levels": list(medium_layouts),
-        "easy_levels": list(easy_layouts),
+        "hard_levels": list(hard_layouts_legacy),
+        "medium_levels": list(medium_layouts_legacy),
+        "easy_levels": list(easy_layouts_legacy),
         "single_levels": list(single_layouts),
     }
 
@@ -247,7 +248,8 @@ def generate_sequence(
                 "agent_1_cannot_pick_onions": role_assignment == 1,
                 "agent_1_cannot_pick_plates": role_assignment == 0,
             }
-            print(f"Task {i}: Agent 0 cannot pick {'onions' if role_assignment == 0 else 'plates'}, Agent 1 cannot pick {'plates' if role_assignment == 0 else 'onions'}")
+            print(
+                f"Task {i}: Agent 0 cannot pick {'onions' if role_assignment == 0 else 'plates'}, Agent 1 cannot pick {'plates' if role_assignment == 0 else 'onions'}")
 
     # prefix with index so logs stay ordered
     ordered_names = [f"{i}__{n}" for i, n in enumerate(names)]

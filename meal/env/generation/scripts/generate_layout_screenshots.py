@@ -6,10 +6,10 @@ import numpy as np
 from PIL import Image
 
 from meal.env import Overcooked
-from meal.env.overcooked.layouts import (
-    hard_layouts,
-    medium_layouts,
-    easy_layouts,
+from meal.env.overcooked.presets import (
+    hard_layouts_legacy,
+    medium_layouts_legacy,
+    easy_layouts_legacy,
 )
 from meal.visualization.visualizer import OvercookedVisualizer, TILE_PIXELS
 
@@ -57,8 +57,8 @@ def save_start_states(grouped_layouts, base_dir: str = "../../assets/screenshots
 if __name__ == "__main__":
     save_start_states(
         {
-            "easy": easy_layouts,
-            "medium": medium_layouts,
-            "hard": hard_layouts,
+            "easy": easy_layouts_legacy,
+            "medium": medium_layouts_legacy,
+            "hard": hard_layouts_legacy,
         }
     )

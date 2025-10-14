@@ -21,7 +21,7 @@ from meal.env.overcooked import layout_grid_to_dict
 # running the script directly from the repo root
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
-from meal.env.overcooked.env_validator import (
+from meal.env.generation.layout_validator import (
     evaluate_grid as original_evaluate,
 )
 
