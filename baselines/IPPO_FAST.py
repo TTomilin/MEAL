@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Sequence, Any, Optional, List
 
 import flax
+import numpy as np
 import optax
 import tyro
 import wandb

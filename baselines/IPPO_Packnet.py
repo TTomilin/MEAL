@@ -5,6 +5,7 @@ from typing import Sequence, Any, Optional, List
 
 import flax
 import flax.linen as nn
+import numpy as np
 import optax
 import tyro
 from flax.core.frozen_dict import freeze, unfreeze
