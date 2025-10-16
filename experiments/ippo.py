@@ -1095,13 +1095,13 @@ def main():
         rng, *env_rngs = jax.random.split(rng, len(envs) + 1)
 
         visualizer = None
-        for i, (rng, env) in enumerate(zip(env_rngs, envs)):
+        for task_idx, (rng, env) in enumerate(zip(env_rngs, envs)):
             # --- Train on environment i using the *current* ewc_state ---
-            runner_state, metrics = train_on_environment(rng, train_state, env, cl_state, i)
+            runner_state, metrics = train_on_environment(rng, train_state, env, cl_state, task_idx)
             train_state = runner_state[0]
             cl_state = runner_state[6]
 
-            importance = cl.compute_importance(train_state.params, env, network, i, rng, cfg.use_cnn,
+            importance = cl.compute_importance(train_state.params, env, network, task_idx, rng, cfg.use_cnn,
                                                cfg.importance_episodes, cfg.importance_steps,
                                                cfg.normalize_importance)
 
@@ -1111,18 +1111,18 @@ def main():
                 if visualizer is None:
                     visualizer = create_visualizer(temp_env.num_agents, cfg.env_name)
                 # Generate & log a GIF after finishing task i
-                env_name = layout_names[i]
-                states = record_gif_of_episode(cfg, train_state, env, network, i, cfg.gif_len)
+                env_name = layout_names[task_idx]
+                states = record_gif_of_episode(cfg, train_state, env, network, task_idx, cfg.gif_len)
+                file_path = f"{exp_dir}/task_{task_idx}_{env_name}.gif"
                 # Pass environment instance to PO visualizer for view highlighting
                 if cfg.env_name == "overcooked_po":
-                    visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir,
-                                       env=env)
+                    visualizer.animate(states, out_path=file_path, env=env)
                 else:
-                    visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir)
+                    visualizer.animate(states, out_path=file_path)
 
             # save the model
             repo_root = Path(__file__).resolve().parent.parent
-            path = f"{repo_root}/checkpoints/overcooked/{cfg.cl_method}/{run_name}/model_env_{i + 1}"
+            path = f"{repo_root}/checkpoints/overcooked/{cfg.cl_method}/{run_name}/model_env_{task_idx + 1}"
             save_params(path, train_state, env_kwargs=env.layout, layout_name=env.layout_name, config=cfg)
 
             if cfg.single_task_idx is not None:
