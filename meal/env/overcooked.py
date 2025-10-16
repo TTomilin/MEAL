@@ -762,9 +762,8 @@ class Overcooked(MultiAgentEnv):
 
         # number of plates in player hands < number ready/cooking/partially full pot
         num_plates_in_inv = jnp.sum(inventory == OBJECT_TO_INDEX["plate"])
-        pot_loc_layer = jnp.array(maze_map[padding:-padding, padding:-padding, 0] == OBJECT_TO_INDEX["pot"],
-                                  dtype=jnp.uint8)
-        padded_map = maze_map[padding:-padding, padding:-padding, 2]
+        pot_loc_layer = jnp.array(maze_map[..., 0] == OBJECT_TO_INDEX["pot"], dtype=jnp.uint8)
+        padded_map = maze_map[..., 2]
         num_notempty_pots = jnp.sum((padded_map != POT_EMPTY_STATUS) * pot_loc_layer)
         is_dish_pickup_useful = num_plates_in_inv < num_notempty_pots
 
