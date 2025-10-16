@@ -51,7 +51,7 @@ class OvercookedVisualizer:
         return frame
 
     # ---------- sequence / GIF ----------
-    def animate(self, state_seq: Sequence[object], out_path: str, fps: int = 10, pad_to_max: bool = True) -> str:
+    def animate(self, state_seq: Sequence[object], out_path: str, fps: int = 10, pad_to_max: bool = False) -> str:
         """
         Render a sequence of env states to an animated GIF (palette-safe).
         """
@@ -62,11 +62,11 @@ class OvercookedVisualizer:
             for s in state_seq
         ]
 
-        # 2) optional pad all to common WxH (so GIF doesn't jump)
+        # 2) optional pad all layouts to the largest WxH
         if pad_to_max:
             maxH = max(ds.H for ds in dseq)
-        maxW = max(ds.W for ds in dseq)
-        dseq = [ds.pad_to(maxH, maxW) for ds in dseq]
+            maxW = max(ds.W for ds in dseq)
+            dseq = [ds.pad_to(maxH, maxW) for ds in dseq]
 
         # 3) paint frames
         frames = []
