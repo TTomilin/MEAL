@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np  # Added numpy import for assertions
 from flax.core import FrozenDict
 
-from meal.env.overcooked.presets import cramped_room
+from meal.env.layouts.presets import cramped_room
 from meal.env.overcooked_legacy import Overcooked, DELIVERY_REWARD
 
 

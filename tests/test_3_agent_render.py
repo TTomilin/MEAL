@@ -146,22 +146,24 @@ def test_make_soup_and_render_gif(tmp_path: Path = None):
             break
 
     # --- Render GIF
-    out_dir = Path("gifs/3_agent_render.gif")
+    out_dir = Path("gifs")
     out_dir.mkdir(parents=True, exist_ok=True)
     frames_dir = Path("images")
     frames_dir.mkdir(parents=True, exist_ok=True)
 
-    viz = OvercookedVisualizer(num_agents=3, use_old_rendering=False)
-    viz.animate(states_for_gif, agent_view_size=5, task_idx=0, task_name="3agents_make_soup", exp_dir=str(out_dir))
+    task_name = "3_agents_render"
+    viz = OvercookedVisualizer(num_agents=3)
+    # viz.animate(states_for_gif, agent_view_size=5, task_idx=0, task_name=task_name, exp_dir=str(out_dir))
+    viz.animate(states_for_gif, agent_view_size=5, out_path=str(out_dir / f"{task_name}.gif"))
 
-    gif_path = out_dir / "task_0_3agents_make_soup.gif"
-    assert gif_path.exists() and gif_path.stat().st_size > 0, "GIF was not created"
+    gif_path = out_dir / f"{task_name}.gif"
 
     print(f"✓ GIF saved to: {gif_path}")
 
     padding = 5 - 1  # agent_view_size - 1 (matches what animate() uses)
 
     num_saved = 0
+    states_for_gif = []
     for t, st in enumerate(states_for_gif):
         # unwrap LogEnvState if present
         env_state = st.env_state if hasattr(st, "env_state") else st

@@ -1,31 +1,35 @@
 import json
-from dataclasses import dataclass, field
-from functools import partial
 from pathlib import Path
-from typing import Sequence, Any, Optional, List
 
-import flax
 import numpy as np
-import optax
-import tyro
-import wandb
-from flax.core.frozen_dict import freeze, unfreeze
-from flax.training.train_state import TrainState
 from jax._src.flatten_util import ravel_pytree
 
-from experiments.model.cnn import ActorCritic as CNNActorCritic
-from experiments.model.mlp import ActorCritic as MLPActorCritic
-from experiments.utils import *
 from experiments.continual.agem import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
     update_agem_memory
-from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
-from meal.env.utils.difficulty_config import apply_difficulty_to_config
-from meal.env.utils.max_soup_calculator import calculate_max_soup
+
+from typing import Sequence, Any, Optional, List
+
+import flax
+import optax
+from flax.core.frozen_dict import freeze, unfreeze
+from flax.training.train_state import TrainState
+
 from meal.registration import make
 from meal.wrappers.logging import LogWrapper
+from meal.env.utils.max_soup_calculator import calculate_max_soup
+from experiments.model.mlp import ActorCritic as MLPActorCritic
+from experiments.model.cnn import ActorCritic as CNNActorCritic
+from experiments.utils import *
+from experiments.continual.ewc import EWC
+
+import wandb
+from functools import partial
+from dataclasses import dataclass, field
+import tyro
+from tensorboardX import SummaryWriter
 
 
 @dataclass
@@ -92,8 +96,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
-    env_name: str = "overcooked_n_agent"
-    num_agents: int = 2  # number of agents in the environment
+    env_name: str = "overcooked_po"
     seq_length: int = 10
     repeat_sequence: int = 1
     strategy: str = "generate"
@@ -178,10 +181,6 @@ def main():
     strategy = cfg.strategy
     seed = cfg.seed
 
-    # Set height_min, height_max, width_min, width_max, and wall_density based on difficulty
-    if difficulty:
-        apply_difficulty_to_config(cfg, difficulty)
-
     # Set default regularization coefficient based on the CL method if not specified
     if cfg.reg_coef is None:
         if cfg.cl_method.lower() == "ewc":
@@ -201,7 +200,6 @@ def main():
 
     # generate a sequence of tasks
     cfg.env_kwargs, layout_names = generate_sequence(
-        num_agents=cfg.num_agents,
         sequence_length=seq_length,
         strategy=strategy,
         layout_names=cfg.layouts,
@@ -210,14 +208,8 @@ def main():
         width_rng=(cfg.width_min, cfg.width_max),
         wall_density=cfg.wall_density,
         layout_file=cfg.layout_file,
+        complementary_restrictions=cfg.complementary_restrictions,
     )
-
-    # Add view parameters for PO environments when difficulty is specified
-    if cfg.env_name == "overcooked_po" and difficulty:
-        for env_args in cfg.env_kwargs:
-            env_args["view_ahead"] = cfg.view_ahead
-            env_args["view_sides"] = cfg.view_sides
-            env_args["view_behind"] = cfg.view_behind
 
     # Add random_reset parameter to all environments
     for env_args in cfg.env_kwargs:
@@ -236,7 +228,7 @@ def main():
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
     network = "cnn" if cfg.use_cnn else "mlp"
-    run_name = f'{cfg.alg_name}_{cfg.cl_method}_{difficulty}_{cfg.num_agents}agents_{network}_seq{seq_length}_{strategy}_seed_{seed}_{timestamp}'
+    run_name = f'{cfg.alg_name}_{cfg.cl_method}_{difficulty}_{network}_seq{seq_length}_{strategy}_seed_{seed}_{timestamp}'
     exp_dir = os.path.join("runs", run_name)
 
     # Initialize WandB
@@ -297,7 +289,7 @@ def main():
             # Return the original layouts without modification
             env_layouts = []
             for env_args in cfg.env_kwargs:
-                temp_env = make(cfg.env_name, **env_args, num_agents=cfg.num_agents)
+                temp_env = make(cfg.env_name, **env_args)
                 env_layouts.append(temp_env.layout)
             return env_layouts, agent_restrictions_list
 
@@ -305,7 +297,7 @@ def main():
         # Create environments first
         envs = []
         for env_args in cfg.env_kwargs:
-            env = make(cfg.env_name, **env_args, num_agents=cfg.num_agents)
+            env = make(cfg.env_name, **env_args)
             envs.append(env)
 
         # find the environment with the largest observation space
@@ -420,8 +412,7 @@ def main():
                 '''
 
                 key, state_env, obs, _, total_reward, total_soup, step_count = state
-                subkeys = jax.random.split(key, num_agents + 2)
-                key, *agent_keys, key_s = subkeys
+                key, key_a0, key_a1, key_s = jax.random.split(key, 4)
 
                 # ***Create a batched copy for the network only.***
                 # For each agent, expand dims to get shape (1, H, W, C) then flatten to (1, -1)
@@ -447,16 +438,20 @@ def main():
                     return action, value
 
                 # Get action distributions
-                actions = {}
-                for key_agent, agent in zip(agent_keys, agents):
-                    act, _ = select_action(train_state, key_agent, batched_obs[agent])
-                    actions[agent] = act
+                action_a1, _ = select_action(train_state, key_a0, batched_obs["agent_0"])
+                action_a2, _ = select_action(train_state, key_a1, batched_obs["agent_1"])
+
+                # Sample actions
+                actions = {
+                    "agent_0": action_a1,
+                    "agent_1": action_a2
+                }
 
                 # Environment step
                 next_obs, next_state, reward, done_step, info = env.step(key_s, state_env, actions)
                 done = done_step["__all__"]
-                reward = sum(reward[agent] for agent in agents)  # Sum of all agent rewards
-                soups_this_step = sum(info["soups"][agent] for agent in agents)
+                reward = reward["agent_0"]  # Common reward
+                soups_this_step = info["soups"]["agent_0"] + info["soups"]["agent_1"]
                 total_reward += reward
                 total_soup += soups_this_step
                 step_count += 1
@@ -487,8 +482,7 @@ def main():
             # Create the environment with agent restrictions
             agent_restrictions = agent_restrictions_list[eval_idx]
             view_params = get_view_params()
-            env = make(cfg.env_name, layout=env, num_agents=cfg.num_agents, agent_restrictions=agent_restrictions,
-                       **view_params)  # Create the environment
+            env = make(cfg.env_name, layout=env, agent_restrictions=agent_restrictions, **view_params)
 
             # Run k episodes
             all_rewards, all_soups = jax.vmap(lambda k: run_episode_while(env, k, cfg.eval_num_steps))(
@@ -512,7 +506,7 @@ def main():
         agent_restrictions = agent_restrictions_list[i]
         view_params = get_view_params()
         env = make(cfg.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i,
-                   agent_restrictions=agent_restrictions, num_agents=cfg.num_agents, **view_params)
+                   agent_restrictions=agent_restrictions, **view_params)
         env = LogWrapper(env, replace_info=False)
         env_name = env.layout_name
         envs.append(env)
@@ -521,10 +515,7 @@ def main():
 
     # set extra config parameters based on the environment
     temp_env = envs[0]
-    num_agents = temp_env.num_agents
-    agents = temp_env.agents
-
-    cfg.num_actors = num_agents * cfg.num_envs
+    cfg.num_actors = temp_env.num_agents * cfg.num_envs
     cfg.num_updates = cfg.steps_per_task // cfg.num_steps // cfg.num_envs
     cfg.minibatch_size = (cfg.num_actors * cfg.num_steps) // cfg.num_minibatches
 
@@ -542,18 +533,14 @@ def main():
                      cfg.shared_backbone, cfg.big_network, cfg.use_task_id, cfg.regularize_heads,
                      cfg.use_layer_norm)
 
-    # Get the correct observation dimension by simulating the batchify process
-    # This ensures the network is initialized with the same shape it will receive during training
-    rng = jax.random.PRNGKey(cfg.seed)
-    rng, reset_rng = jax.random.split(rng)
-    reset_rngs = jax.random.split(reset_rng, cfg.num_envs)
-    temp_obs, _ = jax.vmap(temp_env.reset, in_axes=(0,))(reset_rngs)
-    temp_obs_batch = batchify(temp_obs, temp_env.agents, cfg.num_actors, not cfg.use_cnn)
-    obs_dim = temp_obs_batch.shape[1]  # Get the actual dimension after batchify
+    obs_dim = temp_env.observation_space().shape
+    if not cfg.use_cnn:
+        obs_dim = np.prod(obs_dim)
 
     # Initialize the network
+    rng = jax.random.PRNGKey(seed)
     rng, network_rng = jax.random.split(rng)
-    init_x = jnp.zeros((1, obs_dim))
+    init_x = jnp.zeros((1, *obs_dim)) if cfg.use_cnn else jnp.zeros((1, obs_dim,))
     network_params = network.init(network_rng, init_x)
 
     # Initialize the optimizer
@@ -625,10 +612,12 @@ def main():
                 rng, _rng = jax.random.split(rng)
 
                 # prepare the observations for the network
-                obs_batch = batchify(last_obs, env.agents, cfg.num_actors, not cfg.use_cnn)  # (num_actors, obs_dim)
+                obs_batch = batchify(last_obs, env.agents, cfg.num_actors,
+                                     not cfg.use_cnn)  # (num_actors, obs_dim)
+                # print("obs_shape", obs_batch.shape)
 
                 # apply the policy network to the observations to get the suggested actions and their values
-                pi, value, _ = network.apply(train_state.params, obs_batch, env_idx=env_idx)
+                pi, value, dormant_ratio = network.apply(train_state.params, obs_batch, env_idx=env_idx)
 
                 # Sample and action from the policy
                 action = pi.sample(seed=_rng)
@@ -661,16 +650,20 @@ def main():
                     # Environment now provides individual delivery rewards directly
                     reward = jax.tree_util.tree_map(lambda x, y:
                                                     x + y * rew_shaping_anneal(current_timestep),
-                                                    reward, info["shaped_reward"])
+                                                    reward,
+                                                    info["shaped_reward"]
+                                                    )
                 else:
                     # Default behavior: shared delivery rewards + individual shaped rewards
-                    # Convert individual delivery rewards to shared rewards (all agents get total)
-                    total_delivery_reward = sum(reward[agent] for agent in env.agents)
-                    shared_delivery_rewards = {agent: total_delivery_reward for agent in env.agents}
+                    # Convert individual delivery rewards to shared rewards (both agents get total)
+                    total_delivery_reward = reward["agent_0"] + reward["agent_1"]
+                    shared_delivery_rewards = {"agent_0": total_delivery_reward, "agent_1": total_delivery_reward}
 
                     reward = jax.tree_util.tree_map(lambda x, y:
                                                     x + y * rew_shaping_anneal(current_timestep),
-                                                    shared_delivery_rewards, info["shaped_reward"])
+                                                    shared_delivery_rewards,
+                                                    info["shaped_reward"]
+                                                    )
 
                 transition = Transition(
                     batchify(done, env.agents, cfg.num_actors, not cfg.use_cnn).squeeze(),
@@ -756,9 +749,9 @@ def main():
                 def _update_minbatch(carry, batch_info):
                     '''
                     performs a single update minibatch in the training loop
-                    @param carry: the current state of the training and cl_state
+                    @param train_state: the current state of the training
                     @param batch_info: the information of the batch
-                    returns the updated train_state, cl_state and the total loss
+                    returns the updated train_state and the total loss
                     '''
                     train_state, cl_state = carry
                     # unpack the batch information
@@ -1016,28 +1009,26 @@ def main():
                         metrics[k] = v.mean()
 
             # Soup section
-            # Agent-agnostic soup counting
-            agent_soups = {}
-            soup_delivered = 0
-            for agent in env.agents:
-                agent_soup = info["soups"][agent].sum()
-                agent_soups[agent] = agent_soup
-                soup_delivered += agent_soup
-                metrics[f"Soup/{agent}_soup"] = agent_soup
-
+            agent_0_soup = info["soups"]["agent_0"].sum()
+            agent_1_soup = info["soups"]["agent_1"].sum()
+            soup_delivered = agent_0_soup + agent_1_soup
             episode_frac = cfg.num_steps / env.max_steps
+            metrics["Soup/agent_0_soup"] = agent_0_soup
+            metrics["Soup/agent_1_soup"] = agent_1_soup
             metrics["Soup/total"] = soup_delivered
             metrics["Soup/scaled"] = soup_delivered / (max_soup_dict[env_names[env_idx]] * episode_frac)
             metrics.pop('soups', None)
 
             # Rewards section
-            # Agent-agnostic reward logging
-            for agent in env.agents:
-                metrics[f"General/shaped_reward_{agent}"] = metrics["shaped_reward"][agent]
-                metrics[f"General/shaped_reward_annealed_{agent}"] = metrics[
-                                                                         f"General/shaped_reward_{agent}"] * rew_shaping_anneal(
-                    current_timestep)
+            metrics["General/shaped_reward_agent0"] = metrics["shaped_reward"]["agent_0"]
+            metrics["General/shaped_reward_agent1"] = metrics["shaped_reward"]["agent_1"]
             metrics.pop('shaped_reward', None)
+            metrics["General/shaped_reward_annealed_agent0"] = metrics[
+                                                                   "General/shaped_reward_agent0"] * rew_shaping_anneal(
+                current_timestep)
+            metrics["General/shaped_reward_annealed_agent1"] = metrics[
+                                                                   "General/shaped_reward_agent1"] * rew_shaping_anneal(
+                current_timestep)
 
             # Advantages and Targets section
             metrics["Advantage_Targets/advantages"] = advantages.mean()
@@ -1124,8 +1115,8 @@ def main():
                 if visualizer is None:
                     visualizer = create_visualizer(temp_env.num_agents, cfg.env_name)
                 # Generate & log a GIF after finishing task i
-                env_name = layout_names[i]
-                states = record_gif_of_episode(cfg, train_state, env, network, i, cfg.gif_len)
+                env_name = f"{i}__{env.layout_name}"
+                states = record_gif_of_episode(cfg, train_state, env, network, env_idx=i, max_steps=cfg.gif_len)
                 # Pass environment instance to PO visualizer for view highlighting
                 if cfg.env_name == "overcooked_po":
                     visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir,

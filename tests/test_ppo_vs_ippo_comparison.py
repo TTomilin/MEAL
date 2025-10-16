@@ -11,12 +11,12 @@ from flax.core import FrozenDict
 from flax.training.train_state import TrainState
 import optax
 
-from meal.env.overcooked.presets import cramped_room
+from meal.env.layouts.presets import cramped_room
 from meal.env.overcooked_legacy import Overcooked
 from meal.env.overcooked import Overcooked as OvercookedNAgent
 
-from experiments.ppo import Config as PPOConfig
-from experiments.ippo import Config as IPPOConfig
+from experiments.ippo import Config as PPOConfig
+from experiments.ippo_po import Config as IPPOConfig
 from experiments.model.mlp import ActorCritic as MLPActorCritic
 from experiments.utils import batchify, unbatchify
 

@@ -5,8 +5,7 @@ This module defines the difficulty settings for environment generation,
 including height/width ranges and wall density for each difficulty level.
 """
 
-from typing import Dict, Tuple
-
+from typing import Dict
 
 # Difficulty parameters for environment generation
 DIFFICULTY_PARAMS = {
@@ -70,26 +69,6 @@ def get_difficulty_params(difficulty: str) -> Dict:
 
     if difficulty_lower not in DIFFICULTY_PARAMS:
         raise ValueError(f"Unknown difficulty level: {difficulty}. "
-                        f"Available levels: {list(DIFFICULTY_PARAMS.keys())}")
+                         f"Available levels: {list(DIFFICULTY_PARAMS.keys())}")
 
     return DIFFICULTY_PARAMS[difficulty_lower].copy()
-
-
-def apply_difficulty_to_config(config, difficulty: str) -> None:
-    """
-    Apply difficulty parameters to a configuration object.
-
-    Args:
-        config: Configuration object to modify
-        difficulty: The difficulty level to apply
-    """
-    params = get_difficulty_params(difficulty)
-
-    config.height_min = params["height_min"]
-    config.height_max = params["height_max"]
-    config.width_min = params["width_min"]
-    config.width_max = params["width_max"]
-    config.wall_density = params["wall_density"]
-    config.view_ahead = params["view_ahead"]
-    config.view_sides = params["view_sides"]
-    config.view_behind = params["view_behind"]

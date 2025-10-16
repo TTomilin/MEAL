@@ -576,9 +576,9 @@ WWWWWWWWWWW
 
 # Load generated layouts from JSON files
 _current_dir = os.path.dirname(os.path.abspath(__file__))
-easy_generated_layouts = _load_layouts_from_json(os.path.join(_current_dir, "layouts_20_easy.json"))
-medium_generated_layouts = _load_layouts_from_json(os.path.join(_current_dir, "layouts_20_medium.json"))
-hard_generated_layouts = _load_layouts_from_json(os.path.join(_current_dir, "layouts_20_hard.json"))
+easy_generated_layouts = _load_layouts_from_json(os.path.join(_current_dir, "gen_20_easy.json"))
+medium_generated_layouts = _load_layouts_from_json(os.path.join(_current_dir, "gen_20_medium.json"))
+hard_generated_layouts = _load_layouts_from_json(os.path.join(_current_dir, "gen_20_hard.json"))
 
 # Hard layouts
 hard_layouts_legacy = {
@@ -640,3 +640,36 @@ overcooked_layouts = {
     **medium_layouts,
     **easy_layouts,
 }
+
+# Layouts for a single agent
+single_layouts = {
+    **easy_layouts,
+    **medium_layouts,
+}
+
+# Difficulty-based layout collections
+difficulty_layouts = {
+    "easy": easy_layouts,
+    "medium": medium_layouts,
+    "hard": hard_layouts,
+}
+
+def get_layouts_by_difficulty(difficulty: str = None):
+    """
+    Get layouts filtered by difficulty level.
+
+    Args:
+        difficulty: One of 'easy', 'medium', 'hard', or None for all layouts
+
+    Returns:
+        Dictionary of layouts for the specified difficulty level
+    """
+    if difficulty is None:
+        return overcooked_layouts
+
+    difficulty = difficulty.lower()
+    if difficulty not in difficulty_layouts:
+        available = list(difficulty_layouts.keys())
+        raise ValueError(f"Invalid difficulty '{difficulty}'. Available options: {available}")
+
+    return difficulty_layouts[difficulty]

@@ -1,20 +1,3 @@
-#!/usr/bin/env python
-"""Random Overcooked layout generator + visualisers (refactored).
-
-Key changes compared with the original implementation
------------------------------------------------------
-1. Magic characters have been replaced by descriptive tile constants
-   (FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT).
-2. Variable and function names have been made more explicit for
-   readability.
-3. ``wall_density`` now measures the *total* fraction of cells that are
-   unpassable to the agent. Interactive tiles (goal, pot, onion‐pile,
-   plate‐pile) are placed *before* extra walls are added so that they
-   contribute to the density budget.
-4. When the generator runs out of empty cells at any placement stage it
-   prints a warning and retries with a fresh layout instead of raising
-   a cryptic error.
-"""
 from __future__ import annotations
 
 import argparse
@@ -27,11 +10,9 @@ import jax.numpy as jnp
 import numpy as np
 from flax.core.frozen_dict import FrozenDict
 
-from meal.env import Overcooked
 from meal.env.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
-from meal.env.generation.layout_validator import (
-    evaluate_grid, UNPASSABLE_TILES, INTERACTIVE_TILES
-)
+from meal.env.generation.layout_validator import evaluate_grid, UNPASSABLE_TILES, INTERACTIVE_TILES
+from meal.env.utils.difficulty_config import get_difficulty_params
 
 
 ###############################################################################
@@ -119,9 +100,6 @@ def remove_unreachable_items(grid: List[List[str]]) -> bool:
 
     Returns True if any items were removed or floor tiles were replaced, False otherwise.
     """
-    # Convert grid to string representation
-    grid_str = "\n".join("".join(row) for row in grid)
-
     # Find agent positions
     agents = [(i, j) for i, row in enumerate(grid) for j, ch in enumerate(row) if ch == AGENT]
     if len(agents) < 1:
@@ -205,8 +183,8 @@ def remove_unreachable_items(grid: List[List[str]]) -> bool:
 
 
 def generate_random_layout(
-        *,
         num_agents: int = 2,
+        difficulty: str | None = None,
         height_rng: Tuple[int, int] = (5, 10),
         width_rng: Tuple[int, int] = (5, 10),
         wall_density: float = 0.15,
@@ -230,6 +208,12 @@ def generate_random_layout(
     out of empty cells or the resulting grid fails the solvability check.
     """
     rng = random.Random(seed)
+
+    if difficulty:
+        params = get_difficulty_params(difficulty)
+        height_rng = params["height_rng"]
+        width_rng = params["width_rng"]
+        wall_density = params["wall_density"]
 
     for attempt in range(1, max_attempts + 1):
         height = rng.randint(*height_rng)
@@ -349,7 +333,9 @@ def _crop_to_grid(state, view_size: int):
 
 
 def oc_show(layout: FrozenDict, num_agents: int = 2):
+    from meal.env import Overcooked
     from meal.visualization.visualizer import OvercookedVisualizer, TILE_PIXELS
+
     env = Overcooked(layout=layout, layout_name="random_gen", random_reset=False, num_agents=num_agents)
     _, state = env.reset(jax.random.PRNGKey(0))
     grid = np.asarray(_crop_to_grid(state, env.agent_view_size))
@@ -379,6 +365,7 @@ def main(argv=None):
     parser.add_argument("--save", action="store_true", help="save PNG to assets/screenshots/generated/")
     args = parser.parse_args(argv)
 
+    from meal.env import Overcooked
     from meal.visualization.visualizer import OvercookedVisualizer, TILE_PIXELS
 
     # Override parameters based on difficulty

@@ -10,13 +10,14 @@ from flax.core.frozen_dict import FrozenDict
 from jax import lax
 
 from meal.env import MultiAgentEnv
+from meal.env.generation.layout_generator import generate_random_layout
 from meal.env.utils import spaces
 from meal.env.common import (
     OBJECT_TO_INDEX,
     OBJECT_INDEX_TO_VEC,
     DIR_TO_VEC,
     make_overcooked_map)
-from meal.env.overcooked.presets import overcooked_layouts as layouts
+from meal.env.layouts.presets import overcooked_layouts as layouts
 
 BASE_REW_SHAPING_PARAMS = {
     "PLACEMENT_IN_POT_REW": 3,  # reward for putting ingredients
@@ -70,8 +71,9 @@ class Overcooked(MultiAgentEnv):
     def __init__(
             self,
             layout=None,
-            layout_name="cramped_room",
-            random_reset: bool = True,
+            layout_name=None,
+            difficulty: str = 'easy',
+            random_reset: bool = False,
             random_agent_start: bool = False,
             max_steps: int = 400,
             task_id: int = 0,
@@ -81,9 +83,20 @@ class Overcooked(MultiAgentEnv):
     ):
         super().__init__(num_agents=num_agents)
 
-        # Set layout first before accessing its properties
-        self.layout = layout if layout is not None else FrozenDict(layouts[layout_name])
-        self.layout_name = layout_name
+        # 1) explicit layout given
+        if layout is not None:
+            self.layout = layout if isinstance(layout, FrozenDict) else FrozenDict(layout)
+            self.layout_name = layout_name or "custom"
+        # 2) named preset layout given
+        elif layout_name is not None:
+            if layout_name not in layouts:
+                raise ValueError(f"Unknown layout_name '{layout_name}'. Available: {sorted(layouts.keys())}")
+            self.layout = FrozenDict(layouts[layout_name])
+            self.layout_name = layout_name
+        # 3) otherwise: generate by difficulty
+        else:
+            grid, self.layout = generate_random_layout(num_agents=num_agents, difficulty=difficulty)
+            self.layout_name = f"{difficulty}_gen_{task_id}"
 
         # self.obs_shape = (agent_view_size, agent_view_size, 3)
         # Observations given by 26 channels, most of which are boolean masks
@@ -93,6 +106,7 @@ class Overcooked(MultiAgentEnv):
         self.obs_channels = 18 + 4 * num_agents  # 26 when n = 2
         self.obs_shape = (self.width, self.height, self.obs_channels)
 
+        self.difficulty = difficulty
         self.agent_view_size = 5  # Hard coded. Only affects map padding -- not observations.
         self.agents = [f"agent_{i}" for i in range(num_agents)]
         self.start_idx = None if start_idx is None else jnp.array(start_idx, jnp.uint32)
@@ -187,25 +201,6 @@ class Overcooked(MultiAgentEnv):
         pot_cook_time = pot_status * (pot_status < POT_FULL_STATUS)
         soup_ready = pot_mask * (pot_status == POT_READY_STATUS) + dish_mask
         urgency = jnp.ones_like(obj, jnp.uint8) * ((self.max_steps - state.time) < URGENCY_CUTOFF)
-
-        env_layers = jnp.stack([
-            pot_mask.astype(jnp.uint8),  # 10
-            (obj == OBJECT_TO_INDEX["wall"]).astype(jnp.uint8),
-            (obj == OBJECT_TO_INDEX["onion_pile"]).astype(jnp.uint8),
-            jnp.zeros_like(obj, jnp.uint8),  # tomato‐pile (unused)
-            (obj == OBJECT_TO_INDEX["plate_pile"]).astype(jnp.uint8),
-            (obj == OBJECT_TO_INDEX["goal"]).astype(jnp.uint8),  # 15
-            onions_in_pot.astype(jnp.uint8),
-            jnp.zeros_like(obj, jnp.uint8),  # tomatoes in pot (unused)
-            onions_in_soup.astype(jnp.uint8),
-            jnp.zeros_like(obj, jnp.uint8),  # tomatoes in soup (unused)
-            pot_cook_time.astype(jnp.uint8),  # 20
-            soup_ready.astype(jnp.uint8),
-            (obj == OBJECT_TO_INDEX["plate"]).astype(jnp.uint8),
-            (obj == OBJECT_TO_INDEX["onion"]).astype(jnp.uint8),
-            jnp.zeros_like(obj, jnp.uint8),  # tomatoes (unused)
-            urgency.astype(jnp.uint8),  # 25
-        ], axis=0)  # → (16,H,W)
 
         # ────────────────────── agent-specific layers ──────────────────────────
         pos_layers = self._pos_layers(state)  # (n,H,W)
@@ -846,6 +841,3 @@ class Overcooked(MultiAgentEnv):
             "time": spaces.Discrete(self.max_steps),
             "terminal": spaces.Discrete(2),
         })
-
-    def max_steps(self) -> int:
-        return self.max_steps

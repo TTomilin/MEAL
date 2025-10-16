@@ -9,7 +9,7 @@ import pygame
 from flax.core import FrozenDict
 
 from meal.env.common import OBJECT_TO_INDEX
-from meal.env.overcooked.presets import cramped_room
+from meal.env.layouts.presets import cramped_room
 from meal.env.overcooked import Overcooked
 from meal.visualization.visualizer import OvercookedVisualizer
 

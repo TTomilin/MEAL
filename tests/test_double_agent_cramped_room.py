@@ -13,7 +13,7 @@ import numpy as np
 import pygame
 from flax.core import FrozenDict
 
-from meal.env.overcooked.presets import cramped_room
+from meal.env.layouts.presets import cramped_room
 from meal.env.overcooked import POT_FULL_STATUS, Overcooked, DELIVERY_REWARD
 from meal.visualization.visualizer import OvercookedVisualizer
 
@@ -27,20 +27,11 @@ obs, state = env.reset(rng)
 # convenience shortcuts
 pot_status = lambda st: int(st.maze_map[env.agent_view_size - 2, 2, 2])  # row0-pad, col2, channel 2
 frames = []
-viz = OvercookedVisualizer(num_agents=2, use_old_rendering=False)
+viz = OvercookedVisualizer(num_agents=2)
 
-
-def add_frame(st):
-    # Use the visualizer's render method to get the frame
-    # This will use our updated visualization code that properly handles agent inventory and pot objects
-    surface = viz.render(env.agent_view_size, st)
-
-    # Convert pygame surface to numpy array
-    frame = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
-    frames.append(frame)
-
-
-add_frame(state)
+# Collect states for GIF
+states_for_gif = []
+states_for_gif.append(state)
 
 # ---------------------------------------------------------------------
 # 2. Pre-baked action list (see analysis for reasoning)
@@ -87,14 +78,14 @@ for t, act in enumerate(actions, start=1):
     total_reward += float(rew["agent_0"])
     total_shaped_1 += float(info["shaped_reward"]["agent_0"])
     total_shaped_2 += float(info["shaped_reward"]["agent_1"])
-    add_frame(state)
+    states_for_gif.append(state)
 
 # ---------------------------------------------------------------------
 # 4. Write GIF
 # ---------------------------------------------------------------------
 gif_path = "gifs/double_agent_cramped_room.gif"
 makedirs("gifs", exist_ok=True)
-iio.imwrite(gif_path, frames, loop=0, fps=12)
+viz.animate(states_for_gif, agent_view_size=5, out_path=gif_path)
 print(f"GIF saved to {gif_path}")
 
 # ---------------------------------------------------------------------

@@ -8,7 +8,7 @@ from flax.core.frozen_dict import FrozenDict
 
 from meal.env.utils.difficulty_config import DIFFICULTY_PARAMS
 from meal.env.generation.layout_generator import generate_random_layout
-from meal.env.overcooked import hard_layouts_legacy, medium_layouts_legacy, easy_layouts_legacy, overcooked_layouts, single_layouts
+from meal.env.layouts.presets import hard_layouts_legacy, medium_layouts_legacy, easy_layouts_legacy, overcooked_layouts, single_layouts
 
 
 def _parse_layout_string(layout_str: str) -> FrozenDict:
@@ -111,7 +111,7 @@ def _random_no_repeat(pool: List[str], k: int) -> List[str]:
 
 def generate_sequence(
         sequence_length: int | None = None,
-        strategy: str = "random",
+        strategy: str = "generate",
         layout_names: Sequence[str] | None = None,
         seed: int | None = None,
         num_agents: int = 2,

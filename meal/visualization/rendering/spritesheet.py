@@ -1,7 +1,7 @@
 import pygame
 from pygame.locals import DOUBLEBUF, HWSURFACE, QUIT, RESIZABLE, VIDEORESIZE
 
-from meal.visualization.utils import load_from_json
+from meal.visualization.utils.io import load_from_json
 
 
 def run_static_resizeable_window(surface, fps=30):
@@ -96,13 +96,10 @@ class MultiFramePygameImage:
     def load_frames_rectangles(json_path):
         frames_json = load_from_json(json_path)
 
-        if (
-                "textures" in frames_json.keys()
-        ):  # check if its format of soups.json
+        if "textures" in frames_json.keys():  # check if its format of soups.json
             # Get the scale value (default to 1 if not present)
             scale = float(frames_json["textures"][0].get("scale", "1.0"))
             frames = frames_json["textures"][0]["frames"]
-
         else:  # assume its format of objects.json, terrain.json and chefs.json
             # Get the scale value (default to 1 if not present)
             scale = float(frames_json.get("meta", {}).get("scale", "1.0"))

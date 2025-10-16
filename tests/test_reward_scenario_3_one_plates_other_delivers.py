@@ -3,6 +3,8 @@ import os
 import sys
 from os import makedirs
 
+from meal.env.layouts.presets import cramped_room
+
 # Add the project root to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
@@ -13,7 +15,6 @@ import numpy as np
 import pygame
 from flax.core import FrozenDict
 
-from meal.env.overcooked.presets import cramped_room
 from meal.env.overcooked_legacy import Overcooked, DELIVERY_REWARD
 from meal.visualization.visualizer import OvercookedVisualizer
 
@@ -56,17 +57,18 @@ def test_scenario_3_one_plates_other_delivers():
 
     # Set up GIF recording
     frames = []
-    viz = OvercookedVisualizer(pot_full_status=5, pot_empty_status=8)
+    viz = OvercookedVisualizer()
 
-    def add_frame(st):
-        # Use the visualizer's render method to get the frame
-        surface = viz.render(env.agent_view_size, st)
-        # Convert pygame surface to numpy array
-        frame = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
-        frames.append(frame)
+    # def add_frame(st):
+    #     # Use the visualizer's render method to get the frame
+    #     surface = viz.render(env.agent_view_size, st)
+    #     # Convert pygame surface to numpy array
+    #     frame = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
+    #     frames.append(frame)
 
     # Add initial frame
-    add_frame(state)
+    # add_frame(state)
+    frames.append(state)
 
     # Action aliases
     A = {
@@ -128,7 +130,8 @@ def test_scenario_3_one_plates_other_delivers():
         # Only record frames for the default setting to avoid redundancy
         if reward_setting == 'default':
             frames.clear()
-            add_frame(state)
+            # add_frame(state)
+            frames.append(state)
 
         for t in range(len(actions_agent_0)):
             rng, step_key = jax.random.split(rng)
@@ -156,7 +159,8 @@ def test_scenario_3_one_plates_other_delivers():
 
             # Record frame for default setting
             if reward_setting == 'default':
-                add_frame(state)
+                frames.append(state)
+                # add_frame(state)
 
         results[reward_setting] = {
             'total_reward': total_reward,
@@ -169,10 +173,12 @@ def test_scenario_3_one_plates_other_delivers():
         print(
             f"  Agent 1: {total_reward['agent_1']:.1f} total ({total_shaped['agent_1']:.1f} shaped, {total_soups['agent_1']:.0f} soups)")
 
+
     # Save GIF (slower fps for easier viewing)
     gif_path = "gifs/test_reward_scenario_3_one_plates_other_delivers.gif"
-    makedirs("gifs", exist_ok=True)
-    iio.imwrite(gif_path, frames, loop=0, fps=6)
+    frames = viz.animate(frames, agent_view_size=5, out_path=gif_path)
+    # makedirs("gifs", exist_ok=True)
+    # iio.imwrite(gif_path, frames, loop=0, fps=6)
     print(f"\nGIF saved to {gif_path}")
 
     # Validate results with assertions

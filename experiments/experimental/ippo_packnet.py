@@ -14,7 +14,6 @@ from flax.training.train_state import TrainState
 from experiments.model.decoupled_mlp import Actor, Critic
 from experiments.utils import *
 from experiments.continual.packnet import Packnet, PacknetState
-from meal.env.utils.difficulty_config import apply_difficulty_to_config
 from meal.env.utils.max_soup_calculator import calculate_max_soup
 from meal.visualization.visualizer import OvercookedVisualizer
 from meal.registration import make
@@ -176,10 +175,6 @@ def main():
     seq_length = config.seq_length
     strategy = config.strategy
     seed = config.seed
-
-    # Set height_min, height_max, width_min, width_max, and wall_density based on difficulty
-    if difficulty:
-        apply_difficulty_to_config(config, difficulty)
 
     # Initialize Packnet
     cl = Packnet(seq_length=config.seq_length,

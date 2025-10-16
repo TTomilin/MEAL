@@ -17,7 +17,7 @@ from meal.env.common import (
     OBJECT_INDEX_TO_VEC,
     DIR_TO_VEC,
     make_overcooked_map)
-from meal.env.overcooked.presets import overcooked_layouts as layouts, layout_grid_to_dict
+from meal.env.layouts.presets import overcooked_layouts as layouts, layout_grid_to_dict
 
 BASE_REW_SHAPING_PARAMS = {
     "PLACEMENT_IN_POT_REW": 3,  # reward for putting ingredients
@@ -863,6 +863,3 @@ class Overcooked(MultiAgentEnv):
             "time": spaces.Discrete(self.max_steps),
             "terminal": spaces.Discrete(2),
         })
-
-    def max_steps(self) -> int:
-        return self.max_steps

@@ -104,7 +104,7 @@ def get_layout_from_config(cfg: dict) -> tuple[str, dict]:
         tuple: (layout_name, layout_dict) where layout_dict is the actual layout configuration
     """
     # Import here to avoid circular imports
-    from meal.env.overcooked.presets import easy_layouts_legacy, medium_layouts_legacy, hard_layouts_legacy, overcooked_layouts
+    from meal.env.presets import easy_layouts_legacy, medium_layouts_legacy, hard_layouts_legacy, overcooked_layouts
 
     layout_name = cfg.get("layout_name", "")
 

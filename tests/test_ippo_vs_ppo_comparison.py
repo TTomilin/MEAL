@@ -14,8 +14,8 @@ import jax.numpy as jnp
 from dataclasses import dataclass
 
 # Import the algorithms
-from experiments.ippo import Config as IPPOConfig
-from experiments.ppo import Config as PPOConfig
+from experiments.ippo_po import Config as IPPOConfig
+from experiments.ippo import Config as PPOConfig
 from experiments.model.mlp import ActorCritic as MLPActorCritic
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from meal.registration import make

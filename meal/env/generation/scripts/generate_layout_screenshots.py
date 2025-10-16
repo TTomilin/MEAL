@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image
 
 from meal.env import Overcooked
-from meal.env.overcooked.presets import (
+from meal.env.presets import (
     hard_layouts_legacy,
     medium_layouts_legacy,
     easy_layouts_legacy,

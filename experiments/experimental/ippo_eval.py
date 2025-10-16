@@ -22,7 +22,6 @@ from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
-from meal.env.utils.difficulty_config import apply_difficulty_to_config
 from meal.env.utils.max_soup_calculator import calculate_max_soup
 from meal.registration import make
 from meal.wrappers.logging import LogWrapper
@@ -178,10 +177,6 @@ def main():
     strategy = cfg.strategy
     seed = cfg.seed
 
-    # Set height_min, height_max, width_min, width_max, and wall_density based on difficulty
-    if difficulty:
-        apply_difficulty_to_config(cfg, difficulty)
-
     # Set default regularization coefficient based on the CL method if not specified
     if cfg.reg_coef is None:
         if cfg.cl_method.lower() == "ewc":
@@ -240,7 +235,6 @@ def main():
     exp_dir = os.path.join("../runs", run_name)
 
     # Initialize WandB
-    load_dotenv()
     wandb_tags = cfg.tags if cfg.tags is not None else []
     wandb.login(key=os.environ.get("WANDB_API_KEY"))
     wandb.init(

@@ -272,17 +272,12 @@ def create_episode_gif(num_steps=50, gif_filename="overcooked_po_episode.gif", t
 
     print(f"Using seed: {seed}")
 
-    # Get difficulty parameters
-    params = get_difficulty_params(difficulty)
-
     # Generate random layout with specified difficulty
     print(f"Generating {difficulty} difficulty environment...")
     try:
         grid_str, layout = generate_random_layout(
             num_agents=2,
-            height_rng=params["height_rng"],
-            width_rng=params["width_rng"],
-            wall_density=params["wall_density"],
+            difficulty=difficulty,
             seed=seed,
             max_attempts=100
         )

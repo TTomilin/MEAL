@@ -10,12 +10,11 @@ import tyro
 from flax.core.frozen_dict import freeze, unfreeze
 from gymnax.wrappers.purerl import LogWrapper
 
-from experiments.model.CBP_actorcritic import ActorCritic
+from experiments.continual.cbp import cbp_step, TrainStateCBP
+from experiments.model.cbp_actorcritic import ActorCritic
 from experiments.utils import *
-from experiments.continual.cbp import (cbp_step,
-                                       TrainStateCBP)
-from meal.visualization.visualizer import OvercookedVisualizer
 from meal.registration import make
+from meal.visualization.visualizer import OvercookedVisualizer
 from meal.wrappers.logging import LogWrapper
 
 
@@ -878,8 +877,6 @@ def main():
     rng, train_rng = jax.random.split(rng)
     # run the loop_over_envs function to the environments
     runner_state = loop_over_envs(train_rng, train_state, envs)
-
-
 
 
 if __name__ == "__main__":

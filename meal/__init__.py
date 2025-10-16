@@ -20,9 +20,9 @@ def make_env(env_id: str, **env_kwargs):
     return make(env_id, **env_kwargs)
 
 
-def make_cl_sequence(
+def make_sequence(
     sequence_length: int = 10,
-    strategy: str = "curriculum",
+    strategy: str = "generate",
     env_id: str = "overcooked",
     seed: int = None,
     **env_kwargs
@@ -48,7 +48,7 @@ def make_cl_sequence(
 
     Example:
         >>> import meal
-        >>> envs = meal.make_cl_sequence(sequence_length=6, strategy='curriculum')
+        >>> envs = meal.make_sequence(sequence_length=6, strategy='curriculum')
         >>> # Returns 6 environments with increasing difficulty
     """
     env_kwargs_list, names = generate_sequence(
@@ -62,10 +62,8 @@ def make_cl_sequence(
     envs = []
     for i, kwargs in enumerate(env_kwargs_list):
         env = make(env_id, **kwargs)
-        # Add metadata for tracking
-        env._cl_task_id = i
-        env._cl_task_name = names[i]
-        env._cl_strategy = strategy
+        env.task_id = i
+        env.task_name = names[i]
         envs.append(env)
 
     return envs
@@ -88,8 +86,8 @@ def list_envs():
 
 __all__ = [
     "make", 
-    "make_env", 
-    "make_cl_sequence",
+    "make_env",
+    "make_sequence",
     "list_envs",
     "registered_envs"
 ]

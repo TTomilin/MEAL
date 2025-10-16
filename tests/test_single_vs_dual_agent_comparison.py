@@ -19,8 +19,7 @@ import numpy as np
 import pygame
 from flax.core import FrozenDict
 
-from meal.env.overcooked.presets import cramped_room, asymm_advantages, coord_ring, layout_grid_to_dict
-from meal.env.overcooked.overcooked_single import OvercookedSingle
+from meal.env.layouts.presets import cramped_room, asymm_advantages, coord_ring, layout_grid_to_dict
 from meal.env.overcooked_legacy import Overcooked, DELIVERY_REWARD
 from meal.visualization.visualizer import OvercookedVisualizer
 
@@ -48,7 +47,7 @@ def run_single_vs_dual_test(layout_name, layout, action_sequence, rng_seed=42, m
 
     # Create both environments
     print("\nCreating environments...")
-    env_1_agent = OvercookedSingle(layout=layout, random_reset=False, max_steps=max_steps)
+    env_1_agent = Overcooked(layout=layout, num_agents=1, random_reset=False, max_steps=max_steps)
     env_2_agent = Overcooked(layout=layout, num_agents=2, random_reset=False, max_steps=max_steps)
 
     print(f"1-agent environment: {type(env_1_agent).__name__} with agents {env_1_agent.agents}")

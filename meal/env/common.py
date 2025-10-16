@@ -136,8 +136,6 @@ def make_overcooked_map(
     )
     maze_map = maze_map.at[pot_y, pot_x, :].set(pots)
 
-    # TODO: maze_map += onion * onion_mask ...
-
     if len(onion_pos) > 0:
         onion_x = onion_pos[:, 0]
         onion_y = onion_pos[:, 1]
@@ -155,10 +153,7 @@ def make_overcooked_map(
         maze_map = maze_map.at[dish_y, dish_x, :].set(dish)
 
     # Add observation padding
-    if pad_obs:
-        padding = agent_view_size - 1
-    else:
-        padding = 1
+    padding = agent_view_size - 1 if pad_obs else 1
 
     maze_map_padded = jnp.tile(wall.reshape((1, 1, *empty.shape)),
                                (maze_map.shape[0] + 2 * padding, maze_map.shape[1] + 2 * padding, 1))
