@@ -98,7 +98,6 @@ class Overcooked(MultiAgentEnv):
             grid, self.layout = generate_random_layout(num_agents=num_agents, difficulty=difficulty)
             self.layout_name = f"{difficulty}_gen_{task_id}"
 
-        # self.obs_shape = (agent_view_size, agent_view_size, 3)
         # Observations given by 26 channels, most of which are boolean masks
         self.height = self.layout["height"]
         self.width = self.layout["width"]
@@ -107,7 +106,6 @@ class Overcooked(MultiAgentEnv):
         self.obs_shape = (self.width, self.height, self.obs_channels)
 
         self.difficulty = difficulty
-        self.agent_view_size = 5  # Hard coded. Only affects map padding -- not observations.
         self.agents = [f"agent_{i}" for i in range(num_agents)]
         self.start_idx = None if start_idx is None else jnp.array(start_idx, jnp.uint32)
 
@@ -181,8 +179,7 @@ class Overcooked(MultiAgentEnv):
         25. Urgency. The entire layer is 1 there are 40 or fewer remaining time steps. 0 otherwise
         """
         H, W = self.height, self.width
-        pad = (state.maze_map.shape[0] - H) // 2
-        maze = state.maze_map[pad:-pad, pad:-pad]  # (H,W,3)
+        maze = state.maze_map # (H,W,3)
 
         # ────────────────────── build the 16 env layers ────────────────────────
         obj = maze[:, :, 0]  # tile indices
@@ -410,7 +407,6 @@ class Overcooked(MultiAgentEnv):
                                                                                jnp.arange(self.num_agents))
 
         # ─── tick every pot exactly once per env-step ────────────────────────
-        pad = (maze_map.shape[0] - self.height) // 2
         pot_x, pot_y = state.pot_pos[:, 0], state.pot_pos[:, 1]
 
         def _tick(pot):
@@ -418,19 +414,18 @@ class Overcooked(MultiAgentEnv):
             cooking = (status <= POT_FULL_STATUS) & (status > POT_READY_STATUS)
             return pot.at[-1].set(jnp.where(cooking, status - 1, status))
 
-        pots = jax.vmap(_tick)(maze_map[pad + pot_y, pad + pot_x])
-        maze_map = maze_map.at[pad + pot_y, pad + pot_x, :].set(pots)
+        pots = jax.vmap(_tick)(maze_map[pot_y, pot_x])
+        maze_map = maze_map.at[pot_y, pot_x, :].set(pots)
 
         # ─── repaint agents (always, not only on INTERACT) ───────────────────
-        pad = (maze_map.shape[0] - self.height) // 2
         empty_vec = OBJECT_INDEX_TO_VEC[OBJECT_TO_INDEX["empty"]]
-        maze_map = maze_map.at[pad + state.agent_pos[:, 1], pad + state.agent_pos[:, 0], :].set(empty_vec)
+        maze_map = maze_map.at[state.agent_pos[:, 1], state.agent_pos[:, 0], :].set(empty_vec)
 
         def _agent_vec(dir_idx, idx):
             return jnp.array([OBJECT_TO_INDEX["agent"], 2 * idx, dir_idx], dtype=jnp.uint8)
 
         agent_tiles = jax.vmap(_agent_vec)(agent_dir_idx, jnp.arange(self.num_agents))
-        maze_map = maze_map.at[pad + agent_pos[:, 1], pad + agent_pos[:, 0], :].set(agent_tiles)
+        maze_map = maze_map.at[agent_pos[:, 1], agent_pos[:, 0], :].set(agent_tiles)
 
         new_state = state.replace(
             agent_pos=agent_pos,
@@ -599,9 +594,7 @@ class Overcooked(MultiAgentEnv):
             onion_pos,
             plate_pos,
             dish_pos,
-            pad_obs=True,
             num_agents=self.num_agents,
-            agent_view_size=self.agent_view_size
         )
 
         # agent inventory (empty by default, can be randomized)
@@ -650,10 +643,9 @@ class Overcooked(MultiAgentEnv):
         shaped_reward = 0.
 
         height = self.obs_shape[1]
-        padding = (maze_map.shape[0] - height) // 2
 
         # Get object in front of agent (on the "table")
-        maze_object_on_table = maze_map.at[padding + fwd_pos[1], padding + fwd_pos[0]].get()
+        maze_object_on_table = maze_map.at[fwd_pos[1], fwd_pos[0]].get()
         object_on_table = maze_object_on_table[0]  # Simple index
 
         # Booleans depending on what the object is
@@ -790,7 +782,7 @@ class Overcooked(MultiAgentEnv):
             + ~object_is_pot * ~object_is_agent * OBJECT_INDEX_TO_VEC[new_object_on_table] \
             + object_is_agent * maze_object_on_table
 
-        maze_map = maze_map.at[padding + fwd_pos[1], padding + fwd_pos[0], :].set(new_maze_object_on_table)
+        maze_map = maze_map.at[fwd_pos[1], fwd_pos[0], :].set(new_maze_object_on_table)
 
         # Reward of 20 for a soup delivery
         reward = jnp.array(successful_delivery, dtype=float) * DELIVERY_REWARD
@@ -832,12 +824,11 @@ class Overcooked(MultiAgentEnv):
         """State space of the environment."""
         h = self.height
         w = self.width
-        agent_view_size = self.agent_view_size
         return spaces.Dict({
             "agent_pos": spaces.Box(0, max(w, h), (2,), dtype=jnp.uint32),
             "agent_dir": spaces.Discrete(4),
             "goal_pos": spaces.Box(0, max(w, h), (2,), dtype=jnp.uint32),
-            "maze_map": spaces.Box(0, 255, (w + agent_view_size, h + agent_view_size, 3), dtype=jnp.uint32),
+            "maze_map": spaces.Box(0, 255, (w, h, 3), dtype=jnp.uint32),
             "time": spaces.Discrete(self.max_steps),
             "terminal": spaces.Discrete(2),
         })

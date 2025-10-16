@@ -86,9 +86,7 @@ def make_overcooked_map(
         onion_pos,
         plate_pos,
         dish_pos,
-        pad_obs=False,
-        num_agents=2,
-        agent_view_size=5):
+        num_agents=2):
     agent_pos = agent_pos[:num_agents]
     agent_dir_idx = agent_dir_idx[:num_agents]
 
@@ -152,20 +150,4 @@ def make_overcooked_map(
         dish = jnp.array([OBJECT_TO_INDEX['dish'], COLOR_TO_INDEX["white"], 0], dtype=jnp.uint8)
         maze_map = maze_map.at[dish_y, dish_x, :].set(dish)
 
-    # Add observation padding
-    padding = agent_view_size - 1 if pad_obs else 1
-
-    maze_map_padded = jnp.tile(wall.reshape((1, 1, *empty.shape)),
-                               (maze_map.shape[0] + 2 * padding, maze_map.shape[1] + 2 * padding, 1))
-    maze_map_padded = maze_map_padded.at[padding:-padding, padding:-padding, :].set(maze_map)
-
-    # Add surrounding walls
-    wall_start = padding - 1  # start index for walls
-    wall_end_y = maze_map_padded.shape[0] - wall_start - 1
-    wall_end_x = maze_map_padded.shape[1] - wall_start - 1
-    maze_map_padded = maze_map_padded.at[wall_start, wall_start:wall_end_x + 1, :].set(wall)  # top
-    maze_map_padded = maze_map_padded.at[wall_end_y, wall_start:wall_end_x + 1, :].set(wall)  # bottom
-    maze_map_padded = maze_map_padded.at[wall_start:wall_end_y + 1, wall_start, :].set(wall)  # left
-    maze_map_padded = maze_map_padded.at[wall_start:wall_end_y + 1, wall_end_x, :].set(wall)  # right
-
-    return maze_map_padded
+    return maze_map
