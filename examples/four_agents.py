@@ -38,10 +38,6 @@ def main():
     print(f"Observation space: {env.observation_space().shape}")
     print()
 
-    # Initialize the visualizer
-    print("Initializing visualizer...")
-    visualizer = OvercookedVisualizer(num_agents=num_agents)
-
     # Reset environment and collect states for GIF
     print("Running episode with random actions...")
     key, reset_key = jax.random.split(key)
@@ -78,24 +74,19 @@ def main():
     print(f"Collected {len(state_sequence)} states for GIF")
     print()
 
+    # Initialize the visualizer
+    print("Initializing visualizer...")
+    visualizer = OvercookedVisualizer(num_agents=num_agents)
+
     # Create output directory
     output_dir = "gifs"
     os.makedirs(output_dir, exist_ok=True)
 
     # Create GIF
     print("Creating GIF...")
-    task_name = f"{num_agents}_agents_{difficulty}"
+    gif_path = os.path.join(output_dir, f"{num_agents}_agents_{difficulty}.gif")
     try:
-        visualizer.animate(
-            state_seq=state_sequence,
-            agent_view_size=env.agent_view_size,
-            task_idx=0,
-            task_name=task_name,
-            exp_dir=output_dir,
-        )
-
-
-        gif_path = os.path.join(output_dir, f"{task_name}.gif")
+        visualizer.animate(state_seq=state_sequence, out_path=gif_path)
         print(f"✓ GIF of {len(state_sequence)} frames created successfully: {gif_path}")
 
     except Exception as e:
