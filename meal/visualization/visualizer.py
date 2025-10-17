@@ -5,6 +5,7 @@ from typing import Sequence, Optional, List
 
 import numpy as np
 import pygame
+import wandb
 from PIL import Image
 
 from meal.visualization.adapters import to_drawable_state, char_grid_to_drawable_state
@@ -73,7 +74,7 @@ class OvercookedVisualizer:
         return self._render_drawable_state(drawable_state, show)
 
     # ---------- sequence / GIF ----------
-    def animate(self, state_seq: Sequence[object], out_path: str, fps: int = 10, pad_to_max: bool = False) -> str:
+    def animate(self, state_seq: Sequence[object], out_path: str, task_id: int = 0, fps: int = 10, pad_to_max: bool = False) -> str:
         """
         Render a sequence of env states to an animated GIF (palette-safe).
         """
@@ -110,5 +111,8 @@ class OvercookedVisualizer:
             loop=0,
             disposal=2,
         )
+
+        if wandb.run is not None:
+            wandb.log({f"task_{task_id}": wandb.Video(out_path, format="gif")})
 
         return out_path
