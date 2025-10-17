@@ -33,19 +33,19 @@ class Config:
     # TRAINING / PPO PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
     alg_name: str = "ippo"
-    lr: float = 3e-4
+    lr: float = 1e-3
     anneal_lr: bool = False
-    num_envs: int = 16
-    num_steps: int = 128
-    steps_per_task: float = 1e7
+    num_envs: int = 2048
+    num_steps: int = 400
+    steps_per_task: float = 2e8
     update_epochs: int = 8
-    num_minibatches: int = 8
+    num_minibatches: int = 16
     gamma: float = 0.99
-    gae_lambda: float = 0.957
+    gae_lambda: float = 0.95
     clip_eps: float = 0.2
     ent_coef: float = 0.01
     vf_coef: float = 0.5
-    max_grad_norm: float = 0.5
+    max_grad_norm: float = 1.0
 
     # Reward shaping
     reward_shaping: bool = True
@@ -121,7 +121,7 @@ class Config:
     eval_num_episodes: int = 5
     record_gif: bool = True
     gif_len: int = 250
-    log_interval: int = 75
+    log_interval: int = 5
 
     # ═══════════════════════════════════════════════════════════════════════════
     # LOGGING PARAMETERS
