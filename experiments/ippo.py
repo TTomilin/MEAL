@@ -1144,7 +1144,7 @@ def main():
                 if cfg.env_name == "overcooked_po":
                     visualizer.animate(states, out_path=file_path, env=env)
                 else:
-                    visualizer.animate(states, out_path=file_path)
+                    visualizer.animate(states, out_path=file_path, task_idx=task_idx)
 
             # save the model
             repo_root = Path(__file__).resolve().parent.parent
