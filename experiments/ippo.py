@@ -101,7 +101,8 @@ class Config:
     difficulty: Optional[str] = None
     single_task_idx: Optional[int] = None
     layout_file: Optional[str] = None
-    random_reset: bool = True
+    random_reset: bool = False
+    random_agent_start: bool = True
 
     # Random layout generator parameters
     height_min: int = 6  # minimum layout height
@@ -473,7 +474,8 @@ def main():
             # Create the environment with agent restrictions
             agent_restrictions = agent_restrictions_list[eval_idx]
             view_params = get_view_params()
-            env = make(cfg.env_name, layout=env, num_agents=cfg.num_agents, agent_restrictions=agent_restrictions,
+            env = make(cfg.env_name, layout=env, num_agents=cfg.num_agents, random_agent_start=cfg.random_agent_start,
+                       max_steps=cfg.num_steps, random_reset=cfg.random_reset, agent_restrictions=agent_restrictions,
                        **view_params)  # Create the environment
 
             # Run k episodes
