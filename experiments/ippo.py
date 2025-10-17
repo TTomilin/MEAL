@@ -117,7 +117,6 @@ class Config:
     # EVALUATION PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
     evaluation: bool = True
-    eval_num_steps: int = 1000
     eval_num_episodes: int = 5
     record_gif: bool = True
     gif_len: int = 250
@@ -377,7 +376,7 @@ def main():
         returns the average reward
         '''
 
-        def run_episode_while(env, key_r, max_steps=1000):
+        def run_episode_while(env, key_r):
             """
             Run a single episode using jax.lax.while_loop
             """
@@ -397,7 +396,7 @@ def main():
                 @param state: the current state of the loop
                 returns a boolean indicating whether the loop should continue
                 '''
-                return jnp.logical_and(jnp.logical_not(state.done), state.step_count < max_steps)
+                return jnp.logical_and(jnp.logical_not(state.done), state.step_count < env.max_steps)
 
             def body_fun(state: EvalState):
                 '''
@@ -478,14 +477,12 @@ def main():
                        **view_params)  # Create the environment
 
             # Run k episodes
-            all_rewards, all_soups = jax.vmap(lambda k: run_episode_while(env, k, cfg.eval_num_steps))(
-                jax.random.split(key, cfg.eval_num_episodes)
-            )
+            all_rewards, all_soups = jax.vmap(
+                lambda k: run_episode_while(env, k)
+            )(jax.random.split(key, cfg.eval_num_episodes))
 
-            avg_reward = jnp.mean(all_rewards)
-            avg_soups = jnp.sum(all_soups)
-            all_avg_rewards.append(avg_reward)
-            all_avg_soups.append(avg_soups)
+            all_avg_rewards.append(jnp.mean(all_rewards))  # reward can be plain mean
+            all_avg_soups.append(jnp.mean(all_soups))
 
         return all_avg_rewards, all_avg_soups
 
@@ -1002,28 +999,57 @@ def main():
                     if v.size > 0:  # Only add if there are values
                         metrics[k] = v.mean()
 
-            # Soup section
-            # Agent-agnostic soup counting
-            agent_soups = {}
-            soup_delivered = 0
-            for agent in env.agents:
-                agent_soup = info["soups"][agent].sum()
-                agent_soups[agent] = agent_soup
-                soup_delivered += agent_soup
-                metrics[f"Soup/{agent}_soup"] = agent_soup
+            # Soup Kitchen
+            T, E = cfg.num_steps, cfg.num_envs
+            A = env.num_agents
+            max_per_episode = max_soup_dict[env_names[env_idx]]
 
-            episode_frac = cfg.num_steps / env.max_steps
-            metrics["Soup/total"] = soup_delivered
-            metrics["Soup/scaled"] = soup_delivered / (max_soup_dict[env_names[env_idx]] * episode_frac)
+            # soups_tea: (T, E, A)
+            soups_tea = jnp.stack([info["soups"][a] for a in env.agents], axis=-1)
+
+            # total soups per env in this window
+            soups_per_env = soups_tea.sum(axis=(0, 2))  # (E,)
+
+            # done flags per env from first agent
+            done_tea = traj_batch.done.reshape(T, E, A)
+            done_te = done_tea[..., 0]  # (T, E)
+            episodes_per_env = done_te.sum(axis=0)  # (E,)
+
+            # ------- TRUE per-episode average (only finished episodes) -------
+            mask = episodes_per_env > 0
+            true_avg_per_ep_env = jnp.where(mask, soups_per_env / jnp.maximum(episodes_per_env, 1), 0.0)
+            # mean over envs that finished
+            num_finished_envs = jnp.maximum(mask.sum(), 1)
+            metrics["Soup/total"] = true_avg_per_ep_env.sum() / num_finished_envs
+
+            # scaled (true) vs capacity
+            metrics["Soup/scaled"] = jnp.where(max_per_episode > 0,
+                                               (true_avg_per_ep_env / max_per_episode).sum() / num_finished_envs, 0.0)
+
+            # per-agent soup
+            for ai, agent in enumerate(env.agents):
+                soups_te = soups_tea[:, :, ai].sum(axis=0)  # (E,)
+                per_agent = jnp.where(mask, soups_te / jnp.maximum(episodes_per_env, 1), 0.0)
+                metrics[f"Soup/{agent}"] = per_agent.sum() / num_finished_envs
+
+            # ------- RATE-based estimate (if no finished episodes) -------
+            # per-episode estimate: scale soups-per-window by (episode length / window steps)
+            episode_len = env.max_steps
+            per_ep_est_env = soups_per_env * (episode_len / T)  # (E,)
+
+            metrics["Soup/total_unf"] = per_ep_est_env.mean()
+            metrics["Soup/scaled_unf"] = jnp.where(max_per_episode > 0,
+                                                   (per_ep_est_env / max_per_episode).mean(), 0.0)
+
             metrics.pop('soups', None)
 
             # Rewards section
             # Agent-agnostic reward logging
             for agent in env.agents:
                 metrics[f"General/shaped_reward_{agent}"] = metrics["shaped_reward"][agent]
-                metrics[f"General/shaped_reward_annealed_{agent}"] = metrics[
-                                                                         f"General/shaped_reward_{agent}"] * rew_shaping_anneal(
-                    current_timestep)
+                metrics[f"General/shaped_reward_annealed_{agent}"] = (metrics[f"General/shaped_reward_{agent}"] *
+                                                                      rew_shaping_anneal(current_timestep))
+
             metrics.pop('shaped_reward', None)
 
             # Advantages and Targets section
@@ -1042,8 +1068,6 @@ def main():
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
                         avg_rewards, avg_soups = evaluate_model(train_state_eval, eval_rng)
-                        episode_frac = cfg.eval_num_steps / env.max_steps
-                        avg_soups = [soup * episode_frac for soup, env_name in zip(avg_soups, env_names)]
                         metrics = add_eval_metrics(avg_rewards, avg_soups, env_names, max_soup_dict, metrics)
 
                     def callback(args):

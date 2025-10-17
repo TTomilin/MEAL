@@ -231,7 +231,7 @@ class StateVisualizer:
         img_path (str): if it is not None save image to specific path
         ipython_display (bool): if True render state in ipython cell, if img_path is None create file with randomized name in /tmp directory
         window_display (bool): if True render state into pygame window
-        action_probs(list(list(float))): action probs for every player acessed in the way action_probs[player][action]
+        action_probs(list(list(float))): action probs for every player accessed in the way action_probs[player][action]
         """
         assert (
                 window_display or img_path or ipython_display
