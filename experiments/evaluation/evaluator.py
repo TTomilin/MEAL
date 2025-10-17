@@ -246,8 +246,7 @@ def main():
 
                 # Real-time rendering if requested
                 if args.render_realtime:
-                    viz.render(agent_view_size=5, state=next_state)
-                    viz.show(block=False)
+                    viz.render(next_state, show=True)
                     time.sleep(0.1)  # Small delay to make rendering visible
 
                 obs, sim_state = next_obs, next_state
@@ -260,8 +259,8 @@ def main():
                 all_frames = frames
 
         # Save GIF for this task
-        viz.animate(all_frames, agent_view_size=5, task_idx=task_idx, 
-                   task_name=layout_name, exp_dir=str(args.gif_dir))
+        gif_path = args.gif_dir / f"task_{task_idx+1}_{layout_name}.gif"
+        viz.animate(all_frames, gif_path)
 
         # Report metrics for this task
         avg_reward = sum(total_rewards) / len(total_rewards)
@@ -270,10 +269,6 @@ def main():
         print(f"  Ran {args.n_episodes} episodes")
         print(f"  Average reward: {avg_reward:.2f}")
         print(f"  Average soups delivered: {avg_soup:.2f}")
-
-        # Close the visualization window if it was opened
-        if args.render_realtime:
-            viz.close()
 
     print("\nEvaluation complete!")
 

@@ -5,6 +5,9 @@ import os
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 
+from meal.env.common import WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
+from meal.env.generation.layout_validator import INTERACTIVE_TILES
+
 cramped_room = {
     "height": 4,
     "width": 5,
@@ -81,51 +84,65 @@ WWWWWWW
 
 
 def layout_grid_to_dict(grid):
-    """Assumes `grid` is string representation of the layout, with 1 line per row, and the following symbols:
-    W: wall
-    A: agent
-    X: goal
-    B: plate (bowl) pile
-    O: onion pile
-    P: pot location
-    ' ' (space) : empty cell
+    """Convert grid string to the JAX‑MARL FrozenDict layout representation.
+
+    Supports two symbol sets:
+    1. Legacy symbols: W (wall), A (agent), X (goal), B (plate pile), O (onion pile), P (pot), ' ' (empty)
+    2. Constants from meal.env.common: WALL, AGENT, GOAL, PLATE_PILE, ONION_PILE, POT, FLOOR
     """
+    # Handle both string input and strip whitespace
+    if hasattr(grid, 'strip'):
+        rows = grid.strip().split('\n')
+    else:
+        rows = grid.split('\n')
 
-    rows = grid.split('\n')
-
-    if len(rows[0]) == 0:
+    # Remove empty rows at start/end
+    if len(rows) > 0 and len(rows[0]) == 0:
         rows = rows[1:]
-    if len(rows[-1]) == 0:
+    if len(rows) > 0 and len(rows[-1]) == 0:
         rows = rows[:-1]
 
+    height, width = len(rows), len(rows[0]) if rows else 0
     keys = ["wall_idx", "agent_idx", "goal_idx", "plate_pile_idx", "onion_pile_idx", "pot_idx"]
-    symbol_to_key = {"W": "wall_idx",
-                     "A": "agent_idx",
-                     "X": "goal_idx",
-                     "B": "plate_pile_idx",
-                     "O": "onion_pile_idx",
-                     "P": "pot_idx"}
+
+    # Support both legacy symbols and constants from meal.env.common
+    symbol_to_key = {
+        # Legacy symbols
+        "W": "wall_idx",
+        "A": "agent_idx",
+        "X": "goal_idx",
+        "B": "plate_pile_idx",
+        "O": "onion_pile_idx",
+        "P": "pot_idx",
+        # Constants from meal.env.common
+        WALL: "wall_idx",
+        AGENT: "agent_idx",
+        GOAL: "goal_idx",
+        PLATE_PILE: "plate_pile_idx",
+        ONION_PILE: "onion_pile_idx",
+        POT: "pot_idx",
+    }
 
     layout_dict = {key: [] for key in keys}
-    layout_dict["height"] = len(rows)
-    layout_dict["width"] = len(rows[0])
-    width = len(rows[0])
+    layout_dict["height"] = height
+    layout_dict["width"] = width
 
     for i, row in enumerate(rows):
         for j, obj in enumerate(row):
-            idx = width * i + j
-            if obj in symbol_to_key.keys():
-                # Add object
-                layout_dict[symbol_to_key[obj]].append(idx)
-            if obj in ["X", "B", "O", "P"]:
-                # These objects are also walls technically
-                layout_dict["wall_idx"].append(idx)
-            elif obj == " ":
-                # Empty cell
-                continue
+            flat_idx = width * i + j
+            if obj in symbol_to_key:
+                layout_dict[symbol_to_key[obj]].append(flat_idx)
 
-    for key in symbol_to_key.values():
-        # Transform lists to arrays
+            # Interactive tiles count as walls for Overcooked's pathing
+            # Legacy symbols that are interactive
+            if obj in ["X", "B", "O", "P"]:
+                layout_dict["wall_idx"].append(flat_idx)
+            # Constants from meal.env.common that are interactive or walls
+            elif obj in INTERACTIVE_TILES | {WALL}:
+                layout_dict["wall_idx"].append(flat_idx)
+
+    # Convert to JAX arrays
+    for key in keys:
         layout_dict[key] = jnp.array(layout_dict[key], dtype=jnp.int32)
 
     return FrozenDict(layout_dict)
@@ -641,18 +658,13 @@ overcooked_layouts = {
     **easy_layouts,
 }
 
-# Layouts for a single agent
-single_layouts = {
-    **easy_layouts,
-    **medium_layouts,
-}
-
 # Difficulty-based layout collections
 difficulty_layouts = {
     "easy": easy_layouts,
     "medium": medium_layouts,
     "hard": hard_layouts,
 }
+
 
 def get_layouts_by_difficulty(difficulty: str = None):
     """

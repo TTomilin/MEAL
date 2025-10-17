@@ -6,57 +6,13 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 from flax.core.frozen_dict import FrozenDict
 
 from meal.env.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
 from meal.env.generation.layout_validator import evaluate_grid, UNPASSABLE_TILES, INTERACTIVE_TILES
+from meal.env.layouts.presets import layout_grid_to_dict
 from meal.env.utils.difficulty_config import get_difficulty_params
-
-
-###############################################################################
-# ─── Conversion helper ───────────────────────────────────────────────────────
-###############################################################################
-
-def layout_grid_to_dict(grid_str: str) -> FrozenDict:
-    """Convert *grid_str* to the JAX‑MARL FrozenDict layout representation."""
-    rows = grid_str.strip().split("\n")
-    height, width = len(rows), len(rows[0])
-    keys = [
-        "wall_idx",
-        "agent_idx",
-        "goal_idx",
-        "plate_pile_idx",
-        "onion_pile_idx",
-        "pot_idx",
-    ]
-    symbol_to_key = {
-        WALL: "wall_idx",
-        AGENT: "agent_idx",
-        GOAL: "goal_idx",
-        PLATE_PILE: "plate_pile_idx",
-        ONION_PILE: "onion_pile_idx",
-        POT: "pot_idx",
-    }
-
-    layout_dict = {k: [] for k in keys}
-    layout_dict.update(height=height, width=width)
-
-    for i, row in enumerate(rows):
-        for j, ch in enumerate(row):
-            flat_idx = width * i + j
-            if ch in symbol_to_key:
-                layout_dict[symbol_to_key[ch]].append(flat_idx)
-            # Interactive tiles count as walls for Overcooked's pathing
-            if ch in INTERACTIVE_TILES | {WALL}:
-                layout_dict["wall_idx"].append(flat_idx)
-
-    # Convert to JAX arrays
-    for k in keys:
-        layout_dict[k] = jnp.array(layout_dict[k], dtype=jnp.int32)
-
-    return FrozenDict(layout_dict)
 
 
 ###############################################################################
@@ -327,21 +283,14 @@ def mpl_show(grid_str: str, title: str | None = None):
 # ─── Overcooked viewer ──────────────────────────────────────────────────────
 ###############################################################################
 
-def _crop_to_grid(state, view_size: int):
-    pad = view_size - 1  # 5→4 because map has +1 outer wall
-    return state.maze_map[pad:-pad, pad:-pad, :]
-
-
 def oc_show(layout: FrozenDict, num_agents: int = 2):
     from meal.env import Overcooked
-    from meal.visualization.visualizer import OvercookedVisualizer, TILE_PIXELS
+    from meal.visualization.visualizer import OvercookedVisualizer
 
     env = Overcooked(layout=layout, layout_name="random_gen", random_reset=False, num_agents=num_agents)
     _, state = env.reset(jax.random.PRNGKey(0))
-    grid = np.asarray(_crop_to_grid(state, env.agent_view_size))
     vis = OvercookedVisualizer(num_agents)
-    vis.render_grid(grid, tile_size=TILE_PIXELS, agent_dir_idx=state.agent_dir_idx)
-    vis.show(block=True)
+    vis.render(state, show=True)
 
 
 ###############################################################################
@@ -366,7 +315,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     from meal.env import Overcooked
-    from meal.visualization.visualizer import OvercookedVisualizer, TILE_PIXELS
+    from meal.visualization.visualizer import OvercookedVisualizer
 
     # Override parameters based on difficulty
     if args.difficulty:
@@ -438,9 +387,8 @@ def main(argv=None):
         for i, (_, layout, env_seed) in enumerate(layouts):
             env = Overcooked(layout=layout, layout_name="generated", random_reset=False, num_agents=args.num_agents)
             _, state = env.reset(jax.random.PRNGKey(env_seed or 0))
-            grid_arr = np.asarray(_crop_to_grid(state, env.agent_view_size))
             vis = OvercookedVisualizer(args.num_agents)
-            img = vis.render_grid(grid_arr, tile_size=TILE_PIXELS, agent_dir_idx=state.agent_dir_idx)
+            img = vis.render(state)
 
             # Create filename with auto-incrementing index
             file_index = highest_index + i + 1

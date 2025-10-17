@@ -30,7 +30,7 @@ from meal.visualization.visualizer import OvercookedVisualizer
 
 # ──────────────────────────────────────────────────────────────────────────
 # Configurable output folder
-OUT_DIR = Path(__file__).resolve().parent.parent / "assets" / "screenshots" / "env_generation"
+OUT_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "assets" / "screenshots" / "env_generation"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -60,7 +60,7 @@ def grid_to_tensor(char_grid: list[list[str]]) -> np.ndarray:
 
 
 def save_png(vis: OvercookedVisualizer, char_grid, fname):
-    img = vis.render_grid(grid_to_tensor(char_grid))
+    img = vis.render_grid(char_grid)
     Image.fromarray(img).save(OUT_DIR / fname)
 
 

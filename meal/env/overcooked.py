@@ -75,7 +75,7 @@ class Overcooked(MultiAgentEnv):
             difficulty: str = 'easy',
             random_reset: bool = False,
             random_agent_start: bool = False,
-            max_steps: int = 400,
+            max_steps: int = 1000,
             task_id: int = 0,
             num_agents: int = 2,
             start_idx: tuple[int, ...] | None = None,

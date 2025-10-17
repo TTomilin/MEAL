@@ -8,7 +8,7 @@ from flax.core.frozen_dict import FrozenDict
 
 from meal.env.utils.difficulty_config import DIFFICULTY_PARAMS
 from meal.env.generation.layout_generator import generate_random_layout
-from meal.env.layouts.presets import hard_layouts_legacy, medium_layouts_legacy, easy_layouts_legacy, overcooked_layouts, single_layouts
+from meal.env.layouts.presets import hard_layouts, medium_layouts, easy_layouts, overcooked_layouts
 
 
 def _parse_layout_string(layout_str: str) -> FrozenDict:
@@ -81,10 +81,9 @@ def _parse_layout_string(layout_str: str) -> FrozenDict:
 def _resolve_pool(names: Sequence[str] | None) -> List[str]:
     """Turn user‐supplied `layout_names` into a concrete list of keys."""
     presets = {
-        "hard_levels": list(hard_layouts_legacy),
-        "medium_levels": list(medium_layouts_legacy),
-        "easy_levels": list(easy_layouts_legacy),
-        "single_levels": list(single_layouts),
+        "hard_levels": list(hard_layouts),
+        "medium_levels": list(medium_layouts),
+        "easy_levels": list(easy_layouts),
     }
 
     if not names:  # None, [] or other falsy → all layouts

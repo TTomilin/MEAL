@@ -119,8 +119,8 @@ class Config:
     evaluation: bool = True
     eval_num_steps: int = 1000
     eval_num_episodes: int = 5
-    record_gif: bool = False
-    gif_len: int = 300
+    record_gif: bool = True
+    gif_len: int = 250
     log_interval: int = 75
 
     # ═══════════════════════════════════════════════════════════════════════════

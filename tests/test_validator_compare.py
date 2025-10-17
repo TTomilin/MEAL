@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from typing import List, Tuple
 
-from meal.env.overcooked import layout_grid_to_dict
+from meal.env.layouts import layout_grid_to_dict
 
 # ==== project imports ========================================================
 # put project root on import path so the jax‑marl package can be resolved when
@@ -39,12 +39,10 @@ fixed_evaluate = validator_module.evaluate_grid
 # ==== extra imports for visualisation ========================================
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 from flax.core import FrozenDict
 
 from meal.env import Overcooked
-from meal.gridworld.grid_viz import TILE_PIXELS
 from meal.visualization.visualizer import OvercookedVisualizer
 
 
@@ -98,9 +96,6 @@ def visualise_layout(
     env = Overcooked(layout=layout_dict, layout_name=name, random_reset=False)
     _, state = env.reset(jax.random.PRNGKey(0))
 
-    pad = env.agent_view_size - 2  # Overcooked adds padding round the maze
-    grid = np.asarray(state.maze_map[pad:-pad, pad:-pad, :])
-
     vis = OvercookedVisualizer()
 
     title_parts = [
@@ -115,7 +110,7 @@ def visualise_layout(
         title += f"\nFix reason: {fixed_reason}"
 
     print(f"Showing: {title}\nClose the window to continue…")
-    vis.render_grid(grid, tile_size=TILE_PIXELS, agent_dir_idx=state.agent_dir_idx, title=title)
+    vis.render_grid(state, show=True)
 
 
 # =============================================================================

@@ -18,7 +18,7 @@ from meal.env.generation.layout_generator import (
 from meal.env.generation.layout_validator import (
     evaluate_grid, WALL, FLOOR, AGENT, GOAL, ONION_PILE, POT
 )
-from meal.visualization.visualizer import OvercookedVisualizer, TILE_PIXELS
+from meal.visualization.visualizer import OvercookedVisualizer
 
 
 def create_invalid_layout(issue_type, seed=None):
@@ -123,10 +123,6 @@ def visualize_layout(name, grid_str, is_valid, reason):
     # Reset the environment to get the initial state
     _, state = env.reset(jax.random.PRNGKey(0))
 
-    # Crop the grid to remove padding
-    padding = env.agent_view_size - 2
-    grid = np.asarray(state.maze_map[padding:-padding, padding:-padding, :])
-
     # Create visualizer and render the grid
     vis = OvercookedVisualizer()
 
@@ -140,7 +136,7 @@ def visualize_layout(name, grid_str, is_valid, reason):
     print("Close the window to continue to the next layout...")
 
     # Render the grid with the agent directions
-    vis.render_grid(grid, tile_size=TILE_PIXELS, agent_dir_idx=state.agent_dir_idx, title=title)
+    vis.render(state, show=True)
 
 
 def test_layouts():

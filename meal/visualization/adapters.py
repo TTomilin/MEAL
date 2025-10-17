@@ -155,6 +155,55 @@ def _loose_items_from_grid(maze_crop: np.ndarray, ids: Ids) -> List[Tuple["Obj",
     return out
 
 
+def char_grid_to_drawable_state(char_grid: List[List[str]]) -> "DrawableState":
+    """Convert character grid to DrawableState for basic grid rendering."""
+    from meal.env.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
+
+    # Character to Tile mapping for direct grid rendering
+    char_to_tile = {
+        FLOOR: Tile.EMPTY,
+        WALL: Tile.COUNTER,  # walls are rendered as counters
+        GOAL: Tile.SERVE,    # goals are serving locations
+        ONION_PILE: Tile.ONION_DISPENSER,
+        PLATE_PILE: Tile.DISH_DISPENSER,
+        POT: Tile.POT,
+        # AGENT is handled separately as players
+    }
+
+    # Convert characters to tiles, handling agents separately
+    grid_tiles = []
+    players = []
+    agent_id = 0
+
+    for y, row in enumerate(char_grid):
+        tile_row = []
+        for x, ch in enumerate(row):
+            if ch == AGENT:
+                # Add agent as player, use floor tile for grid
+                tile_row.append(Tile.EMPTY)
+                players.append(Player(
+                    id=agent_id,
+                    pos=(x, y),
+                    dir=Dir.N,  # default direction
+                    held=None,
+                    held_ingredients=None
+                ))
+                agent_id += 1
+            else:
+                # Convert character to tile
+                tile = char_to_tile.get(ch, Tile.EMPTY)
+                tile_row.append(tile)
+        grid_tiles.append(tile_row)
+
+    # Create DrawableState with empty pots and items for basic rendering
+    return DrawableState.from_raw(
+        grid_tokens=grid_tiles,
+        players=players,
+        pots=[],  # no pot states for basic rendering
+        items=[]  # no loose items for basic rendering
+    )
+
+
 def to_drawable_state(env_state_raw, pot_full: int = 20, pot_empty: int = 23, num_agents: int = 2,
                       ids: Ids = Ids()) -> "DrawableState":
     """

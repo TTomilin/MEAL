@@ -101,7 +101,7 @@ def main():
     print("Creating GIF...")
     gif_path = os.path.join(output_dir, f"{envs[0].num_agents}_agents_{strategy}.gif")
     try:
-        visualizer.animate(state_seq=state_sequence, out_path=gif_path)
+        visualizer.animate(state_seq=state_sequence, out_path=gif_path, pad_to_max=True)
         print(f"✓ GIF of {len(state_sequence)} frames created successfully: {gif_path}")
 
     except Exception as e:

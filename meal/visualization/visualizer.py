@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import os
-from typing import Sequence, Optional
+from typing import Sequence, Optional, List
 
 import numpy as np
 import pygame
 from PIL import Image
 
-from meal.visualization.adapters import to_drawable_state
+from meal.visualization.adapters import to_drawable_state, char_grid_to_drawable_state
 from meal.visualization.bridge_stateviz import render_drawable_with_stateviz
 from meal.visualization.cache import TileCache
-from meal.visualization.painter import render_frame
 from meal.visualization.rendering.state_visualizer import StateVisualizer
 from meal.visualization.types import DrawableState
 from meal.visualization.window import Window
@@ -35,20 +34,43 @@ class OvercookedVisualizer:
         if self.window is None:
             self.window = Window("Kitchen")
 
-    # ---------- single-frame ----------
-    def render(self, env_state_raw, show: bool = False) -> np.ndarray:
-        """
-        env_state_raw: raw state or log wrapper with .env_state
-        Returns RGB ndarray (H*tile_px, W*tile_px, 3).
-        """
-        dstate: DrawableState = to_drawable_state(
-            env_state_raw, pot_full=self.pot_full, pot_empty=self.pot_empty, num_agents=self.num_agents,
-        )
-        frame = render_frame(dstate, tile_px=self.tile_px, cache=self.cache)
+    def _drawable_state_to_frame(self, drawable_state: DrawableState) -> np.ndarray:
+        surface = render_drawable_with_stateviz(drawable_state, self.state_visualizer)
+        frame = pygame.surfarray.array3d(surface).transpose(1, 0, 2)  # (H, W, 3)
+        return frame
+
+    def _render_drawable_state(self, drawable_state: DrawableState, show: bool = False) -> np.ndarray:
+        frame = self._drawable_state_to_frame(drawable_state)
         if show:
             self._lazy_window()
             self.window.show_img(frame)
         return frame
+
+    # ---------- single-frame ----------
+    def render(self, env_state, show: bool = False) -> np.ndarray:
+        """
+        env_state: raw state or log wrapper with .env_state
+        Returns RGB ndarray (H*tile_px, W*tile_px, 3).
+        """
+        dstate: DrawableState = to_drawable_state(
+            env_state, pot_full=self.pot_full, pot_empty=self.pot_empty, num_agents=self.num_agents,
+        )
+        return self._render_drawable_state(dstate, show)
+
+    def render_grid(self, char_grid: List[List[str]], show: bool = False) -> np.ndarray:
+        """
+        Render a character grid directly without needing to create a full environment state.
+
+        Args:
+            char_grid: 2D list of character strings representing the grid layout
+            show: whether to display the rendered image in a window
+
+        Returns:
+            RGB ndarray (H*tile_px, W*tile_px, 3)
+        """
+        # Convert character grid to DrawableState
+        drawable_state = char_grid_to_drawable_state(char_grid)
+        return self._render_drawable_state(drawable_state, show)
 
     # ---------- sequence / GIF ----------
     def animate(self, state_seq: Sequence[object], out_path: str, fps: int = 10, pad_to_max: bool = False) -> str:
@@ -71,8 +93,7 @@ class OvercookedVisualizer:
         # 3) paint frames
         frames = []
         for ds in dseq:
-            surface = render_drawable_with_stateviz(ds, self.state_visualizer)
-            frame = pygame.surfarray.array3d(surface).transpose(1, 0, 2)  # (H, W, 3)
+            frame = self._drawable_state_to_frame(ds)
             frames.append(frame.copy())  # copy to detach from pygame surface buffer
 
         # 4) write the GIF

@@ -1264,13 +1264,13 @@ def main():
             evaluations = evaluate_model(train_state, eval_rng)
             evaluation_matrix = evaluation_matrix.at[0, :].set(evaluations)
 
-        for i, (rng, env) in enumerate(zip(env_rngs, envs)):
+        for task_idx, (rng, env) in enumerate(zip(env_rngs, envs)):
             # --- Train on environment i using the *current* ewc_state ---
-            runner_state, metrics = train_on_environment(rng, train_state, env, cl_state, i)
+            runner_state, metrics = train_on_environment(rng, train_state, env, cl_state, task_idx)
             train_state = runner_state[0]
             cl_state = runner_state[6]
 
-            importance = cl.compute_importance(train_state.params, env, network, i, rng, config.use_cnn,
+            importance = cl.compute_importance(train_state.params, env, network, task_idx, rng, config.use_cnn,
                                                config.importance_episodes, config.importance_steps,
                                                config.normalize_importance)
 
@@ -1278,23 +1278,23 @@ def main():
 
             if config.record_gif:
                 # Generate & log a GIF after finishing task i
-                env_name = f"{i}__{env.layout_name}"
-                states = record_gif_of_episode(config, train_state, env, network, env_idx=i, max_steps=config.gif_len)
+                env_name = f"{task_idx}__{env.layout_name}"
+                states = record_gif_of_episode(config, train_state, env, network, env_idx=task_idx, max_steps=config.gif_len)
+                file_path = f"{exp_dir}/task_{task_idx}_{env_name}.gif"
                 # Pass environment instance to PO visualizer for view highlighting
-                if config.env_name == "overcooked_po":
-                    visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir,
-                                       env=env)
+                if env_name == "overcooked_po":
+                    visualizer.animate(states, out_path=file_path, env=env)
                 else:
-                    visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir)
+                    visualizer.animate(states, out_path=file_path)
 
             if config.eval_forward_transfer:
                 # Evaluate at the end of training to get the average performance of the task right after training
                 evaluations = evaluate_model(train_state, rng)
-                evaluation_matrix = evaluation_matrix.at[i, :].set(evaluations)
+                evaluation_matrix = evaluation_matrix.at[task_idx, :].set(evaluations)
 
             # save the model
             repo_root = Path(__file__).resolve().parent.parent
-            path = f"{repo_root}/checkpoints/overcooked/{config.cl_method}/{run_name}/model_env_{i + 1}"
+            path = f"{repo_root}/checkpoints/overcooked/{config.cl_method}/{run_name}/model_env_{task_idx + 1}"
             save_params(path, train_state, env_kwargs=env.layout, layout_name=env.layout_name, config=config)
 
             if config.eval_forward_transfer:
