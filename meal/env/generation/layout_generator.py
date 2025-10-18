@@ -187,7 +187,8 @@ def generate_random_layout(
         # 1. Interactive tiles -------------------------------------------------
         # Up to two of each interactive type
         for symbol in (GOAL, POT, ONION_PILE, PLATE_PILE):
-            copies = 2 if symbol == POT else rng.randint(1, 2)
+            # Generate more pots than other items to increase throughput potential
+            copies = rng.randint(2, 3) if symbol == POT else rng.randint(1, 2)
             if not place_tiles(grid, symbol, copies, rng):
                 print(f"[Attempt {attempt}] Not enough space for {symbol}. Retrying…")
                 break  # go to next attempt
