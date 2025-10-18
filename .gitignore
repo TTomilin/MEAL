@@ -12,6 +12,7 @@ docker/*
 *.pickle
 docs/
 tmp/
+dist/
 *-checkpoint.py
 wandb/
 runs/
