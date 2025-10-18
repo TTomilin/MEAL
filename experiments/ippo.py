@@ -37,7 +37,7 @@ class Config:
     anneal_lr: bool = False
     num_envs: int = 2048
     num_steps: int = 400
-    steps_per_task: float = 2e8
+    steps_per_task: float = 1e8
     update_epochs: int = 8
     num_minibatches: int = 16
     gamma: float = 0.99
