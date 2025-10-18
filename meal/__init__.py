@@ -1,5 +1,12 @@
-from meal.registration import make, registered_envs
-from meal.env.generation.sequence_loader import generate_sequence
+from meal.env import Overcooked, OvercookedPO, OvercookedLegacy
+from meal.env.generation.layout_generator import generate_random_layout
+from meal.env.generation.sequence_loader import create_sequence
+from meal.env.layouts.presets import overcooked_layouts
+from meal.env.utils.difficulty_config import DIFFICULTY_PARAMS
+
+# Environment registry
+registered_envs = ["overcooked", "overcooked_po", "overcooked_legacy"]
+
 
 # Gym-style API
 def make_env(env_id: str, **env_kwargs):
@@ -17,78 +24,52 @@ def make_env(env_id: str, **env_kwargs):
         >>> import meal
         >>> env = meal.make_env('overcooked')
     """
-    return make(env_id, **env_kwargs)
+    if env_id not in registered_envs:
+        raise ValueError(f"{env_id} is not in registered.")
+    cls = {"overcooked": Overcooked, "overcooked_po": OvercookedPO, "overcooked_legacy": OvercookedLegacy}[env_id]
+    return cls(**env_kwargs)
 
 
 def make_sequence(
-    sequence_length: int = 10,
-    strategy: str = "generate",
-    env_id: str = "overcooked",
-    seed: int = None,
-    **env_kwargs
+        env_id: str = "overcooked",
+        sequence_length: int = 10,
+        strategy: str = "generate",
+        num_agents: int = 2,
+        difficulty: str = None,
+        **env_kwargs
 ):
     """
-    Generate a continual learning sequence of environments.
+    Generate a continual learning sequence of environments with full parameter support.
 
     Args:
+        env_id: Base environment identifier
         sequence_length: Number of environments in the sequence
         strategy: Generation strategy ('random', 'ordered', 'generate', 'curriculum')
-        env_id: Base environment identifier
-        seed: Random seed for reproducibility
+        num_agents: Number of agents in each environment
+        difficulty: Difficulty level ('easy', 'medium', 'hard') - determines layout and view parameters
         **env_kwargs: Additional environment arguments
 
     Returns:
         List of environment instances for continual learning
 
-    Strategies:
-        - 'random': Sample from fixed layouts (no immediate repeats)
-        - 'ordered': Deterministic slice through fixed layouts
-        - 'generate': Create brand-new solvable kitchens on the fly
-        - 'curriculum': Split tasks equally across difficulty levels (easy -> medium -> hard)
-
     Example:
         >>> import meal
-        >>> envs = meal.make_sequence(sequence_length=6, strategy='curriculum')
+        >>> envs = meal.make_sequence(sequence_length=6, strategy='curriculum', num_agents=2)
         >>> # Returns 6 environments with increasing difficulty
+        >>> 
+        >>> envs = meal.make_sequence(sequence_length=3, difficulty='hard', num_agents=2)
+        >>> # Returns 3 environments with hard difficulty parameters
     """
-    env_kwargs_list, names = generate_sequence(
+
+    # Generate sequence of environment configurations
+    return create_sequence(
+        env_id=env_id,
         sequence_length=sequence_length,
         strategy=strategy,
-        seed=seed,
+        num_agents=num_agents,
+        difficulty=difficulty,
         **env_kwargs
     )
 
-    # Create environment instances
-    envs = []
-    for i, kwargs in enumerate(env_kwargs_list):
-        env = make(env_id, **kwargs)
-        env.task_id = i
-        env.task_name = names[i]
-        envs.append(env)
 
-    return envs
-
-
-def list_envs():
-    """
-    List all available environment IDs.
-
-    Returns:
-        List of registered environment identifiers
-
-    Example:
-        >>> import meal
-        >>> meal.list_envs()
-        ['overcooked', 'overcooked_single', 'overcooked_po', 'overcooked_n_agent']
-    """
-    return registered_envs.copy()
-
-
-__all__ = [
-    "make", 
-    "make_env",
-    "make_sequence",
-    "list_envs",
-    "registered_envs"
-]
-__version__ = "0.1.0"
+__all__ = ["make_env", "make_sequence", "registered_envs"]

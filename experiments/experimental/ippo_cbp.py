@@ -13,7 +13,7 @@ from gymnax.wrappers.purerl import LogWrapper
 from experiments.continual.cbp import cbp_step, TrainStateCBP
 from experiments.model.cbp_actorcritic import ActorCritic
 from experiments.utils import *
-from meal.registration import make
+from meal import make_env
 from meal.visualization.visualizer import OvercookedVisualizer
 from meal.wrappers.logging import LogWrapper
 
@@ -86,7 +86,7 @@ def main():
     config = tyro.cli(Config)
 
     # generate a sequence of tasks
-    config = generate_sequence_of_tasks(config)
+    config = create_sequence_of_tasks(config)
 
     # generate the run name
     network = "shared_cnn" if config.shared_backbone else "cnn"
@@ -105,7 +105,7 @@ def main():
         envs = []
         for env_args in config.env_kwargs:
             # Create the environment
-            env = make(config.env_name, **env_args)
+            env = make_env(config.env_name, **env_args)
             envs.append(env)
 
         # find the environment with the largest observation space
@@ -290,7 +290,7 @@ def main():
         envs = pad_observation_space()
 
         for env in envs:
-            env = make(config.env_name, layout=env)  # Create the environment
+            env = make_env(config.env_name, layout=env)  # Create the environment
             network_params = train_state.params
             # Run k episodes
             all_rewards = jax.vmap(lambda k: run_episode_while(env, k, network_params, config.eval_num_steps))(
@@ -307,7 +307,7 @@ def main():
 
     envs = []
     for env_layout in padded_envs:
-        env = make(config.env_name, layout=env_layout)
+        env = make_env(config.env_name, layout=env_layout)
         env = LogWrapper(env, replace_info=False)
         envs.append(env)
 

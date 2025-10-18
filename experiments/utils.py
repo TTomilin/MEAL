@@ -8,8 +8,6 @@ import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 from tensorboardX import SummaryWriter
 
-from meal.env.generation.sequence_loader import generate_sequence
-
 
 class Transition(NamedTuple):
     '''
@@ -119,36 +117,6 @@ def build_reg_weights(params, regularize_critic: bool, regularize_heads: bool) -
     return jax.tree_util.tree_map_with_path(_mark, params)
 
 
-# -------------------------------------------------------------------
-# helper: pad (or crop) an (H,W,C) image to `target_shape`
-#         – no tracers in pad_width, 100 % JIT-safe
-# -------------------------------------------------------------------
-def _pad_to(img: jnp.ndarray, target_shape):
-    th, tw, tc = target_shape  # target (height, width, channels)
-    h, w, c = img.shape  # current shape – *Python* ints
-    assert c == tc, "channel mismatch"
-
-    dh = th - h  # + ⇒ need pad, − ⇒ need crop
-    dw = tw - w
-
-    # amounts have to be Python ints so jnp.pad sees concrete values
-    pad_top = max(dh // 2, 0)
-    pad_bottom = max(dh - pad_top, 0)
-    pad_left = max(dw // 2, 0)
-    pad_right = max(dw - pad_left, 0)
-
-    img = jnp.pad(
-        img,
-        ((pad_top, pad_bottom),
-         (pad_left, pad_right),
-         (0, 0)),  # no channel padding
-        mode="constant",
-    )
-
-    # If the image was *larger* than the target we crop back
-    return img[:th, :tw, :]
-
-
 # ---------------------------------------------------------------
 # util: build a (2, …) batch without Python branches
 # ---------------------------------------------------------------
@@ -183,20 +151,6 @@ def _prep_obs(raw_obs, use_cnn: bool) -> jnp.ndarray:
 
     # Concatenate along the new leading axis → (num_agents, …)
     return jnp.concatenate(per_agent, axis=0)
-
-
-def generate_sequence_of_tasks(config):
-    """
-    Generates a sequence of tasks based on the provided configuration.
-    """
-    config.env_kwargs, config.layout_name = generate_sequence(
-        sequence_length=config.seq_length,
-        strategy=config.strategy,
-        layout_names=config.layouts,
-        seed=config.seed
-    )
-
-    return config
 
 
 def create_run_name(config, network_architecture):

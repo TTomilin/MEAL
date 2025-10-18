@@ -9,7 +9,7 @@ import numpy as np
 import optax
 import tyro
 import wandb
-from flax.core.frozen_dict import freeze, unfreeze
+from flax.core.frozen_dict import unfreeze
 from flax.training.train_state import TrainState
 from jax._src.flatten_util import ravel_pytree
 
@@ -22,8 +22,8 @@ from experiments.continual.mas import MAS
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.model.mlp import ActorCritic as MLPActorCritic
 from experiments.utils import *
+from meal import make_sequence
 from meal.env.utils.max_soup_calculator import calculate_max_soup
-from meal.registration import make
 from meal.wrappers.logging import LogWrapper
 
 
@@ -100,7 +100,6 @@ class Config:
     env_kwargs: Optional[Sequence[dict]] = None
     difficulty: Optional[str] = None
     single_task_idx: Optional[int] = None
-    layout_file: Optional[str] = None
     random_reset: bool = False
     random_agent_start: bool = True
 
@@ -194,37 +193,27 @@ def main():
 
     cl = method_map[cfg.cl_method.lower()]
 
-    # generate a sequence of tasks
-    cfg.env_kwargs, layout_names = generate_sequence(
-        num_agents=cfg.num_agents,
+    # Create environments using the improved make_sequence function
+    envs = make_sequence(
         sequence_length=seq_length,
         strategy=strategy,
-        layout_names=cfg.layouts,
+        env_id=cfg.env_name,
         seed=seed,
+        num_agents=cfg.num_agents,
+        max_steps=cfg.num_steps,
+        random_reset=cfg.random_reset,
+        layout_names=cfg.layouts,
+        difficulty=cfg.difficulty,
         height_rng=(cfg.height_min, cfg.height_max),
         width_rng=(cfg.width_min, cfg.width_max),
         wall_density=cfg.wall_density,
-        layout_file=cfg.layout_file,
+        repeat_sequence=cfg.repeat_sequence,
+        random_agent_start=cfg.random_agent_start
     )
-
-    # Add random_reset parameter to all environments
-    for env_args in cfg.env_kwargs:
-        env_args["random_reset"] = cfg.random_reset
-
-    # ── optional single-task baseline ─────────────────────────────────────────
-    if cfg.single_task_idx is not None:
-        idx = cfg.single_task_idx
-        cfg.env_kwargs = [cfg.env_kwargs[idx]]
-        layout_names = [layout_names[idx]]
-        cfg.seq_length = 1
-
-    # repeat the base sequence `repeat_sequence` times
-    cfg.env_kwargs = cfg.env_kwargs * cfg.repeat_sequence
-    layout_names = layout_names * cfg.repeat_sequence
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
     network = "cnn" if cfg.use_cnn else "mlp"
-    run_name = f'{cfg.alg_name}_{cfg.cl_method}_{difficulty}_{cfg.num_agents}agents_{network}_seq{seq_length}_{strategy}_seed_{seed}_{timestamp}'
+    run_name = f'{cfg.alg_name}_{cfg.cl_method}_{difficulty}_{cfg.num_agents}agents_{network}_seq{len(envs)}_{strategy}_seed_{seed}_{timestamp}'
     exp_dir = os.path.join("runs", run_name)
 
     # Initialize WandB
@@ -253,120 +242,6 @@ def main():
     table_body = "\n".join(rows)
     markdown = f"|param|value|\n|-|-|\n{table_body}"
     writer.add_text("hyperparameters", markdown)
-
-    def get_view_params():
-        '''
-        Get view parameters for overcooked_po environments from config.
-        Returns a dictionary with view parameters if applicable, empty dict otherwise.
-        '''
-        if cfg.env_name == "overcooked_po" and cfg.difficulty:
-            return {
-                "random_reset": cfg.random_reset,
-                "view_ahead": cfg.view_ahead,
-                "view_sides": cfg.view_sides,
-                "view_behind": cfg.view_behind
-            }
-        return {}
-
-    def create_layouts():
-        '''
-        Creates layouts with padding for regular Overcooked
-        returns the environment layouts and agent restrictions
-        '''
-        agent_restrictions_list = []
-        for env_args in cfg.env_kwargs:
-            # Extract agent restrictions from env_args
-            agent_restrictions_list.append(env_args.get('agent_restrictions', {}))
-
-        # For PO environments, no padding is needed since observations are local
-        # PO environments naturally have consistent observation spaces based on view parameters
-        if cfg.env_name == "overcooked_po":
-            # Return the original layouts without modification
-            layouts = []
-            for env_args in cfg.env_kwargs:
-                temp_env = make(cfg.env_name, **env_args, num_agents=cfg.num_agents)
-                layouts.append(temp_env.layout)
-            return layouts, agent_restrictions_list
-
-        # For regular environments, apply padding as before
-        # Create environments first
-        envs = []
-        for env_args in cfg.env_kwargs:
-            env = make(cfg.env_name, **env_args, num_agents=cfg.num_agents)
-            envs.append(env)
-
-        # find the environment with the largest observation space
-        max_width, max_height = 0, 0
-        for env in envs:
-            max_width = max(max_width, env.layout["width"])
-            max_height = max(max_height, env.layout["height"])
-
-        # pad the observation space of all environments to be the same size by adding extra walls to the outside
-        padded_envs = []
-        for env in envs:
-            # unfreeze the environment so that we can apply padding
-            env = unfreeze(env.layout)
-
-            # calculate the padding needed
-            width_diff = max_width - env["width"]
-            height_diff = max_height - env["height"]
-
-            # determine the padding needed on each side
-            left = width_diff // 2
-            right = width_diff - left
-            top = height_diff // 2
-            bottom = height_diff - top
-
-            width = env["width"]
-
-            # Adjust the indices of the observation space to match the padded observation space
-            def adjust_indices(indices):
-                '''
-                adjusts the indices of the observation space
-                @param indices: the indices to adjust
-                returns the adjusted indices
-                '''
-                indices = jnp.asarray(indices)
-                rows, cols = jnp.divmod(indices, width)
-                return (rows + top) * (width + left + right) + (cols + left)
-
-            # adjust the indices of the observation space to account for the new walls
-            env["wall_idx"] = adjust_indices(env["wall_idx"])
-            env["agent_idx"] = adjust_indices(env["agent_idx"])
-            env["goal_idx"] = adjust_indices(env["goal_idx"])
-            env["plate_pile_idx"] = adjust_indices(env["plate_pile_idx"])
-            env["onion_pile_idx"] = adjust_indices(env["onion_pile_idx"])
-            env["pot_idx"] = adjust_indices(env["pot_idx"])
-
-            # pad the observation space with walls
-            padded_wall_idx = list(env["wall_idx"])  # Existing walls
-
-            # Top and bottom padding
-            for y in range(top):
-                for x in range(max_width):
-                    padded_wall_idx.append(y * max_width + x)  # Top row walls
-
-            for y in range(max_height - bottom, max_height):
-                for x in range(max_width):
-                    padded_wall_idx.append(y * max_width + x)  # Bottom row walls
-
-            # Left and right padding
-            for y in range(top, max_height - bottom):
-                for x in range(left):
-                    padded_wall_idx.append(y * max_width + x)  # Left column walls
-
-                for x in range(max_width - right, max_width):
-                    padded_wall_idx.append(y * max_width + x)  # Right column walls
-
-            env["wall_idx"] = jnp.array(padded_wall_idx)
-
-            # set the height and width of the environment to the new padded height and width
-            env["height"] = max_height
-            env["width"] = max_width
-
-            padded_envs.append(freeze(env))  # Freeze the environment to prevent further modifications
-
-        return padded_envs, agent_restrictions_list
 
     @partial(jax.jit)
     def evaluate_model(train_state, key):
@@ -468,15 +343,10 @@ def main():
         all_avg_rewards = []
         all_avg_soups = []
 
-        envs, agent_restrictions_list = create_layouts()
-
+        # Use the already created environments
         for eval_idx, env in enumerate(envs):
-            # Create the environment with agent restrictions
-            agent_restrictions = agent_restrictions_list[eval_idx]
-            view_params = get_view_params()
-            env = make(cfg.env_name, layout=env, num_agents=cfg.num_agents, random_agent_start=cfg.random_agent_start,
-                       max_steps=cfg.num_steps, random_reset=cfg.random_reset, agent_restrictions=agent_restrictions,
-                       **view_params)  # Create the environment
+            # Environments are already created with correct parameters
+            pass
 
             # Run k episodes
             all_rewards, all_soups = jax.vmap(
@@ -488,22 +358,15 @@ def main():
 
         return all_avg_rewards, all_avg_soups
 
-    env_layouts, agent_restrictions_list = create_layouts()
-
-    envs = []
+    # Wrap environments with LogWrapper and calculate max soup
     env_names = []
     max_soup_dict = {}
-    for i, env_layout in enumerate(env_layouts):
-        # Create the environment with agent restrictions
-        agent_restrictions = agent_restrictions_list[i]
-        view_params = get_view_params()
-        env = make(cfg.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i,
-                   agent_restrictions=agent_restrictions, num_agents=cfg.num_agents, **view_params)
+    for i, env in enumerate(envs):
         env = LogWrapper(env, replace_info=False)
         env_name = env.layout_name
-        envs.append(env)
+        envs[i] = env  # Update the environment in the list
         env_names.append(env_name)
-        max_soup_dict[env_name] = calculate_max_soup(env_layout, env.max_steps, n_agents=env.num_agents)
+        max_soup_dict[env_name] = calculate_max_soup(env.layout, env.max_steps, n_agents=env.num_agents)
 
     # set extra config parameters based on the environment
     temp_env = envs[0]
@@ -524,7 +387,7 @@ def main():
 
     ac_cls = CNNActorCritic if cfg.use_cnn else MLPActorCritic
 
-    network = ac_cls(temp_env.action_space().n, cfg.activation, seq_length, cfg.use_multihead,
+    network = ac_cls(temp_env.action_space().n, cfg.activation, len(envs), cfg.use_multihead,
                      cfg.shared_backbone, cfg.big_network, cfg.use_task_id, cfg.regularize_heads,
                      cfg.use_layer_norm)
 
@@ -1137,7 +1000,7 @@ def main():
                 if visualizer is None:
                     visualizer = create_visualizer(temp_env.num_agents, cfg.env_name)
                 # Generate & log a GIF after finishing task i
-                env_name = layout_names[task_idx]
+                env_name = env.layout_name
                 states = record_gif_of_episode(cfg, train_state, env, network, task_idx, cfg.gif_len)
                 file_path = f"{exp_dir}/task_{task_idx}_{env_name}.gif"
                 # Pass environment instance to PO visualizer for view highlighting
@@ -1207,7 +1070,7 @@ def main():
             if config is not None:
                 config_dict = {
                     "use_cnn": config.use_cnn,
-                    "num_tasks": config.seq_length,
+                    "num_tasks": len(envs),
                     "use_multihead": config.use_multihead,
                     "shared_backbone": config.shared_backbone,
                     "big_network": config.big_network,
@@ -1247,7 +1110,7 @@ def main():
         if not cfg.use_cnn:
             obs_dim = (np.prod(obs_dim),)
         # Initialize memory buffer
-        cl_state = init_agem_memory(cfg.agem_memory_size, obs_dim, max_tasks=cfg.seq_length)
+        cl_state = init_agem_memory(cfg.agem_memory_size, obs_dim, max_tasks=len(envs))
 
     # apply the loop_over_envs function to the environments
     loop_over_envs(train_rng, train_state, cl_state, envs)

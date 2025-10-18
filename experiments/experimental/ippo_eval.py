@@ -23,7 +23,7 @@ from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
 from meal.env.utils.max_soup_calculator import calculate_max_soup
-from meal.registration import make
+from meal import make_env
 from meal.wrappers.logging import LogWrapper
 
 
@@ -195,7 +195,7 @@ def main():
     cl = method_map[cfg.cl_method.lower()]
 
     # generate a sequence of tasks
-    cfg.env_kwargs, layout_names = generate_sequence(
+    cfg.env_kwargs, layout_names = create_sequence(
         num_agents=cfg.num_agents,
         sequence_length=seq_length,
         strategy=strategy,
@@ -292,7 +292,7 @@ def main():
             # Return the original layouts without modification
             env_layouts = []
             for env_args in cfg.env_kwargs:
-                temp_env = make(cfg.env_name, **env_args, num_agents=cfg.num_agents)
+                temp_env = make_env(cfg.env_name, **env_args, num_agents=cfg.num_agents)
                 env_layouts.append(temp_env.layout)
             return env_layouts, agent_restrictions_list
 
@@ -300,7 +300,7 @@ def main():
         # Create environments first
         envs = []
         for env_args in cfg.env_kwargs:
-            env = make(cfg.env_name, **env_args, num_agents=cfg.num_agents)
+            env = make_env(cfg.env_name, **env_args, num_agents=cfg.num_agents)
             envs.append(env)
 
         # find the environment with the largest observation space
@@ -434,7 +434,7 @@ def main():
         # Create the environment with agent restrictions
         agent_restrictions = agent_restrictions_list[i]
         view_params = get_view_params()
-        env = make(cfg.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i,
+        env = make_env(cfg.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i,
                    agent_restrictions=agent_restrictions, num_agents=cfg.num_agents, **view_params)
         env = LogWrapper(env, replace_info=False)
         env_name = env.layout_name

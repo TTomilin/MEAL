@@ -1,3 +1,4 @@
+import json
 from enum import IntEnum
 from typing import Tuple, Dict
 
@@ -10,14 +11,14 @@ from flax.core.frozen_dict import FrozenDict
 from jax import lax
 
 from meal.env import MultiAgentEnv
-from meal.env.generation.layout_generator import generate_random_layout
-from meal.env.utils import spaces
 from meal.env.common import (
     OBJECT_TO_INDEX,
     OBJECT_INDEX_TO_VEC,
     DIR_TO_VEC,
     make_overcooked_map)
-from meal.env.layouts.presets import overcooked_layouts as layouts
+from meal.env.generation.layout_generator import generate_random_layout
+from meal.env.layouts.presets import overcooked_layouts as layouts, _parse_layout_string
+from meal.env.utils import spaces
 
 BASE_REW_SHAPING_PARAMS = {
     "PLACEMENT_IN_POT_REW": 3,  # reward for putting ingredients
@@ -78,8 +79,8 @@ class Overcooked(MultiAgentEnv):
             max_steps: int = 1000,
             task_id: int = 0,
             num_agents: int = 2,
-            start_idx: tuple[int, ...] | None = None,
             agent_restrictions: dict = None,
+            **env_kwargs
     ):
         super().__init__(num_agents=num_agents)
 
@@ -93,9 +94,12 @@ class Overcooked(MultiAgentEnv):
                 raise ValueError(f"Unknown layout_name '{layout_name}'. Available: {sorted(layouts.keys())}")
             self.layout = FrozenDict(layouts[layout_name])
             self.layout_name = layout_name
+
+            names = [f"file_{i}" for i in range(len(env_kwargs))]
+            self.layout_name = names[task_id]
         # 3) otherwise: generate by difficulty
         else:
-            grid, self.layout = generate_random_layout(num_agents=num_agents, difficulty=difficulty)
+            grid, self.layout = generate_random_layout(num_agents=num_agents, difficulty=difficulty, **env_kwargs)
             self.layout_name = f"{difficulty}_gen_{task_id}"
 
         # Observations given by 26 channels, most of which are boolean masks
@@ -107,7 +111,6 @@ class Overcooked(MultiAgentEnv):
 
         self.difficulty = difficulty
         self.agents = [f"agent_{i}" for i in range(num_agents)]
-        self.start_idx = None if start_idx is None else jnp.array(start_idx, jnp.uint32)
 
         self.action_set = jnp.array([
             Actions.up,
@@ -179,7 +182,7 @@ class Overcooked(MultiAgentEnv):
         25. Urgency. The entire layer is 1 there are 40 or fewer remaining time steps. 0 otherwise
         """
         H, W = self.height, self.width
-        maze = state.maze_map # (H,W,3)
+        maze = state.maze_map  # (H,W,3)
 
         # ────────────────────── build the 16 env layers ────────────────────────
         obj = maze[:, :, 0]  # tile indices
@@ -215,7 +218,7 @@ class Overcooked(MultiAgentEnv):
         soup_ready_with_inv = soup_ready + (jnp.sum(agent_inv_items, 0) == OBJECT_TO_INDEX["dish"]) * jnp.sum(
             pos_layers, 0)
         onions_in_soup_with_inv = onions_in_soup + (
-                    jnp.sum(agent_inv_items, 0) == OBJECT_TO_INDEX["dish"]) * 3 * jnp.sum(pos_layers, 0)
+                jnp.sum(agent_inv_items, 0) == OBJECT_TO_INDEX["dish"]) * 3 * jnp.sum(pos_layers, 0)
 
         # Rebuild env_layers with agent inventory
         env_layers_with_inv = jnp.stack([

@@ -18,7 +18,7 @@ import optax
 import wandb
 from flax.training.train_state import TrainState
 
-from meal.registration import make
+from meal import make_env
 from meal.wrappers.logging import LogWrapper
 from experiments.partner_adaptation.partner_agents.agent_interface import ActorWithConditionalCriticPolicy
 from experiments.partner_adaptation.partner_agents.population_interface import AgentPopulation
@@ -795,7 +795,7 @@ def get_brdiv_population(config, out, env):
 
 
 def run_brdiv(config):
-    env = make(config.env_name, **
+    env = make_env(config.env_name, **
     {"random_agent_start": True, **config.layout})
     env = LogWrapper(env)
     print("Starting BRDiv training...")

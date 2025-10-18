@@ -14,14 +14,13 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import optax
-from flax.training.train_state import TrainState
 from flax.serialization import from_bytes
+from flax.training.train_state import TrainState
 
-from meal.visualization.visualizer import OvercookedVisualizer
-from meal.registration import make
-from meal.env.generation.sequence_loader import generate_sequence
-from experiments.model.mlp import ActorCritic as MLPActorCritic
 from experiments.model.cnn import ActorCritic as CNNActorCritic
+from experiments.model.mlp import ActorCritic as MLPActorCritic
+from meal import make_env, create_sequence
+from meal.visualization.visualizer import OvercookedVisualizer
 
 
 def load_checkpoint(ckpt_path: Path, train_state: TrainState) -> TrainState:
@@ -106,7 +105,7 @@ def main():
         wall_density = args.wall_density
 
     # Generate the sequence of environments
-    env_kwargs_list, layout_names = generate_sequence(
+    env_kwargs_list, layout_names = create_sequence(
         sequence_length=sequence_length,
         strategy=strategy,
         seed=seed,
@@ -125,7 +124,7 @@ def main():
     # Evaluate each task in the sequence
     for task_idx in range(args.sequence_length):
         # Find the checkpoint for this task
-        checkpoint_path = args.checkpoint_dir / f"model_env_{task_idx+1}"
+        checkpoint_path = args.checkpoint_dir / f"model_env_{task_idx + 1}"
         if not checkpoint_path.exists():
             print(f"No checkpoint found for task {task_idx} at {checkpoint_path}. Skipping.")
             continue
@@ -152,7 +151,7 @@ def main():
         print(f"\n--- Evaluating Task {task_idx}: {layout_name} ---")
 
         # Create environment for this task
-        env = make(args.env_name, **env_kwargs)
+        env = make_env(args.env_name, **env_kwargs)
         num_agents = env.num_agents
 
         # Initialize network & TrainState
@@ -181,11 +180,11 @@ def main():
         ActorCritic = CNNActorCritic if use_cnn else MLPActorCritic
         net = ActorCritic(env.action_space().n, activation=activation,
                           num_tasks=num_tasks,
-                          use_multihead=use_multihead, 
+                          use_multihead=use_multihead,
                           shared_backbone=shared_backbone,
-                          big_network=big_network, 
+                          big_network=big_network,
                           use_task_id=use_task_id,
-                          regularize_heads=regularize_heads, 
+                          regularize_heads=regularize_heads,
                           use_layer_norm=use_layer_norm)
 
         obs_shape = env.observation_space().shape
@@ -210,7 +209,7 @@ def main():
 
         rng = jax.random.PRNGKey(42 + task_idx)  # Different seed for each task
         for ep in range(args.n_episodes):
-            print(f"Running episode {ep+1}/{args.n_episodes}")
+            print(f"Running episode {ep + 1}/{args.n_episodes}")
             rng, subkey = jax.random.split(rng)
             obs, sim_state = env.reset(subkey)
             done = False
@@ -259,7 +258,7 @@ def main():
                 all_frames = frames
 
         # Save GIF for this task
-        gif_path = args.gif_dir / f"task_{task_idx+1}_{layout_name}.gif"
+        gif_path = args.gif_dir / f"task_{task_idx + 1}_{layout_name}.gif"
         viz.animate(all_frames, gif_path)
 
         # Report metrics for this task

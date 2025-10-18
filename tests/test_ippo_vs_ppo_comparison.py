@@ -18,7 +18,7 @@ from experiments.ippo_po import Config as IPPOConfig
 from experiments.ippo import Config as PPOConfig
 from experiments.model.mlp import ActorCritic as MLPActorCritic
 from experiments.model.cnn import ActorCritic as CNNActorCritic
-from meal.registration import make
+from meal import make_env
 from meal.wrappers.logging import LogWrapper
 from experiments.utils import batchify
 from experiments.continual.ft import FT
@@ -52,8 +52,8 @@ class TestIPPOvsPPOComparison:
         self.action_dim = 6
 
         # Create environments for testing
-        self.ippo_env = make("overcooked", layout="cramped_room", num_agents=2)
-        self.ppo_env = make("overcooked_single", layout="cramped_room")
+        self.ippo_env = make_env("overcooked", layout="cramped_room", num_agents=2)
+        self.ppo_env = make_env("overcooked_single", layout="cramped_room")
 
         # Wrap environments
         self.ippo_env = LogWrapper(self.ippo_env)

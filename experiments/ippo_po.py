@@ -17,7 +17,7 @@ import optax
 from flax.core.frozen_dict import freeze, unfreeze
 from flax.training.train_state import TrainState
 
-from meal.registration import make
+from meal import make_env
 from meal.wrappers.logging import LogWrapper
 from meal.env.utils.max_soup_calculator import calculate_max_soup
 from experiments.model.mlp import ActorCritic as MLPActorCritic
@@ -199,7 +199,7 @@ def main():
     cl = method_map[cfg.cl_method.lower()]
 
     # generate a sequence of tasks
-    cfg.env_kwargs, layout_names = generate_sequence(
+    cfg.env_kwargs, layout_names = create_sequence(
         sequence_length=seq_length,
         strategy=strategy,
         layout_names=cfg.layouts,
@@ -289,7 +289,7 @@ def main():
             # Return the original layouts without modification
             env_layouts = []
             for env_args in cfg.env_kwargs:
-                temp_env = make(cfg.env_name, **env_args)
+                temp_env = make_env(cfg.env_name, **env_args)
                 env_layouts.append(temp_env.layout)
             return env_layouts, agent_restrictions_list
 
@@ -297,7 +297,7 @@ def main():
         # Create environments first
         envs = []
         for env_args in cfg.env_kwargs:
-            env = make(cfg.env_name, **env_args)
+            env = make_env(cfg.env_name, **env_args)
             envs.append(env)
 
         # find the environment with the largest observation space
@@ -482,7 +482,7 @@ def main():
             # Create the environment with agent restrictions
             agent_restrictions = agent_restrictions_list[eval_idx]
             view_params = get_view_params()
-            env = make(cfg.env_name, layout=env, agent_restrictions=agent_restrictions, **view_params)
+            env = make_env(cfg.env_name, layout=env, agent_restrictions=agent_restrictions, **view_params)
 
             # Run k episodes
             all_rewards, all_soups = jax.vmap(lambda k: run_episode_while(env, k, cfg.eval_num_steps))(
@@ -505,7 +505,7 @@ def main():
         # Create the environment with agent restrictions
         agent_restrictions = agent_restrictions_list[i]
         view_params = get_view_params()
-        env = make(cfg.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i,
+        env = make_env(cfg.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i,
                    agent_restrictions=agent_restrictions, **view_params)
         env = LogWrapper(env, replace_info=False)
         env_name = env.layout_name

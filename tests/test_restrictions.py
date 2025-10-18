@@ -16,7 +16,7 @@ import jax
 import jax.numpy as jnp
 import pygame
 from flax.core import FrozenDict
-from meal.registration import make
+from meal import make_env
 from meal.env.presets import layout_grid_to_dict
 from meal.env.overcooked_legacy import OBJECT_TO_INDEX
 from meal.visualization.visualizer import OvercookedVisualizer
@@ -80,7 +80,7 @@ WWXWW
         print(f"\n--- Testing Scenario {scenario_idx}: {scenario['description']} ---")
 
         # Create environment with restrictions
-        env = make("overcooked", layout=layout, agent_restrictions=scenario["restrictions"])
+        env = make_env("overcooked", layout=layout, agent_restrictions=scenario["restrictions"])
 
         # Reset environment
         rng = jax.random.PRNGKey(42 + scenario_idx)

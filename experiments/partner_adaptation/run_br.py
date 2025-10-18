@@ -28,7 +28,7 @@ from experiments.continual.mas import MAS
 from meal.env.presets import easy_layouts_legacy
 from meal.env.utils.max_soup_calculator import calculate_max_soup
 from meal.visualization.visualizer import OvercookedVisualizer
-from meal.registration import make
+from meal import make_env
 from meal.wrappers.logging import LogWrapper
 from experiments.partner_adaptation.partner_agents.agent_interface import ActorWithConditionalCriticPolicy, MLPActorCriticPolicyCL
 from experiments.partner_adaptation.partner_agents.overcooked.agent_policy_wrappers import OvercookedIndependentPolicyWrapper, \
@@ -254,7 +254,7 @@ def run_training():
             layouts[config.layout_idx]["layout"]), "random_agent_start": True}
 
     config.layout = layout_dict.copy()  # These are env kwargs
-    env = make(config.env_name, **config.layout)
+    env = make_env(config.env_name, **config.layout)
     env = LogWrapper(env)
 
     # Calculate max soup for the layout

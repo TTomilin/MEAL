@@ -30,8 +30,8 @@ from experiments.experimental.utils_vdn import (
 )
 from experiments.model.q_mlp import QNetwork
 from experiments.utils import batchify, unbatchify
-from meal import make
-from meal.env.generation.sequence_loader import generate_sequence
+from meal import make_env
+from meal import create_sequence
 from meal.env.utils.max_soup_calculator import calculate_max_soup
 from meal.wrappers.jaxmarl import (
     CTRolloutManager,
@@ -225,7 +225,7 @@ def main():
     cl = method_map[config.cl_method.lower()]
 
     # generate a sequence of tasks
-    config.env_kwargs, layout_names = generate_sequence(
+    config.env_kwargs, layout_names = create_sequence(
         sequence_length=seq_length,
         strategy=strategy,
         layout_names=config.layouts,
@@ -315,7 +315,7 @@ def main():
             # Return the original layouts without modification
             env_layouts = []
             for env_args in config.env_kwargs:
-                temp_env = make(config.env_name, **env_args)
+                temp_env = make_env(config.env_name, **env_args)
                 env_layouts.append(temp_env.layout)
             return env_layouts, agent_restrictions_list
 
@@ -323,7 +323,7 @@ def main():
         # Create environments first
         envs = []
         for env_args in config.env_kwargs:
-            env = make(config.env_name, **env_args)
+            env = make_env(config.env_name, **env_args)
             envs.append(env)
 
         # find the environment with the largest observation space
@@ -481,7 +481,7 @@ def main():
         # Create the environment with agent restrictions
         agent_restrictions = agent_restrictions_list[i]
         view_params = get_view_params()
-        env = make(config.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i,
+        env = make_env(config.env_name, layout=env_layout, layout_name=layout_names[i], task_id=i,
                    agent_restrictions=agent_restrictions, **view_params)
         env = LogWrapper(env, replace_info=False)
         env_name = env.layout_name

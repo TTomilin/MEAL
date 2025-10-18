@@ -1,81 +1,10 @@
-import ast
-import json
 import random
 from typing import List, Dict, Any, Sequence, Tuple
 
-import jax.numpy as jnp
-from flax.core.frozen_dict import FrozenDict
-
-from meal.env.utils.difficulty_config import DIFFICULTY_PARAMS
-from meal.env.generation.layout_generator import generate_random_layout
-from meal.env.layouts.presets import hard_layouts, medium_layouts, easy_layouts, overcooked_layouts
-
-
-def _parse_layout_string(layout_str: str) -> FrozenDict:
-    """Parse a string representation of a FrozenDict layout back to actual FrozenDict."""
-    # Remove the "FrozenDict(" prefix and ")" suffix
-    if layout_str.startswith("FrozenDict("):
-        layout_str = layout_str[11:-1]
-
-    # Parse the dictionary-like string
-    # Replace Array(...) with list representation for parsing
-    import re
-
-    # Extract array contents and convert to lists
-    def array_replacer(match):
-        array_content = match.group(1)
-
-        # Find the array values part (everything between [ and ], before dtype=)
-        # Handle multi-line arrays
-        bracket_match = re.search(r'\[(.*?)\]', array_content, re.DOTALL)
-        if bracket_match:
-            values_str = bracket_match.group(1)
-            # Clean up whitespace and newlines
-            values_str = re.sub(r'\s+', ' ', values_str).strip()
-            # Split by comma and convert to integers
-            try:
-                values = [int(x.strip()) for x in values_str.split(',') if x.strip()]
-                return str(values)
-            except ValueError:
-                # If parsing fails, return empty list
-                return "[]"
-        else:
-            return "[]"
-
-    # Replace Array(...) patterns with lists - use DOTALL flag for multi-line matching
-    layout_str = re.sub(r'Array\(([^)]+(?:\([^)]*\))*[^)]*)\)', array_replacer, layout_str, flags=re.DOTALL)
-
-    # Add quotes around dictionary keys to make it valid Python syntax
-    key_pattern = r'\b(wall_idx|agent_idx|goal_idx|plate_pile_idx|onion_pile_idx|pot_idx|height|width)\b:'
-    layout_str = re.sub(key_pattern, r'"\1":', layout_str)
-
-    # Parse the cleaned string as a dictionary
-    try:
-        layout_dict = ast.literal_eval(layout_str)
-    except (ValueError, SyntaxError) as e:
-        print(f"Failed to parse layout string: {e}")
-        print(f"Cleaned string: {layout_str[:200]}...")
-        # If parsing fails, create a minimal valid layout
-        layout_dict = {
-            "height": 6,
-            "width": 7,
-            "wall_idx": [],
-            "agent_idx": [],
-            "goal_idx": [],
-            "plate_pile_idx": [],
-            "onion_pile_idx": [],
-            "pot_idx": []
-        }
-
-    # Convert lists to JAX arrays with correct dtypes
-    array_keys = ["wall_idx", "agent_idx", "goal_idx", "plate_pile_idx", "onion_pile_idx", "pot_idx"]
-    for key in array_keys:
-        if key in layout_dict:
-            layout_dict[key] = jnp.array(layout_dict[key], dtype=jnp.int32)
-        else:
-            layout_dict[key] = jnp.array([], dtype=jnp.int32)
-
-    return FrozenDict(layout_dict)
+from meal import Overcooked, OvercookedPO
+from meal.env.layouts.presets import hard_layouts, medium_layouts, easy_layouts, overcooked_layouts, \
+    get_layouts_by_difficulty
+from meal.wrappers.observation import PadObsToMax
 
 
 def _resolve_pool(names: Sequence[str] | None) -> List[str]:
@@ -108,22 +37,32 @@ def _random_no_repeat(pool: List[str], k: int) -> List[str]:
     return out
 
 
-def generate_sequence(
+def _make_restrictions(enabled: bool, seed: int, num_agents: int) -> dict:
+    # Only meaningful for 2 agents; extend if you support more
+    if not enabled or num_agents != 2:
+        return {}
+    role = random.Random(seed).randint(0, 1)  # 0: a0 no onions / a1 no plates, 1: flipped
+    return {
+        "agent_0_cannot_pick_onions": role == 0,
+        "agent_0_cannot_pick_plates": role == 1,
+        "agent_1_cannot_pick_onions": role == 1,
+        "agent_1_cannot_pick_plates": role == 0,
+    }
+
+
+def create_sequence(
+        env_id: str = "overcooked",
         sequence_length: int | None = None,
         strategy: str = "generate",
-        layout_names: Sequence[str] | None = None,
-        seed: int | None = None,
+        seed: int = 0,
         num_agents: int = 2,
-        height_rng: Tuple[int, int] = (5, 10),
-        width_rng: Tuple[int, int] = (5, 10),
-        wall_density: float = 0.15,
-        layout_file: str | None = None,
+        difficulty: str | None = None,
         complementary_restrictions: bool = False,
-) -> Tuple[List[Dict[str, Any]], List[str]]:
+        repeat_sequence: int = 1,
+        layout_names: Sequence[str] | None = None,
+        **env_kwargs,
+) -> list:
     """
-    Return a list of `env_kwargs` (what you feed to Overcooked) and
-    a parallel list of pretty names.
-
     strategies
     ----------
     random     – sample from fixed layouts (no immediate repeats if len>pool)
@@ -134,123 +73,75 @@ def generate_sequence(
     if seed is not None:
         random.seed(seed)
 
-    # ---- shortcut: load pre-baked layouts -----------------------------
-    if layout_file is not None:
-        with open(layout_file) as f:
-            raw_data = json.load(f)
+    env_cls = {"overcooked": Overcooked, "overcooked_po": OvercookedPO}[env_id]
 
-        # Convert string representations to actual FrozenDict objects
-        env_kwargs = []
-        for item in raw_data:
-            if isinstance(item, dict) and "layout" in item:
-                # Parse the layout string to FrozenDict
-                layout_str = item["layout"]
-                if isinstance(layout_str, str):
-                    parsed_layout = _parse_layout_string(layout_str)
-                    env_kwargs.append({"layout": parsed_layout})
-                else:
-                    # Already a proper layout object
-                    env_kwargs.append(item)
-            else:
-                # Fallback for unexpected format
-                env_kwargs.append(item)
+    # 1) Build a base list of specs for one sequence
+    base_specs: list[dict] = []
 
-        names = [f"file_{i}" for i in range(len(env_kwargs))]
-        return env_kwargs, names
-    # -------------------------------------------------------------------
+    if strategy in ("random", "ordered"):
+        pool_dict = get_layouts_by_difficulty(difficulty)  # dict[name] -> FrozenDict
+        pool = list(pool_dict.keys()) if layout_names is None else _resolve_pool(layout_names)
+        if sequence_length is None:
+            sequence_length = len(pool)
 
-    pool = _resolve_pool(layout_names)
-    if sequence_length is None:
-        sequence_length = len(pool)
+        if strategy == "random":
+            selected = _random_no_repeat(pool, sequence_length)
+        else:  # ordered
+            if sequence_length > len(pool):
+                raise ValueError("ordered requires seq_length ≤ available layouts")
+            selected = pool[:sequence_length]
 
-    env_kwargs: List[Dict[str, Any]] = []
-    names: List[str] = []
-
-    # ----------------------------------------------------------------– strategy
-    if strategy == "random":
-        selected = _random_no_repeat(pool, sequence_length)
-        env_kwargs = [{"layout": overcooked_layouts[name]} for name in selected]
-        names = selected
-
-    elif strategy == "ordered":
-        if sequence_length > len(pool):
-            raise ValueError("ordered requires seq_length ≤ available layouts")
-        selected = pool[:sequence_length]
-        env_kwargs = [{"layout": overcooked_layouts[name]} for name in selected]
-        names = selected
+        for name in selected:
+            base_specs.append({"layout_name": name, "difficulty": difficulty})
 
     elif strategy == "generate":
-        base = seed if seed is not None else random.randrange(1 << 30)
-        for i in range(sequence_length):
-            _, layout = generate_random_layout(
-                num_agents=num_agents,
-                height_rng=height_rng,
-                width_rng=width_rng,
-                wall_density=wall_density,
-                seed=base + i
-            )
-            env_kwargs.append({"layout": layout})  # already a FrozenDict
-            names.append(f"gen_{i}")
-            print(f"Generated layout {i}: {names[-1]}")
+        if sequence_length is None:
+            raise ValueError("generate requires an explicit sequence_length")
+        # “generate” doesn’t use preset names; store per-slot difficulty
+        for _ in range(sequence_length):
+            base_specs.append({"layout_name": None, "difficulty": difficulty})
 
     elif strategy == "curriculum":
-        # Split tasks equally across difficulty levels: easy -> medium -> hard
-        # Use procedural generation with difficulty-specific parameters
+        if sequence_length is None:
+            raise ValueError("curriculum requires an explicit sequence_length")
+
         tasks_per_difficulty = sequence_length // 3
-        remaining_tasks = sequence_length % 3
-
-        # Calculate how many tasks for each difficulty
-        easy_count = tasks_per_difficulty + (1 if remaining_tasks > 0 else 0)
-        medium_count = tasks_per_difficulty + (1 if remaining_tasks > 1 else 0)
-        hard_count = tasks_per_difficulty
-
-        # Use centralized difficulty parameters for procedural generation
-        difficulty_params = DIFFICULTY_PARAMS
-
-        base = seed if seed is not None else random.randrange(1 << 30)
-        task_counter = 0
-
-        # Helper function to generate tasks for a specific difficulty level
-        def generate_difficulty_tasks(difficulty_name: str, count: int, task_counter: int) -> int:
-            """Generate tasks for a specific difficulty level and return updated task_counter."""
-            params = difficulty_params[difficulty_name]
-            for i in range(count):
-                _, layout = generate_random_layout(
-                    num_agents=num_agents,
-                    height_rng=params["height_rng"],
-                    width_rng=params["width_rng"],
-                    wall_density=params["wall_density"],
-                    seed=base + task_counter
-                )
-                env_kwargs.append({"layout": layout})
-                names.append(f"{difficulty_name}_gen_{i}")
-                print(f"Curriculum task {task_counter}: {difficulty_name} - generated layout {i}")
-                task_counter += 1
-            return task_counter
-
-        # Generate tasks for each difficulty level in order
-        task_counter = generate_difficulty_tasks("easy", easy_count, task_counter)
-        task_counter = generate_difficulty_tasks("medium", medium_count, task_counter)
-        task_counter = generate_difficulty_tasks("hard", hard_count, task_counter)
-
+        remaining = sequence_length % 3
+        counts = [
+            tasks_per_difficulty + (1 if remaining > 0 else 0),  # easy
+            tasks_per_difficulty + (1 if remaining > 1 else 0),  # medium
+            tasks_per_difficulty,                                 # hard
+        ]
+        for diff, cnt in zip(["easy", "medium", "hard"], counts):
+            for _ in range(cnt):
+                base_specs.append({"layout_name": None, "difficulty": diff})
     else:
         raise NotImplementedError(f"Unknown strategy '{strategy}'")
 
-    # Add agent restrictions if enabled
-    if complementary_restrictions:
-        for i, kwargs in enumerate(env_kwargs):
-            # Randomly assign roles for each task: 0 = agent_0 can't pick onions, 1 = agent_0 can't pick plates
-            role_assignment = random.randint(0, 1)
-            kwargs["agent_restrictions"] = {
-                "agent_0_cannot_pick_onions": role_assignment == 0,
-                "agent_0_cannot_pick_plates": role_assignment == 1,
-                "agent_1_cannot_pick_onions": role_assignment == 1,
-                "agent_1_cannot_pick_plates": role_assignment == 0,
-            }
-            print(
-                f"Task {i}: Agent 0 cannot pick {'onions' if role_assignment == 0 else 'plates'}, Agent 1 cannot pick {'plates' if role_assignment == 0 else 'onions'}")
+    # 2) Repeat the base sequence
+    full_specs = base_specs * max(1, int(repeat_sequence))
 
-    # prefix with index so logs stay ordered
-    ordered_names = [f"{i}__{n}" for i, n in enumerate(names)]
-    print("Selected layouts:", ordered_names)
-    return env_kwargs, names
+    # 3) Instantiate envs with increasing task_id and per-env restriction seed
+    envs: list = []
+    for i, spec in enumerate(full_specs):
+        restr = _make_restrictions(complementary_restrictions, seed + i, num_agents)
+        kwargs_common = dict(
+            task_id=i,
+            num_agents=num_agents,
+            agent_restrictions=restr,
+            **env_kwargs,
+        )
+        if spec["layout_name"] is not None:
+            env = env_cls(layout_name=spec["layout_name"], **kwargs_common)
+        else:
+            # generate / curriculum
+            env = env_cls(difficulty=spec["difficulty"], **kwargs_common, seed=seed + i)
+        envs.append(env)
+
+    # 4) Optional: pad observations to max grid across the set (only for fully-observed env)
+    if env_id == "overcooked" and len(envs) > 1:
+        max_w = max(int(env.layout["width"]) for env in envs)
+        max_h = max(int(env.layout["height"]) for env in envs)
+        envs = [PadObsToMax(env, max_h, max_w) for env in envs]
+
+    return envs

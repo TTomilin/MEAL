@@ -24,6 +24,7 @@ dependencies = [
     "jax",
     "flax",
     "chex",
+    "gymnax",
     "tyro",
     "distrax",
     "tensorboard",
