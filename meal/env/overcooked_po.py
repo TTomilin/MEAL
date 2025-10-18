@@ -160,10 +160,10 @@ class OvercookedPO(Overcooked):
             fdx, fdy = dir_vecs[state.agent_dir_idx[i]]
             ldx, ldy = -fdy, fdx
 
-            # Build forward/behind rows excluding the agent row
-            rows_forward = jnp.arange(1, self.view_ahead + 1, dtype=jnp.int32)  # 1..ahead
-            rows_backward = -jnp.arange(1, self.view_behind + 1, dtype=jnp.int32)  # -behind..-1
-            row_offsets = jnp.concatenate([rows_backward[::-1], rows_forward], axis=0)  # no 0
+            # Build forward/behind rows
+            rows_forward = jnp.arange(0, self.view_ahead + 1, dtype=jnp.int32)  # 1..ahead
+            rows_backward = jnp.arange(-self.view_behind, 0, dtype=jnp.int32)  # -behind..-1
+            row_offsets = jnp.concatenate([rows_backward, rows_forward], axis=0)
 
             # Build lateral columns including center only if the “spine” is needed
             col_offsets = jnp.arange(-self.view_sides, self.view_sides + 1, dtype=jnp.int32)  # -sides..0..+sides
