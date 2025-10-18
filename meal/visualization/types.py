@@ -310,7 +310,7 @@ class PotState:
     """
     Minimal, portable representation of a cooking pot.
 
-    Assumptions (matches your current env logic):
+    Assumptions:
       - status ∈ [0, empty]
       - status == empty  → empty pot (0 onions)
       - full > status > 0 → cooking
@@ -367,7 +367,6 @@ class PotState:
         if self.is_cooking or self.is_ready:
             return 3
         # filling region: map [full..empty) -> (3..0], but cap to [0..3]
-        # Your legacy code used: min(3, empty - status) in filling range.
         return max(0, min(3, self.empty - self.status))
 
     @property

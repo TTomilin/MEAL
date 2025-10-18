@@ -9,8 +9,6 @@ from flax.core.frozen_dict import freeze
 from meal.env.overcooked import Actions, Overcooked, POT_FULL_STATUS
 from meal.visualization.visualizer import OvercookedVisualizer
 
-# Import your env + viz
-
 # Aliases
 U, D, R, L, S, I = Actions.up, Actions.down, Actions.right, Actions.left, Actions.stay, Actions.interact
 

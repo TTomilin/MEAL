@@ -4,7 +4,7 @@ from typing import Tuple, Dict, Any
 import jax
 import jax.numpy as jnp
 
-from meal.env.overcooked_legacy import Actions
+from meal.env.overcooked import Actions
 from experiments.partner_adaptation.partner_agents.overcooked.base_agent import BaseAgent, AgentState
 
 

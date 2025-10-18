@@ -72,7 +72,7 @@ class QNetwork(nn.Module):
         act = self._act()
         hid = 256 if self.big_network else self.hidden_size
 
-        # optional additional layer (kept from your old QNetwork)
+        # optional additional layer
         x = nn.Dense(hid,
                      kernel_init=orthogonal(np.sqrt(2)),
                      bias_init=constant(0.0))(x)

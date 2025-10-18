@@ -25,7 +25,7 @@ from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
-from meal.env.presets import easy_layouts_legacy
+from meal.env.layouts.presets import easy_layouts_legacy
 from meal.env.utils.max_soup_calculator import calculate_max_soup
 from meal.visualization.visualizer import OvercookedVisualizer
 from meal import make_env

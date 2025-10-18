@@ -12,7 +12,7 @@ from flax.training.train_state import TrainState
 import optax
 
 from meal.env.layouts.presets import cramped_room
-from meal.env.overcooked_legacy import Overcooked
+from meal.env.overcooked import Overcooked
 from meal.env.overcooked import Overcooked as OvercookedNAgent
 
 from experiments.ippo import Config as PPOConfig

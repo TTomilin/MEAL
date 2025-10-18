@@ -7,7 +7,7 @@ from flax import struct
 from jax import lax
 
 from meal.env.common import OBJECT_TO_INDEX
-from meal.env.overcooked_legacy import Actions
+from meal.env.overcooked import Actions
 
 
 @struct.dataclass

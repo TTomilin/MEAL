@@ -118,7 +118,7 @@ def _objects_from_drawable(ds: DrawableState):
             o = type('PlateObj', (), {'name': 'dish', 'position': pos, 'ingredients': None})()
             objects[f"plate_{pos[0]}_{pos[1]}"] = o
         elif kind in (Obj.DISH, Obj.SOUP):
-            ings = ('onion', 'onion', 'onion')  # your current env only makes onion soup
+            ings = ('onion', 'onion', 'onion')  # current env only makes onion soup
             o = type('DishObj', (), {
                 'name': 'soup', 'position': pos, 'ingredients': ings,
                 'is_ready': True, '_cooking_tick': -1, 'cook_time': 20

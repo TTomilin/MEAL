@@ -54,7 +54,7 @@ def _held_from_inventory(inv_val: int, ids: Ids) -> Tuple[Optional["Obj"], Optio
     if inv_val == ids.plate:
         return Obj.PLATE, None
     if inv_val == ids.dish:
-        # Plate with onion soup (your current code always onion soup)
+        # Plate with onion soup
         return Obj.DISH, (Obj.ONION, Obj.ONION, Obj.ONION)
     # Fallback: unknown items treated as none
     return None, None

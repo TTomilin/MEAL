@@ -39,7 +39,7 @@ def main() -> None:
         algo = cfg.get("alg_name")
         cl_method = cfg.get("cl_method", "UNKNOWN_CL")
 
-        # unify the naming quirks exactly like in your downloader
+        # unify the naming quirks
         if algo == "ippo_cbp":
             algo, cl_method = "ippo", "CBP"
         if cl_method == "EWC" and cfg.get("ewc_mode") == "online":
@@ -63,7 +63,7 @@ def main() -> None:
             print(f"→ {out_file} exists, skip")
             continue
 
-        env_kwargs = cfg.get("env_kwargs")  # ← logged by your trainer
+        env_kwargs = cfg.get("env_kwargs")  # ← logged by the trainer
         if not env_kwargs:
             print(f"[warn] {run.name} has no 'env_kwargs' in its config")
             continue

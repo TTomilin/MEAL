@@ -52,7 +52,7 @@ class LogWrapper(JaxMARLWrapper):
         obs, env_state, reward, done, info = self._env.step(key, state.env_state, action)
         # normalize done to vector (A,)
         if isinstance(done, dict):
-            # legacy: ignore per-agent flags there; use "__all__" for episode boundary
+            # ignore per-agent flags there; use "__all__" for episode boundary
             ep_done_scalar = jnp.asarray(done["__all__"], jnp.bool_)
             ep_done_vec = jnp.full((self._env.num_agents,), ep_done_scalar)
         else:

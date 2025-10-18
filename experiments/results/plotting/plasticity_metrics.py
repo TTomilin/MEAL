@@ -19,7 +19,7 @@ python plasticity_metrics.py \
 creates:
 ```
 plots/MAS_plasticity_multi.png
-plots/MAS_global_metrics.tex   # <- include \input{…} in your paper
+plots/MAS_global_metrics.tex   # <- include \input{…} in the paper
 ```
 """
 from __future__ import annotations

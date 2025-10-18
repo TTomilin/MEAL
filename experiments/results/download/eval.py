@@ -46,6 +46,7 @@ DORMANT_RATIO_KEY = "Neural_Activity/dormant_ratio"
 PARTNER_EVAL_PATTERN = re.compile(r"^Eval/EgoReturn_Partner(\d+)$")
 TRAINING_RETURNS_KEY = "Train/Ego_returned_episode_returns"
 
+
 # ---------------------------------------------------------------------------
 # HELPERS
 # ---------------------------------------------------------------------------
@@ -57,11 +58,11 @@ def discover_eval_keys(run: Run, include_dormant_ratio: bool = False) -> List[st
     # include training series, if logged
     if TRAINING_KEY in df.columns:
         keys.append(TRAINING_KEY)
-        
+
     # include dormant ratio, if requested and logged
     if include_dormant_ratio and DORMANT_RATIO_KEY in df.columns:
         keys.append(DORMANT_RATIO_KEY)
-        
+
     # sort eval ones by idx, leave training and dormant ratio last
     def idx_of(key: str) -> int:
         m = KEY_PATTERN.match(key)
@@ -104,7 +105,8 @@ def get_layout_from_config(cfg: dict) -> tuple[str, dict]:
         tuple: (layout_name, layout_dict) where layout_dict is the actual layout configuration
     """
     # Import here to avoid circular imports
-    from meal.env.presets import easy_layouts_legacy, medium_layouts_legacy, hard_layouts_legacy, overcooked_layouts
+    from meal.env.layouts.presets import easy_layouts_legacy, medium_layouts_legacy, hard_layouts_legacy, \
+        overcooked_layouts
 
     layout_name = cfg.get("layout_name", "")
 
@@ -312,7 +314,8 @@ def main() -> None:
 
         agents_string = f"agents_{num_agents}" if args.num_agents else ""
 
-        out_base = (base_workspace / args.output / algo / cl_method / experiment / agents_string / exp_path / f"seed_{seed}")
+        out_base = (
+                    base_workspace / args.output / algo / cl_method / experiment / agents_string / exp_path / f"seed_{seed}")
 
         print(f"[info] Processing {run.name} with setting: {experiment}")
         print(f"[info] Output path: {out_base}")

@@ -17,7 +17,7 @@ class JaxMARLWrapper(object):
         return getattr(self._env, name)
 
     def _batchify_floats(self, x):
-        # reward can be dict (legacy), array (A,), or scalar
+        # reward can be dict, array (A,), or scalar
         if isinstance(x, dict):
             return jnp.stack([x[a] for a in self._env.agents])  # (A,)
         x = jnp.asarray(x)

@@ -1,11 +1,11 @@
-from meal.env import Overcooked, OvercookedPO, OvercookedLegacy
+from meal.env import Overcooked, OvercookedPO
 from meal.env.generation.layout_generator import generate_random_layout
 from meal.env.generation.sequence_loader import create_sequence
 from meal.env.layouts.presets import overcooked_layouts
 from meal.env.utils.difficulty_config import DIFFICULTY_PARAMS
 
 # Environment registry
-registered_envs = ["overcooked", "overcooked_po", "overcooked_legacy"]
+registered_envs = ["overcooked", "overcooked_po"]
 
 
 # Gym-style API
@@ -14,7 +14,7 @@ def make_env(env_id: str, **env_kwargs):
     Create an environment following gym conventions.
 
     Args:
-        env_id: Environment identifier (e.g., 'overcooked', 'overcooked_po', 'overcooked_legacy')
+        env_id: Environment identifier (e.g., 'overcooked', 'overcooked_po')
         **env_kwargs: Additional environment arguments
 
     Returns:
@@ -26,7 +26,7 @@ def make_env(env_id: str, **env_kwargs):
     """
     if env_id not in registered_envs:
         raise ValueError(f"{env_id} is not in registered.")
-    cls = {"overcooked": Overcooked, "overcooked_po": OvercookedPO, "overcooked_legacy": OvercookedLegacy}[env_id]
+    cls = {"overcooked": Overcooked, "overcooked_po": OvercookedPO}[env_id]
     return cls(**env_kwargs)
 
 
