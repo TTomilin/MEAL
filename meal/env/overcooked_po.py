@@ -5,6 +5,7 @@ import jax.numpy as jnp
 
 from meal.env.overcooked import Overcooked, State
 from meal.env.utils import spaces
+from meal.env.utils.difficulty_config import get_difficulty_params
 
 # Constants for partial observability (default: easy difficulty)
 DEFAULT_VIEW_AHEAD = 1
@@ -27,6 +28,7 @@ class OvercookedPO(Overcooked):
 
     def __init__(
             self,
+            difficulty: str | None = None,
             view_ahead: int = DEFAULT_VIEW_AHEAD,
             view_sides: int = DEFAULT_VIEW_SIDES,
             view_behind: int = DEFAULT_VIEW_BEHIND,
@@ -35,14 +37,19 @@ class OvercookedPO(Overcooked):
         """Initialize partially observable Overcooked environment
 
         Args:
-            view_ahead: Number of tiles visible ahead of agent (default: 3)
-            view_behind: Number of tiles visible behind agent (default: 1)
+            view_ahead: Number of tiles visible ahead of agent (default: 1)
             view_sides: Number of tiles visible to sides of agent (default: 1)
+            view_behind: Number of tiles visible behind agent (default: 0)
             Other args same as base Overcooked environment
         """
-        super().__init__(**kwargs)
+        super().__init__(difficulty=difficulty, **kwargs)
 
         # Store partial observability parameters
+        if difficulty:
+            params = get_difficulty_params(difficulty)
+            view_ahead = params["view_ahead"]
+            view_behind = params["view_behind"]
+            view_sides = params["view_sides"]
         self.view_ahead = view_ahead
         self.view_behind = view_behind
         self.view_sides = view_sides
