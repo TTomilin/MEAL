@@ -74,7 +74,7 @@ class OvercookedVisualizer:
         return self._render_drawable_state(drawable_state, show)
 
     # ---------- sequence / GIF ----------
-    def animate(self, state_seq: Sequence[object], out_path: str, task_idx: int = 0, fps: int = 10, pad_to_max: bool = False) -> str:
+    def animate(self, state_seq: Sequence[object], out_path: str, task_idx: int = 0, fps: int = 10, pad_to_max: bool = False, env = None) -> str:
         """
         Render a sequence of env states to an animated GIF (palette-safe).
         """

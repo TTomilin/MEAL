@@ -2,7 +2,7 @@ import json
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import Sequence, Any, Optional, List
+from typing import Sequence, Any, Optional, List, Literal
 
 import flax
 import numpy as np
@@ -32,7 +32,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     # TRAINING / PPO PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
-    alg_name: str = "ippo"
+    alg_name: Literal["ippo","mappo"] = "ippo"
     lr: float = 1e-3
     anneal_lr: bool = False
     num_envs: int = 2048
@@ -109,6 +109,11 @@ class Config:
     width_min: int = 6  # minimum layout width
     width_max: int = 7  # maximum layout width
     wall_density: float = 0.15  # fraction of internal tiles that are untraversable
+
+    # Partial Observability parameters (default: easy difficulty)
+    view_ahead: int = 1
+    view_sides: int = 1
+    view_behind: int = 0
 
     # Agent restriction parameters
     complementary_restrictions: bool = False  # One agent can't pick up onions, other can't pick up plates
@@ -1003,11 +1008,7 @@ def main():
                 env_name = env.layout_name
                 states = record_gif_of_episode(cfg, train_state, env, network, task_idx, cfg.gif_len)
                 file_path = f"{exp_dir}/task_{task_idx}_{env_name}.gif"
-                # Pass environment instance to PO visualizer for view highlighting
-                if cfg.env_name == "overcooked_po":
-                    visualizer.animate(states, out_path=file_path, env=env)
-                else:
-                    visualizer.animate(states, out_path=file_path, task_idx=task_idx)
+                visualizer.animate(states, out_path=file_path, task_idx=task_idx, env=env)
 
             # save the model
             repo_root = Path(__file__).resolve().parent.parent

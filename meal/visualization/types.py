@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from collections import OrderedDict
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Callable, Tuple, Sequence, Optional, List, Iterable, Union
-
-import numpy as np
+from typing import Tuple, Sequence, Optional, List, Iterable, Union
 
 
 class Tile(Enum):

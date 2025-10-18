@@ -3,14 +3,13 @@ from typing import Dict
 import chex
 import jax.numpy as jnp
 
+from meal.env.overcooked import Overcooked, State
 from meal.env.utils import spaces
-from meal.env.common import OBJECT_TO_INDEX
-from meal.env.overcooked_legacy import Overcooked, State
 
-# Constants for partial observability
-DEFAULT_VIEW_AHEAD = 3
-DEFAULT_VIEW_BEHIND = 1
+# Constants for partial observability (default: easy difficulty)
+DEFAULT_VIEW_AHEAD = 1
 DEFAULT_VIEW_SIDES = 1
+DEFAULT_VIEW_BEHIND = 0
 
 
 class OvercookedPO(Overcooked):
@@ -20,21 +19,18 @@ class OvercookedPO(Overcooked):
     - view_ahead: number of tiles visible ahead of the agent
     - view_behind: number of tiles visible behind the agent  
     - view_sides: number of tiles visible to the sides of the agent
+
+    This yields a local window aligned to the where the agent is facing:
+      width  = 2*view_sides + 1
+      height = view_behind + 1 (self) + view_ahead
     """
 
     def __init__(
             self,
-            layout=None,
-            layout_name="cramped_room",
-            random_reset: bool = True,
-            max_steps: int = 400,
-            task_id: int = 0,
-            num_agents: int = 2,
-            agent_restrictions: dict = None,
-            soup_cook_time: int = 20,
             view_ahead: int = DEFAULT_VIEW_AHEAD,
-            view_behind: int = DEFAULT_VIEW_BEHIND,
             view_sides: int = DEFAULT_VIEW_SIDES,
+            view_behind: int = DEFAULT_VIEW_BEHIND,
+            **kwargs,
     ):
         """Initialize partially observable Overcooked environment
 
@@ -44,234 +40,142 @@ class OvercookedPO(Overcooked):
             view_sides: Number of tiles visible to sides of agent (default: 1)
             Other args same as base Overcooked environment
         """
-        super().__init__(
-            layout=layout,
-            layout_name=layout_name,
-            random_reset=random_reset,
-            max_steps=max_steps,
-            task_id=task_id,
-            num_agents=num_agents,
-            agent_restrictions=agent_restrictions,
-            soup_cook_time=soup_cook_time
-        )
+        super().__init__(**kwargs)
 
         # Store partial observability parameters
         self.view_ahead = view_ahead
         self.view_behind = view_behind
         self.view_sides = view_sides
 
-        # Calculate maximum view distance for any direction
-        self.max_view_distance = max(view_ahead, view_behind, view_sides)
-
         # Calculate the partially observable dimensions for observation_space()
         # The observable area forms a grid: (view_sides*2 + 1) x (view_ahead + view_behind + 1)
         self.po_width = self.view_sides * 2 + 1  # 2 sides + agent position
         self.po_height = self.view_ahead + self.view_behind + 1  # ahead + behind + agent position
 
-    def _get_agent_view_mask(self, agent_pos: chex.Array, agent_dir: int, height: int, width: int) -> chex.Array:
-        """Create a boolean mask for what an agent can observe as a 5x5 grid
+        # Channel count stays identical to the full obs
+        self.obs_shape = (self.width, self.height, self.obs_channels)
 
-        Args:
-            agent_pos: Agent position [x, y]
-            agent_dir: Agent direction (0=North, 1=South, 2=East, 3=West)
-            height: Grid height
-            width: Grid width
+    # --------------------------- helpers ---------------------------
 
-        Returns:
-            Boolean mask of shape (height, width) where True = observable
-            Forms a 5x5 grid: 3 front, 1 back, 2 sides
-        """
-        mask = jnp.zeros((height, width), dtype=jnp.bool_)
-
-        # Agent position
-        agent_x, agent_y = agent_pos[0], agent_pos[1]
-
-        # Direction vectors: [North, South, East, West]
-        dir_vectors = jnp.array([
+    @staticmethod
+    def _dir_vecs():
+        # (N,S,E,W) as dx,dy; we’ll use (y,x) indexing later carefully
+        return jnp.array([
             [0, -1],  # North: up
             [0, 1],  # South: down
             [1, 0],  # East: right
-            [-1, 0]  # West: left
-        ])
+            [-1, 0],  # West: left
+        ], dtype=jnp.int32)
 
-        # Get forward, backward, left, right directions relative to agent orientation
-        forward_vec = dir_vectors[agent_dir]
-        backward_vec = -forward_vec
-
-        # Perpendicular vectors for left/right using JAX-compatible operations
-        # For North/South (0,1): left=West=[-1,0], right=East=[1,0]
-        # For East/West (2,3): left=North=[0,-1], right=South=[0,1]
-        north_south_facing = jnp.logical_or(agent_dir == 0, agent_dir == 1)
-        left_vec = jnp.where(north_south_facing,
-                             jnp.array([-1, 0]),  # West for North/South
-                             jnp.array([0, -1]))  # North for East/West
-        right_vec = jnp.where(north_south_facing,
-                              jnp.array([1, 0]),  # East for North/South
-                              jnp.array([0, 1]))  # South for East/West
-
-        # Create a 5x5 grid centered on the agent
-        # Grid extends: 3 forward, 1 backward, 2 to each side
-
-        # Generate all positions in the 5x5 grid
-        for forward_offset in range(-self.view_behind, self.view_ahead + 1):
-            for side_offset in range(-self.view_sides, self.view_sides + 1):
-                # Calculate the actual position
-                pos = (jnp.array([agent_x, agent_y]) +
-                       forward_offset * forward_vec +
-                       side_offset * left_vec)
-
-                x, y = pos[0], pos[1]
-
-                # Check if position is within bounds
-                valid = jnp.logical_and(
-                    jnp.logical_and(x >= 0, x < width),
-                    jnp.logical_and(y >= 0, y < height)
-                )
-
-                # Set the mask if valid
-                mask = jnp.where(valid, mask.at[y, x].set(True), mask)
-
-        return mask
-
-    def _extract_agent_view(self, full_obs: chex.Array, agent_pos: chex.Array, agent_dir: int) -> chex.Array:
-        """Extract the observable area around an agent from the full observation
-
-        Args:
-            full_obs: Full observation of shape (width, height, 26)
-            agent_pos: Agent position [x, y]
-            agent_dir: Agent direction (0=North, 1=South, 2=East, 3=West)
-
-        Returns:
-            Partial observation of shape (po_width, po_height, 26)
+    def _extract_agent_view(self, full_obs_hwC: chex.Array, agent_pos_xy: chex.Array, agent_dir_idx: int) -> chex.Array:
         """
-        full_height, full_width = full_obs.shape[1], full_obs.shape[0]
+        Crop a (po_height x po_width) window aligned to agent orientation from a full (H,W,C) tensor.
+        • full_obs_hwC shape: (H, W, C)
+        • agent_pos_xy      : (2,) with (x, y)
+        • returns           : (po_height, po_width, C)
+        """
+        H, W, C = full_obs_hwC.shape
+        # orientation-aligned axes: forward/back along dir, left/right perpendicular
+        dir_vecs = self._dir_vecs()  # (4,2) in (dx,dy)
+        agent_dir_idx = jnp.asarray(agent_dir_idx, jnp.int32)
+        fwd_dx, fwd_dy = dir_vecs[agent_dir_idx, 0], dir_vecs[agent_dir_idx, 1]
+        # left is a 90° CCW rotation of forward: (-dy, dx)
+        left_dx, left_dy = -fwd_dy, fwd_dx
 
-        # Direction vectors: [North, South, East, West]
-        dir_vectors = jnp.array([
-            [0, -1],  # North: up
-            [0, 1],   # South: down
-            [1, 0],   # East: right
-            [-1, 0]   # West: left
-        ])
+        # grids in (row=y, col=x) order for the local window
+        # rows: back .. self .. ahead (size = po_height)
+        # cols: left .. self .. right (size = po_width)
+        row_offsets = jnp.arange(-self.view_behind, self.view_ahead + 1, dtype=jnp.int32)  # length po_height
+        col_offsets = jnp.arange(-self.view_sides, self.view_sides + 1, dtype=jnp.int32)  # length po_width
+        # Meshgrid in (row, col) = (po_height, po_width)
+        off_rows, off_cols = jnp.meshgrid(row_offsets, col_offsets, indexing="ij")  # (Hpo,Wpo)
 
-        # Get forward, backward, left, right directions relative to agent orientation
-        forward_vec = dir_vectors[agent_dir]
+        # Map local (row/col) offsets to global (x,y) using forward/left basis
+        ax, ay = agent_pos_xy[0].astype(jnp.int32), agent_pos_xy[1].astype(jnp.int32)
+        # Δx = off_rows * fwd_dx + off_cols * left_dx
+        # Δy = off_rows * fwd_dy + off_cols * left_dy
+        dx = off_rows * fwd_dx + off_cols * left_dx
+        dy = off_rows * fwd_dy + off_cols * left_dy
 
-        # Perpendicular vectors for left/right
-        north_south_facing = jnp.logical_or(agent_dir == 0, agent_dir == 1)
-        left_vec = jnp.where(north_south_facing,
-                             jnp.array([-1, 0]),  # West for North/South
-                             jnp.array([0, -1]))  # North for East/West
+        gx = ax + dx  # (Hpo,Wpo)
+        gy = ay + dy  # (Hpo,Wpo)
 
-        # Create the partial observation
-        partial_obs = jnp.zeros((self.po_width, self.po_height, 26), dtype=jnp.uint8)
+        # Valid in-bounds mask
+        valid = (gx >= 0) & (gx < W) & (gy >= 0) & (gy < H)
 
-        # Fill with 'unseen' by default
-        partial_obs = partial_obs.at[:, :, :].set(OBJECT_TO_INDEX['unseen'])
+        # Safe indices (clip) for gather; we’ll zero invalid later
+        ix = jnp.clip(gx, 0, W - 1)
+        iy = jnp.clip(gy, 0, H - 1)
 
-        # Create coordinate grids for vectorized operations
-        po_y_coords, po_x_coords = jnp.meshgrid(
-            jnp.arange(self.po_height), 
-            jnp.arange(self.po_width), 
-            indexing='ij'
-        )
+        # Gather: note full_obs is (H,W,C) so we index [iy, ix]
+        patch = full_obs_hwC[iy, ix, :]  # (Hpo, Wpo, C)
 
-        # Calculate offsets for all positions at once
-        forward_offsets = po_y_coords - self.view_behind  # -view_behind to +view_ahead
-        side_offsets = po_x_coords - self.view_sides      # -view_sides to +view_sides
+        # Zero out anything outside bounds (unseen = zeros per channel)
+        patch = jnp.where(valid[..., None], patch, jnp.zeros_like(patch))
 
-        # Calculate full observation positions for all partial observation positions
-        # Shape: (po_height, po_width, 2)
-        full_positions = (agent_pos[None, None, :] + 
-                         forward_offsets[:, :, None] * forward_vec[None, None, :] + 
-                         side_offsets[:, :, None] * left_vec[None, None, :])
+        return patch
 
-        # Extract x and y coordinates
-        full_x_coords = full_positions[:, :, 0]  # Shape: (po_height, po_width)
-        full_y_coords = full_positions[:, :, 1]  # Shape: (po_height, po_width)
-
-        # Check bounds for all positions at once
-        valid_mask = jnp.logical_and(
-            jnp.logical_and(full_x_coords >= 0, full_x_coords < full_width),
-            jnp.logical_and(full_y_coords >= 0, full_y_coords < full_height)
-        )
-
-        # Convert to integer indices (safe because we're using them in array indexing, not int())
-        full_x_indices = jnp.clip(full_x_coords.astype(jnp.int32), 0, full_width - 1)
-        full_y_indices = jnp.clip(full_y_coords.astype(jnp.int32), 0, full_height - 1)
-
-        # Extract observations for all valid positions
-        # Use advanced indexing to get all observations at once
-        extracted_obs = full_obs[full_x_indices, full_y_indices, :]  # Shape: (po_height, po_width, 26)
-
-        # Apply the valid mask - keep extracted observations where valid, 'unseen' elsewhere
-        unseen_obs = jnp.full_like(extracted_obs, OBJECT_TO_INDEX['unseen'])
-        partial_obs = jnp.where(valid_mask[:, :, None], extracted_obs, unseen_obs)
-
-        # Transpose to match expected output shape (po_width, po_height, 26)
-        partial_obs = jnp.transpose(partial_obs, (1, 0, 2))
-
-        return partial_obs
+    # ------------------------ main overrides -----------------------
 
     def get_obs(self, state: State) -> Dict[str, chex.Array]:
-        """Return partially observable observations for each agent
-
-        Each agent only sees a limited area around them based on view parameters.
-        The returned observations have shape (po_width, po_height, 26) which matches
-        the declared observation_space().
         """
-        # Get full observations first (same as parent class)
-        full_obs = super().get_obs(state)
+        Returns per-agent partial observations with shape (po_height, po_width, C),
+        where C == self.obs_channels (same channels as full obs).
+        """
+        # First get the full per-agent obs from the base env: dict of (H,W,C)
+        full = super().get_obs(state)
 
-        # Create partial observations for each agent
-        partial_obs = {}
+        # Vectorized crop per agent
+        po = {}
+        for i in range(self.num_agents):
+            key = f"agent_{i}"
+            agent_pos_xy = state.agent_pos[i]  # (x,y)
+            agent_dir_idx = state.agent_dir_idx[i]  # int
+            po[key] = self._extract_agent_view(full[key], agent_pos_xy, agent_dir_idx)
 
-        for agent_idx in range(self.num_agents):
-            agent_key = f"agent_{agent_idx}"
-
-            # Get agent position and direction
-            agent_pos = state.agent_pos[agent_idx]
-            agent_dir = state.agent_dir_idx[agent_idx]
-
-            # Extract the observable area around the agent
-            agent_obs = self._extract_agent_view(full_obs[agent_key], agent_pos, agent_dir)
-            partial_obs[agent_key] = agent_obs
-
-        return partial_obs
+        return po
 
     def get_agent_view_masks(self, state: State) -> Dict[str, chex.Array]:
-        """Get view masks for all agents (useful for visualization)
+        # Handle LogWrapper state transparently
+        if hasattr(state, "env_state"):
+            state = state.env_state
 
-        Returns:
-            Dictionary mapping agent names to their view masks
-        """
-        width = self.obs_shape[0]
-        height = self.obs_shape[1]
+        H = self.height
+        W = self.width
 
-        # Handle LogEnvState wrapper - extract the actual environment state
-        if hasattr(state, 'env_state'):
-            env_state = state.env_state
-        else:
-            env_state = state
+        dir_vecs = self._dir_vecs()
+        masks: Dict[str, chex.Array] = {}
 
-        masks = {}
-        for agent_idx in range(self.num_agents):
-            agent_key = f"agent_{agent_idx}"
-            agent_pos = env_state.agent_pos[agent_idx]
-            agent_dir = env_state.agent_dir_idx[agent_idx]
-            masks[agent_key] = self._get_agent_view_mask(agent_pos, agent_dir, height, width)
+        for i in range(self.num_agents):
+            ax = state.agent_pos[i, 0].astype(jnp.int32)
+            ay = state.agent_pos[i, 1].astype(jnp.int32)
+
+            fdx, fdy = dir_vecs[state.agent_dir_idx[i]]
+            ldx, ldy = -fdy, fdx
+
+            row_offsets = jnp.arange(-self.view_behind, self.view_ahead + 1, dtype=jnp.int32)
+            col_offsets = jnp.arange(-self.view_sides, self.view_sides + 1, dtype=jnp.int32)
+            off_rows, off_cols = jnp.meshgrid(row_offsets, col_offsets, indexing="ij")
+
+            gx = ax + (off_rows * fdx + off_cols * ldx)
+            gy = ay + (off_rows * fdy + off_cols * ldy)
+
+            valid = (gx >= 0) & (gx < W) & (gy >= 0) & (gy < H)
+
+            # clip only for the indexing op; write 'valid' directly so OOB never gets set
+            ix = jnp.clip(gx, 0, W - 1)
+            iy = jnp.clip(gy, 0, H - 1)
+
+            mask = jnp.zeros((H, W), dtype=jnp.bool_)
+            mask = mask.at[iy, ix].set(valid)  # <— write the validity mask directly
+            masks[f"agent_{i}"] = mask
 
         return masks
 
     def observation_space(self) -> spaces.Box:
-        """Observation space of the environment.
-
-        For partially observable environments, the observation space reflects
-        the actual observable area around each agent, not the full environment.
-        """
-        return spaces.Box(0, 255, (self.po_width, self.po_height, 26))
+        # Match get_obs output: (Hpo, Wpo, C)
+        return spaces.Box(0, 255, (self.po_height, self.po_width, self.obs_channels), dtype=jnp.uint8)
 
     @property
     def name(self) -> str:
-        """Environment name"""
         return "OvercookedPO"

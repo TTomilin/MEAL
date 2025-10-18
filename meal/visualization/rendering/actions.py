@@ -1,7 +1,4 @@
-import copy
 import itertools
-
-import numpy as np
 
 
 class Direction(object):
@@ -22,18 +19,6 @@ class Direction(object):
             [NORTH, SOUTH, EAST, WEST], ["NORTH", "SOUTH", "EAST", "WEST"]
         )
     }
-
-    @staticmethod
-    def get_adjacent_directions(direction):
-        """Returns the directions within 90 degrees of the given direction.
-
-        direction: One of the Directions, except not Direction.STAY.
-        """
-        if direction in [Direction.NORTH, Direction.SOUTH]:
-            return [Direction.EAST, Direction.WEST]
-        elif direction in [Direction.EAST, Direction.WEST]:
-            return [Direction.NORTH, Direction.SOUTH]
-        raise ValueError("Invalid direction: %s" % direction)
 
 
 class Action(object):
@@ -76,56 +61,4 @@ class Action(object):
         assert direction in Action.MOTION_ACTIONS
         x, y = point
         dx, dy = direction
-        return (x + dx, y + dy)
-
-    @staticmethod
-    def determine_action_for_change_in_pos(old_pos, new_pos):
-        """Determines an action that will enable intended transition"""
-        if old_pos == new_pos:
-            return Action.STAY
-        new_x, new_y = new_pos
-        old_x, old_y = old_pos
-        direction = (new_x - old_x, new_y - old_y)
-        assert direction in Direction.ALL_DIRECTIONS
-        return direction
-
-    @staticmethod
-    def sample(action_probs):
-        return np.random.choice(
-            np.array(Action.ALL_ACTIONS, dtype=object), p=action_probs
-        )
-
-    @staticmethod
-    def argmax(action_probs):
-        action_idx = np.argmax(action_probs)
-        return Action.INDEX_TO_ACTION[action_idx]
-
-    @staticmethod
-    def remove_indices_and_renormalize(probs, indices, eps=0.0):
-        probs = copy.deepcopy(probs)
-        if len(np.array(probs).shape) > 1:
-            probs = np.array(probs)
-            for row_idx, row in enumerate(indices):
-                for idx in indices:
-                    probs[row_idx][idx] = eps
-            norm_probs = probs.T / np.sum(probs, axis=1)
-            return norm_probs.T
-        else:
-            for idx in indices:
-                probs[idx] = eps
-            return probs / sum(probs)
-
-    @staticmethod
-    def to_char(action):
-        assert action in Action.ALL_ACTIONS
-        return Action.ACTION_TO_CHAR[action]
-
-    @staticmethod
-    def joint_action_to_char(joint_action):
-        assert all([a in Action.ALL_ACTIONS for a in joint_action])
-        return tuple(Action.to_char(a) for a in joint_action)
-
-    @staticmethod
-    def uniform_probs_over_actions():
-        num_acts = len(Action.ALL_ACTIONS)
-        return np.ones(num_acts) / num_acts
+        return x + dx, y + dy

@@ -8,7 +8,6 @@ from meal.visualization.rendering.actions import Direction, Action
 from meal.visualization.rendering.spritesheet import MultiFramePygameImage, run_static_resizeable_window, \
     scale_surface_by_factor, blit_on_new_surface_of_size, vstack_surfaces
 from meal.visualization.static import GRAPHICS_DIR, FONTS_DIR
-from meal.visualization.utils.stats import cumulative_rewards_from_rew_list
 from meal.visualization.utils.io import generate_temporary_file_path
 from meal.visualization.utils.ipy_image_widgets import show_ipython_images_slider, show_image_in_ipython
 
@@ -144,9 +143,8 @@ class StateVisualizer:
 
     @staticmethod
     def default_hud_data_from_trajectories(trajectories, trajectory_idx=0):
-        scores = cumulative_rewards_from_rew_list(
-            trajectories["ep_rewards"][trajectory_idx]
-        )
+        rews = trajectories["ep_rewards"][trajectory_idx]
+        scores = [sum(rews[:t]) for t in range(len(rews))]
         return [
             StateVisualizer.default_hud_data(state, score=scores[i])
             for i, state in enumerate(

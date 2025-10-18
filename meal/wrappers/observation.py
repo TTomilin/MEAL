@@ -26,7 +26,7 @@ class PadObsToMax:
         return self._pad_obs_dict(obs), state
 
     def step(self, key, state, actions):
-        obs, state, rew, done, info = self.env.step_env(key, state, actions)
+        obs, state, rew, done, info = self.env.step(key, state, actions)
         obs = self._pad_obs_dict(obs)
         return obs, state, rew, done, info
 
