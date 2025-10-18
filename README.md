@@ -66,6 +66,9 @@ conda activate meal
 
 ### Install MEAL
 ```bash
+# From PyPI (stable release)
+pip install MEAL-Bench
+
 # Core install
 pip install -e .
 
