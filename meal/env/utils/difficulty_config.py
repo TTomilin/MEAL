@@ -42,7 +42,7 @@ DIFFICULTY_PARAMS = {
         "height_rng": (10, 11),
         "width_rng": (10, 11),
         "view_ahead": 3,
-        "view_sides": 2,
+        "view_sides": 1,
         "view_behind": 1,
     }
 }

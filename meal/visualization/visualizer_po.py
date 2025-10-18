@@ -1,5 +1,6 @@
 from __future__ import annotations
-from typing import Sequence, Optional, List, Dict
+
+from typing import Sequence, Optional, Dict
 
 import numpy as np
 
@@ -35,7 +36,6 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
         super().__init__(num_agents=num_agents, pot_full=pot_full, pot_empty=pot_empty, tile_px=tile_px)
         self._init_view_colors()  # semi-transparent
 
-
     def _init_view_colors(self, alpha: int = 90):
         """
         Build per-agent RGBA overlay colors using the same player_colors ordering
@@ -43,14 +43,14 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
         """
         # Map the names used by StateVisualizer to nice overlay RGBs
         name_to_rgb = {
-            "red":    (255,  90,  90),
-            "green":  (120, 220, 120),
-            "orange": (255, 180,  80),
-            "blue":   (100, 150, 255),
+            "red": (255, 90, 90),
+            "green": (120, 220, 120),
+            "orange": (255, 180, 80),
+            "blue": (100, 150, 255),
             "purple": (180, 120, 255),
             "yellow": (255, 235, 120),
-            "teal":   (120, 235, 235),
-            "pink":   (255, 165, 210),
+            "teal": (120, 235, 235),
+            "pink": (255, 165, 210),
         }
 
         # Pull the configured order directly from the StateVisualizer
@@ -64,7 +64,6 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
             extra = [palette[i % len(palette)] for i in range(self.num_agents)]
             palette = extra
         self.view_colors = palette
-
 
     # --- internal: build an RGBA overlay (H*tile_px, W*tile_px, 4) from boolean masks ---
     def _build_view_overlay(self, env, state) -> Optional[np.ndarray]:
@@ -128,7 +127,7 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
             out_a > 0,
             (src[..., :3] * sa + dst[..., :3] * da * (1.0 - sa)) / out_a,
             0.0,
-            )
+        )
         out = np.concatenate([out_rgb, out_a], axis=-1)
         return np.clip(out * 255.0, 0, 255).astype(np.uint8)
 
