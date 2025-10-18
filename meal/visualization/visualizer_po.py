@@ -1,5 +1,3 @@
-# meal/visualization/visualizer_po.py
-
 from __future__ import annotations
 from typing import Sequence, Optional, List, Dict
 
@@ -38,7 +36,7 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
         self._init_view_colors()  # semi-transparent
 
 
-    def _init_view_colors(self, alpha: int = 100):
+    def _init_view_colors(self, alpha: int = 90):
         """
         Build per-agent RGBA overlay colors using the same player_colors ordering
         as StateVisualizer (chef hat colors).
