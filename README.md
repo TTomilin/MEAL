@@ -186,21 +186,26 @@ The difficulty of layouts is determined by the following criteria:
 
 ## Project Structure
 
-- **architectures/**: Neural network architectures (MLP, CNN)
 - **assets/**: Screenshots, GIFs, and other assets
     - **gifs/**: Example training progress GIFs
     - **screenshots/**: Example environment layouts and training results
-- **baselines/**: Implementation of baseline algorithms (IPPO, VDN)
-- **cl_methods/**: Continual learning method implementations
-- **jax_marl/**: Core JAX MARL framework
-    - **environments/**: Environment implementations, including Overcooked
-    - **tests/**: Test files
-    - **viz/**: Visualization tools
+- **examples/**: Example scripts for using MEAL environments
+- **experiments/**: CMARL experiments on MEAL
+    - **continual/**: Continual learning method implementations
+    - **evaluation/**: Evaluating trained models
+    - **experimental/**: Algorithm/Method prototyping
+    - **model/**: Neural network architectures (MLP, CNN)
+    - **partner_adaptation/**: Continual partner adaptation experiments
+    - **results/**: Scripts for downloading, aggregating, and plotting results
+        - **download/**: Scripts for downloading and storing data
+        - **plotting/**: Plotting scripts for training results
+        - **numerical/**: Numerical results and analysis
+- **meal/**: Core MEAL framework
+    - **env/**: Overcooked environment creation and management
+    - **visualization/**: Visualization tools
     - **wrappers/**: Environment wrappers
-- **results/**: Experimental results and plotting tools
-    - **download/**: Scripts for downloading and processing results
-    - **plotting/**: Plotting scripts for training results
-    - **numerical/**: Numerical results and analysis
+- **scripts/**: Utility scripts for training
+- **tests/**: Unit tests for various components
 
 ## Contributing
 
@@ -221,7 +226,7 @@ If you use our work in your research, please cite it as follows:
 ```
 @article{tomilin2025meal,
   title={MEAL: A Benchmark for Continual Multi-Agent Reinforcement Learning},
-  author={Tomilin, Tristan and van den Boogaard, Luka and Garcin, Samuel and Grooten, Bram and Fang, Meng and Pechenizkiy, Mykola},
+  author={Tomilin, Tristan and van den Boogaard, Luka and Garcin, Samuel and  Ruhdorfer, Constantin and Grooten, Bram and Bulling, Andreas and Pechenizkiy, Mykola and Fang, Meng},
   journal={arXiv preprint arXiv:2406.01234},
   year={2025}
 }
