@@ -43,15 +43,6 @@ def batchify(x, agent_list, num_actors, flatten=True):
     @param num_actors: number of actors
     returns the batchified observations
     '''
-    # Handle single-agent case where x is already an array
-    if isinstance(x, jnp.ndarray):
-        # For single-agent, x is already the observation array
-        batched = x
-        if flatten:
-            batched = batched.reshape((num_actors, -1))
-        return batched
-
-    # Handle multi-agent case where x is a dictionary
     x = jnp.stack([x[a] for a in agent_list])
     batched = jnp.concatenate(x, axis=0)
     if flatten:
@@ -70,13 +61,6 @@ def unbatchify(x: jnp.ndarray, agent_list, num_envs, num_actors):
     returns the unbatchified observations (dict for multi-agent, direct array for single-agent)
     '''
     x = x.reshape((num_actors, num_envs, -1))
-
-    # Handle single-agent case
-    if len(agent_list) == 1:
-        # For single-agent, return the action directly (not as a dictionary)
-        return x[0]  # Shape: (num_envs, -1)
-
-    # Handle multi-agent case
     return {a: x[i] for i, a in enumerate(agent_list)}
 
 
