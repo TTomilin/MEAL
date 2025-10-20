@@ -36,6 +36,7 @@ learn and adapt to new environments without forgetting previously acquired skill
   - Averaged Gradient Episodic Memory (AGEM)
 - **Multi-Agent Algorithms**:
   - Independent Proximal Policy Optimization (IPPO)
+  - Multi-Agent Proximal Policy Optimization (MAPPO)
   - Value Decomposition Networks (VDN)
 
 ## Installation
