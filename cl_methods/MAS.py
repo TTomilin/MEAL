@@ -82,7 +82,7 @@ def compute_importance(params,
         # or the value function, or both. Here, let's do policy logits + value.
         total_loss = 0.0
         for agent_id, obs_val in obs_dict.items():
-            pi, v = net.apply(params, obs_val, env_idx=env_idx)
+            pi, v, _ = net.apply(params, obs_val, env_idx=env_idx)
             # Example: L2 norm of the concatenation of logits and the value.
             # shape: (1, action_dim + 1)
             # sum of squares / 2
@@ -126,7 +126,7 @@ def compute_importance(params,
             rng, rng_step = jax.random.split(rng)
             actions = {}
             for i, agent_id in enumerate(env.agents):
-                pi, _v = net.apply(params, flat_obs[agent_id], env_idx=env_idx)
+                pi, _v, _ = net.apply(params, flat_obs[agent_id], env_idx=env_idx)
                 actions[agent_id] = jnp.squeeze(pi.sample(seed=rng_step), axis=0)
 
             next_obs, next_state, reward, done_info, _info = env.step(rng_step, state, actions)

@@ -9,8 +9,8 @@ import json
 from jax_marl.environments.overcooked.layouts import overcooked_layouts
 
 from dataclasses import asdict, dataclass
-from eval_agents_generation.BRDiv import run_brdiv
-from eval_agents_generation.utils import frozendict_from_layout_repr
+from partner_adaptation.partner_generation.BRDiv import run_brdiv
+from partner_adaptation.partner_generation.utils import frozendict_from_layout_repr
 
 
 @dataclass

@@ -2,12 +2,12 @@
 TODO: clean up logic by vectorizing init_hstate. See HeuristicPolicyPopulation.
 '''
 import jax
-from eval_agents.agent_interface import AgentPolicy
-from eval_agents.overcooked.independent_agent import IndependentAgent
-from eval_agents.overcooked.onion_agent import OnionAgent
-from eval_agents.overcooked.plate_agent import PlateAgent
-from eval_agents.overcooked.static_agent import StaticAgent
-from eval_agents.overcooked.random_agent import RandomAgent
+from partner_adaptation.partner_agents.agent_interface import AgentPolicy
+from partner_adaptation.partner_agents.overcooked.independent_agent import IndependentAgent
+from partner_adaptation.partner_agents.overcooked.onion_agent import OnionAgent
+from partner_adaptation.partner_agents.overcooked.plate_agent import PlateAgent
+from partner_adaptation.partner_agents.overcooked.static_agent import StaticAgent
+from partner_adaptation.partner_agents.overcooked.random_agent import RandomAgent
 
 
 class OvercookedIndependentPolicyWrapper(AgentPolicy):

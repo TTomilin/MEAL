@@ -232,7 +232,7 @@ def main():
                 keys = jax.random.split(subkey, num_agents)
                 actions = {}
                 for i, ag in enumerate(env.agents):
-                    pi, _ = net.apply(state.params, batched[ag], env_idx=0)
+                    pi, _, _ = net.apply(state.params, batched[ag], env_idx=0)
                     act = jnp.squeeze(pi.sample(seed=keys[i]), axis=0)
                     actions[ag] = act
 

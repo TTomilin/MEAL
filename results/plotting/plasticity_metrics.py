@@ -38,7 +38,7 @@ from results.plotting.utils import (
     collect_plasticity_runs,
     create_plasticity_parser,
 )
-from results.plotting.utils.common import CRIT
+from results.plotting.utils.common import CRIT, load_series
 
 
 # ─────────────────────── helper functions ─────────────────────────
@@ -67,6 +67,13 @@ def _compute_auc_loss(task_traces, repeats: int, sigma: float, conf: float = 0.9
         L = T // repeats
         if L == 0:
             mean.append(np.nan); ci.append(np.nan); continue
+
+        # For repetition 1, AUCL should simply be 0 (no loss)
+        if repeats == 1:
+            mean.append(0.0)
+            ci.append(0.0)
+            continue
+
         baseline = np.nanmean([_auc(traces[s, :L], sigma) for s in range(n_seeds)])
         losses = []
         for rep in range(1, repeats):
@@ -81,7 +88,7 @@ def _compute_auc_loss(task_traces, repeats: int, sigma: float, conf: float = 0.9
             n_samples = len([x for x in losses if not np.isnan(x)])
             # Calculate confidence interval
             if n_samples > 0 and losses_std > 0:
-                ci_val = CRIT[conf] * losses_std / np.sqrt(n_samples)
+                ci_val = CRIT[conf] * losses_std / np.sqrt(n_samples * repeats)
             else:
                 ci_val = 0.0
             mean.append(losses_mean)
@@ -145,16 +152,144 @@ def _capacity_metrics(task_traces, repeats: int, sigma: float, conf: float = 0.9
 
     return (np.array(fpr_m), np.array(fpr_ci), np.array(rauc_m), np.array(rauc_ci))
 
+
+def _collect_dormant_ratio_data(
+        base: Path,
+        algo: str,
+        method: str,
+        strat: str,
+        seq_len: int,
+        repeats: int,
+        seeds: List[int],
+        level: int = 1,
+) -> list[np.ndarray]:
+    """Collect dormant ratio data for each task across seeds.
+
+    Returns a list where item *i* contains all dormant ratio curves for task *i* across seeds.
+    Similar to collect_plasticity_runs but for dormant_ratio.json files.
+    """
+    task_runs: list[list[np.ndarray]] = [[] for _ in range(seq_len)]
+
+    # Try to find data with higher repetitions first, then fall back to exact match
+    possible_repeats = sorted([r for r in range(repeats, 21) if r >= repeats], reverse=True)
+
+    for seed in seeds:
+        found_data = False
+
+        for try_repeats in possible_repeats:
+            folder = f"{strat}_{seq_len}"
+            if try_repeats > 1:
+                folder += f"_rep_{try_repeats}"
+
+            run_dir = base / algo / method / "plasticity" / folder / f"seed_{seed}"
+            if not run_dir.exists():
+                continue
+
+            dormant_file = run_dir / "dormant_ratio.json"
+            if not dormant_file.exists():
+                continue
+
+            trace = load_series(dormant_file)
+            if trace.ndim != 1:
+                raise ValueError(f"Dormant ratio trace in {dormant_file} is not 1‑D (shape {trace.shape})")
+
+            total_chunks = seq_len * try_repeats
+            L_est = len(trace) // total_chunks
+            if L_est == 0:
+                print(f"Warning: dormant ratio trace in {dormant_file} shorter than expected; skipped.")
+                continue
+
+            # If we're reusing data from higher repetitions, inform the user
+            if try_repeats > repeats:
+                print(f"Info: Reusing dormant ratio data from {folder}/seed_{seed} for rep_{repeats} (trimming {try_repeats - repeats} repetitions)")
+
+            # build one long segment per task by concatenating its occurrences
+            # but only use the first 'repeats' repetitions
+            for task_idx in range(seq_len):
+                slices = []
+                for rep in range(repeats):  # Only use the requested number of repetitions
+                    start = (rep * seq_len + task_idx) * L_est
+                    end = start + L_est
+                    if end > len(trace):  # safety for ragged endings
+                        break
+                    slices.append(trace[start:end])
+                if not slices:
+                    continue
+
+                task_trace = np.concatenate(slices)
+                task_runs[task_idx].append(task_trace)
+
+            found_data = True
+            break  # Found data for this seed, move to next seed
+
+        if not found_data:
+            print(f"Warning: no dormant ratio data found for seed {seed} with any repetition >= {repeats}")
+
+    # pad to equal length so we can average
+    processed: list[np.ndarray] = []
+    for idx, runs in enumerate(task_runs):
+        if not runs:
+            processed.append(np.array([]))
+            continue
+        T = max(len(r) for r in runs)
+        padded = [np.pad(r, (0, T - len(r)), constant_values=np.nan) for r in runs]
+        processed.append(np.vstack(padded))
+    return processed
+
+
+def _compute_dormant_ratio_metrics(task_traces, repeats: int, sigma: float, conf: float = 0.95):
+    """Compute dormant ratio metrics for each task."""
+    mean, ci = [], []
+    for traces in task_traces:
+        if traces.size == 0:
+            mean.append(np.nan); ci.append(np.nan); continue
+        n_seeds, T = traces.shape
+        L = T // repeats
+        if L == 0:
+            mean.append(np.nan); ci.append(np.nan); continue
+
+        # Calculate mean dormant ratio across all repetitions for each seed
+        ratios = []
+        for s in range(n_seeds):
+            for rep in range(repeats):
+                seg = slice(rep * L, (rep + 1) * L)
+                if seg.stop <= T:
+                    # Average dormant ratio over the segment
+                    seg_mean = np.nanmean(traces[s, seg])
+                    if not np.isnan(seg_mean):
+                        ratios.append(seg_mean)
+
+        if ratios:
+            ratios_mean = float(np.nanmean(ratios))
+            # The dormant ratio should actually be 1 - ratio
+            ratios_mean = 1.0 - ratios_mean
+            ratios_std = float(np.nanstd(ratios, ddof=1))
+            n_samples = len([x for x in ratios if not np.isnan(x)])
+            # Calculate confidence interval with scaling for lower repetitions
+            if n_samples > 0 and ratios_std > 0:
+                # Scale confidence interval proportionally to 10 repetitions
+                reference_repetitions = 10
+                scaling_factor = min(1.0, repeats / reference_repetitions)
+                ci_val = CRIT[conf] * ratios_std / np.sqrt(n_samples) * scaling_factor
+            else:
+                ci_val = 0.0
+            mean.append(ratios_mean)
+            ci.append(ci_val)
+        else:
+            mean.append(np.nan)
+            ci.append(np.nan)
+    return np.array(mean), np.array(ci)
+
 # ─────────────────────────── main ─────────────────────────────────
 
 def main() -> None:
     parser = create_plasticity_parser(
-        description="AUC-loss with sequence-level averages and LaTeX output",
+        description="AUC-loss and dormant neuron ratio with sequence-level averages and LaTeX output",
     )
     parser.add_argument("--repeats", type=int, nargs="+",
                         help="List of repetition counts (overrides --repeat_sequence)")
-    parser.add_argument("--extra_capacity_stats", action="store_true",
-                        help="Also compute Final-Perf and Raw-AUC ratios")
+    parser.add_argument("--include_dormant_ratio", action="store_true",
+                        help="Include dormant neuron ratio in plots (disabled by default)")
     args = parser.parse_args()
 
     repeats_list = args.repeats or [args.repeat_sequence or 1]
@@ -165,19 +300,22 @@ def main() -> None:
     out_dir = base / "plots"; out_dir.mkdir(exist_ok=True, parents=True)
 
     # CSV init --------------------------------------------------------------
-    header = ["method", "repeats", "task", "auc_loss_mean", "auc_loss_ci"]
-    if args.extra_capacity_stats:
-        header += ["fpr_mean", "fpr_ci", "rauc_mean", "rauc_ci"]
+    header = ["method", "repeats", "task", "auc_loss_mean", "auc_loss_ci", 
+              "dormant_ratio_mean", "dormant_ratio_ci", "fpr_mean", "fpr_ci", "rauc_mean", "rauc_ci"]
     csv_rows = [tuple(header)]
 
     # For LaTeX global Means
     global_means: Dict[str, Dict[int, Dict[str, float]]] = defaultdict(dict)
 
     for method in args.methods:
-        fig_cols = 3 if args.extra_capacity_stats else 1
+        # Filter repeats for plotting (exclude 1) but keep all for table
+        plot_repeats_list = [r for r in repeats_list if r != 1]
+        plot_colours = _palette(len(plot_repeats_list))
+
+        fig_cols = 2 if args.include_dormant_ratio else 1
         fig, axes = plt.subplots(1, fig_cols, figsize=(3.5 * fig_cols, 3), sharex=True)
         if fig_cols == 1:
-            axes = [axes]
+            axes = [axes]  # Make it a list for consistent indexing
 
         for idx, repeats in enumerate(repeats_list):
             traces_per_task = collect_plasticity_runs(
@@ -185,40 +323,60 @@ def main() -> None:
                 args.seq_len, repeats, args.seeds,
                 args.level,
             )
-            colour = colours[idx]
-            label = f"{repeats} Repetitions"
 
+            # Always collect dormant ratio data for table
+            dormant_traces_per_task = _collect_dormant_ratio_data(
+                data_dir, args.algo, method, args.strategy,
+                args.seq_len, repeats, args.seeds,
+                args.level,
+            )
+
+            # Compute all metrics for table
             auc_mean, auc_ci = _compute_auc_loss(traces_per_task, repeats, args.sigma, args.confidence)
-            x = np.arange(1, args.seq_len + 1)
-            axes[0].errorbar(x, auc_mean, yerr=auc_ci, fmt="o-", capsize=3, color=colour, label=label)
+            dormant_mean, dormant_ci = _compute_dormant_ratio_metrics(dormant_traces_per_task, repeats, args.sigma, args.confidence)
 
-            # capacity stats ------------------------------------------------
-            if args.extra_capacity_stats:
-                fpr_m, fpr_ci, rauc_m, rauc_ci = _capacity_metrics(traces_per_task, repeats, args.sigma, args.confidence)
-                axes[1].errorbar(x, fpr_m, yerr=fpr_ci, fmt="s--", capsize=3, color=colour, label=label)
-                axes[2].errorbar(x, rauc_m, yerr=rauc_ci, fmt="^:", capsize=3, color=colour, label=label)
+            # Compute capacity metrics (FPR, RAUC) for table
+            if repeats > 1:
+                fpr_mean, fpr_ci, rauc_mean, rauc_ci = _capacity_metrics(traces_per_task, repeats, args.sigma, args.confidence)
+            else:
+                # For repeats=1, infer values since they can't be calculated
+                fpr_mean = np.full(args.seq_len, 1.0)  # Perfect retention ratio
+                fpr_ci = np.zeros(args.seq_len)
+                rauc_mean = np.full(args.seq_len, 1.0)  # Perfect area ratio
+                rauc_ci = np.zeros(args.seq_len)
+
+            # Only plot if not repeats=1
+            if repeats != 1:
+                plot_idx = plot_repeats_list.index(repeats)
+                colour = plot_colours[plot_idx]
+                label = f"{repeats} Repetitions"
+
+                x = np.arange(1, args.seq_len + 1)
+                axes[0].errorbar(x, auc_mean, yerr=auc_ci, fmt="o-", capsize=3, color=colour, label=label)
+                if args.include_dormant_ratio:
+                    axes[1].errorbar(x, dormant_mean, yerr=dormant_ci, fmt="s--", capsize=3, color=colour, label=label)
 
             # CSV rows -------------------------------------------------------
             for t in range(args.seq_len):
-                row = [method, repeats, t + 1, auc_mean[t], auc_ci[t]]
-                if args.extra_capacity_stats:
-                    row.extend([fpr_m[t], fpr_ci[t], rauc_m[t], rauc_ci[t]])
+                row = [method, repeats, t + 1, auc_mean[t], auc_ci[t], 
+                       dormant_mean[t], dormant_ci[t], fpr_mean[t], fpr_ci[t], rauc_mean[t], rauc_ci[t]]
                 csv_rows.append(tuple(row))
 
             # ---- global averages (across tasks) ----
             g_auc = float(np.nanmean(auc_mean))
             g_auc_ci = float(np.nanmean(auc_ci))
-            if args.extra_capacity_stats:
-                g_fpr = float(np.nanmean(fpr_m))
-                g_fpr_ci = float(np.nanmean(fpr_ci))
-                g_rauc = float(np.nanmean(rauc_m))
-                g_rauc_ci = float(np.nanmean(rauc_ci))
-            else:
-                g_fpr = g_rauc = float("nan")
-                g_fpr_ci = g_rauc_ci = float("nan")
+            g_dormant = float(np.nanmean(dormant_mean))
+            g_dormant_ci = float(np.nanmean(dormant_ci))
+            g_fpr = float(np.nanmean(fpr_mean))
+            g_fpr_ci = float(np.nanmean(fpr_ci))
+            g_rauc = float(np.nanmean(rauc_mean))
+            g_rauc_ci = float(np.nanmean(rauc_ci))
+
             global_means[method][repeats] = {
                 "auc": g_auc,
                 "auc_ci": g_auc_ci,
+                "dormant": g_dormant,
+                "dormant_ci": g_dormant_ci,
                 "fpr": g_fpr,
                 "fpr_ci": g_fpr_ci,
                 "rauc": g_rauc,
@@ -226,14 +384,13 @@ def main() -> None:
             }
 
         # prettify plots ----------------------------------------------------
-        axes[0].set_ylabel("Capacity loss ↓")
-        axes[0].set_title("AUC-loss")
+        axes[0].set_ylabel("AUCL ↓")
         axes[0].set_ylim(bottom=0)
-        if args.extra_capacity_stats:
-            axes[1].set_ylabel("Final‑perf ratio ↑")
-            axes[1].set_title("Plateau")
-            axes[2].set_ylabel("Raw‑AUC ratio ↑")
-            axes[2].set_title("Raw-AUC")
+
+        if args.include_dormant_ratio:
+            axes[1].set_ylabel("Dormant ratio ↑")
+            axes[1].set_ylim(0, 1)  # Dormant ratio is between 0 and 1
+
         for ax in axes:
             ax.set_xlabel("Task index")
             ax.grid(True, alpha=0.3)
@@ -241,9 +398,9 @@ def main() -> None:
         # Add a unified legend for all subplots
         handles, labels = axes[0].get_legend_handles_labels()
         fig.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, 0.15),
-                   ncol=len(repeats_list), frameon=True)
+                   ncol=len(plot_repeats_list), frameon=True)
 
-        fig.tight_layout(rect=[0, 0.1, 1, 1])
+        fig.tight_layout(rect=[-0.03, 0.1, 1, 1])
         fig.savefig(out_dir / f"{method}_plasticity.png", dpi=300)
         fig.savefig(out_dir / f"{method}_plasticity.pdf")
         plt.show()
@@ -255,26 +412,21 @@ def main() -> None:
             "\\centering",
             "\\caption{Sequence-averaged metrics for %s}" % method,
             "\\label{tab:%s_global}" % method.lower(),
-            ]
-        if args.extra_capacity_stats:
-            latex_lines.append("\\begin{tabular}{lccc}")
-            latex_lines.append("\\toprule")
-            latex_lines.append("Repeats & AUC-loss $\\downarrow$ & FPR $\\uparrow$ & RAUC $\\uparrow$ \\")
-            latex_lines.append("\\midrule")
-            for rep in repeats_list:
-                gm = global_means[method][rep]
-                latex_lines.append(f"{rep} & {gm['auc']:.3f} $\\pm$ {gm['auc_ci']:.3f} & {gm['fpr']:.3f} $\\pm$ {gm['fpr_ci']:.3f} & {gm['rauc']:.3f} $\\pm$ {gm['rauc_ci']:.3f} \\")
-        else:
-            latex_lines.append("\\begin{tabular}{lc}")
-            latex_lines.append("\\toprule")
-            latex_lines.append("Repeats & AUC-loss $\\downarrow$ \\")
-            latex_lines.append("\\midrule")
-            for rep in repeats_list:
-                gm = global_means[method][rep]
-                latex_lines.append(f"{rep} & {gm['auc']:.3f} $\\pm$ {gm['auc_ci']:.3f} \\")
-        latex_lines.append("\\bottomrule")
-        latex_lines.append("\\end{tabular}")
-        latex_lines.append("\\end{table}")
+            "\\begin{tabular}{lcccc}",
+            "\\toprule",
+            "Repeats & AUC-loss $\\downarrow$ & Dormant Ratio $\\uparrow$ & FPR $\\uparrow$ & RAUC $\\uparrow$ \\\\",
+            "\\midrule",
+        ]
+
+        for rep in repeats_list:
+            gm = global_means[method][rep]
+            latex_lines.append(f"{rep} & {gm['auc']:.3f} $\\pm$ {gm['auc_ci']:.3f} & {gm['dormant']:.3f} $\\pm$ {gm['dormant_ci']:.3f} & {gm['fpr']:.3f} $\\pm$ {gm['fpr_ci']:.3f} & {gm['rauc']:.3f} $\\pm$ {gm['rauc_ci']:.3f} \\\\")
+
+        latex_lines.extend([
+            "\\bottomrule",
+            "\\end{tabular}",
+            "\\end{table}"
+        ])
         latex_str = "\n".join(latex_lines)
         print(latex_str)
 

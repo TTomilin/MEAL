@@ -103,13 +103,19 @@ def compute_fisher(params: FrozenDict,
     # grad(log π) for a batch of agents, vectorised
     # -----------------------------------------------------------------
     def _logp(p, obs, act):
-        obs = jnp.expand_dims(obs, 0)
-        net_output = net.apply(p, obs, env_idx=env_idx)  # (A, …)
+        # Ensure obs has the right shape for the network
+        # If obs is from _prep_obs, it has shape (num_agents, obs_dim)
+        # We need to take the first agent's observation and ensure it has batch dim 1
+        if obs.ndim > 1 and obs.shape[0] > 1:
+            obs = obs[0:1]  # Take first agent, keep batch dimension
+        else:
+            obs = jnp.expand_dims(obs, 0) if obs.ndim == 1 else obs
+        net_output = net.apply(p, obs, env_idx=env_idx)  # (1, …)
 
         # Handle both policy networks (return distributions) and Q-networks (return Q-values)
         if isinstance(net_output, tuple):
-            # Policy network case: returns (dists, values)
-            dists, _ = net_output
+            # Policy network case: returns (dists, values, dormant_ratio)
+            dists, _, _ = net_output
         else:
             # Q-network case: returns Q-values, convert to Categorical distribution
             q_values = net_output  # (A, num_actions)
@@ -128,13 +134,19 @@ def compute_fisher(params: FrozenDict,
 
         obs_batch = _prep_obs(obs, use_cnn=use_cnn)
 
+        # Ensure obs_batch has the right shape for the network
+        # If obs_batch is from _prep_obs, it has shape (num_agents, obs_dim)
+        # We need to take the first agent's observation and ensure it has batch dim 1
+        if obs_batch.ndim > 1 and obs_batch.shape[0] > 1:
+            obs_batch = obs_batch[0:1]  # Take first agent, keep batch dimension
+
         # sample & log-prob in one forward pass (batched)
         net_output = net.apply(params, obs_batch, env_idx=env_idx)
 
         # Handle both policy networks (return distributions) and Q-networks (return Q-values)
         if isinstance(net_output, tuple):
-            # Policy network case: returns (dists, values)
-            dists, _ = net_output
+            # Policy network case: returns (dists, values, dormant_ratio)
+            dists, _, _ = net_output
             actions = dists.sample(seed=key_sample)  # (A,)
         else:
             # Q-network case: returns Q-values, convert to Categorical distribution
@@ -145,13 +157,21 @@ def compute_fisher(params: FrozenDict,
         actions = jax.lax.stop_gradient(actions)  # no grad through sample
 
         # grad(log π)²
-        g = batched_grad(params, obs_batch, actions)  # pytree with leading dim = A
-        g2 = jax.tree_util.tree_map(lambda x: jnp.mean(x ** 2, axis=0), g)
+        # Since we're only using the first agent, we need to handle the gradient computation differently
+        # Create a single observation for gradient computation
+        single_obs = obs_batch[0] if obs_batch.shape[0] > 0 else obs_batch
+        single_action = actions[0] if actions.shape[0] > 0 else actions
+
+        # Compute gradient for single observation/action pair
+        g_single = jax.grad(_logp)(params, single_obs, single_action)
+        g2 = jax.tree_util.tree_map(lambda x: x ** 2, g_single)
 
         fisher_acc = jax.tree_util.tree_map(jnp.add, fisher_acc, g2)
 
         # env step (batched over agents internally by env)
-        act_dict = { agent: actions[i] for i, agent in enumerate(env.agents) }
+        # Replicate the action for all agents since we only computed one action
+        action_value = actions[0] if actions.shape[0] > 0 else actions
+        act_dict = { agent: action_value for agent in env.agents }
         obs_next, env_state, _, done_info, _ = env.step(key_step, env_state, act_dict)
 
         # Handle both single-agent (boolean) and multi-agent (dictionary) done values

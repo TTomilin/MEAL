@@ -46,42 +46,63 @@ def collect_plasticity_runs(
     """
 
     task_runs: list[list[np.ndarray]] = [[] for _ in range(seq_len)]
-    folder = f"{strat}_{seq_len}"
-    if repeats > 1:
-        folder += f"_rep_{repeats}"
+
+    # Try to find data with higher repetitions first, then fall back to exact match
+    possible_repeats = sorted([r for r in range(repeats, 21) if r >= repeats], reverse=True)
 
     for seed in seeds:
-        # Use different directory structure for single baseline vs CL methods
-        run_dir = base / algo / method / "plasticity" / folder / f"seed_{seed}"
-        if not run_dir.exists():
-            print(f"Warning: no directory {run_dir}")
-            continue
+        # Try to find data with higher repetitions first, then fall back to exact match
+        found_data = False
 
-        for fp in sorted(run_dir.glob("*_soup.*")):
-            trace = load_series(fp)
-            if trace.ndim != 1:
-                raise ValueError(f"Trace in {fp} is not 1‑D (shape {trace.shape})")
+        for try_repeats in possible_repeats:
+            folder = f"{strat}_{seq_len}"
+            if try_repeats > 1:
+                folder += f"_rep_{try_repeats}"
 
-            total_chunks = seq_len * repeats
-            L_est = len(trace) // total_chunks
-            if L_est == 0:
-                print(f"Warning: trace in {fp} shorter than expected; skipped.")
+            # Use different directory structure for single baseline vs CL methods
+            run_dir = base / algo / method / "plasticity" / folder / f"seed_{seed}"
+            if not run_dir.exists():
                 continue
 
-            # build one long segment per task by concatenating its occurrences
-            for task_idx in range(seq_len):
-                slices = []
-                for rep in range(repeats):
-                    start = (rep * seq_len + task_idx) * L_est
-                    end = start + L_est
-                    if end > len(trace):  # safety for ragged endings
-                        break
-                    slices.append(trace[start:end])
-                if not slices:
+            for fp in sorted(run_dir.glob("*_soup.*")):
+                trace = load_series(fp)
+                if trace.ndim != 1:
+                    raise ValueError(f"Trace in {fp} is not 1‑D (shape {trace.shape})")
+
+                total_chunks = seq_len * try_repeats
+                L_est = len(trace) // total_chunks
+                if L_est == 0:
+                    print(f"Warning: trace in {fp} shorter than expected; skipped.")
                     continue
 
-                task_trace = np.concatenate(slices)
-                task_runs[task_idx].append(task_trace)
+                # If we're reusing data from higher repetitions, inform the user
+                if try_repeats > repeats:
+                    print(f"Info: Reusing data from {folder}/seed_{seed} for rep_{repeats} (trimming {try_repeats - repeats} repetitions)")
+
+                # build one long segment per task by concatenating its occurrences
+                # but only use the first 'repeats' repetitions
+                for task_idx in range(seq_len):
+                    slices = []
+                    for rep in range(repeats):  # Only use the requested number of repetitions
+                        start = (rep * seq_len + task_idx) * L_est
+                        end = start + L_est
+                        if end > len(trace):  # safety for ragged endings
+                            break
+                        slices.append(trace[start:end])
+                    if not slices:
+                        continue
+
+                    task_trace = np.concatenate(slices)
+                    task_runs[task_idx].append(task_trace)
+
+                found_data = True
+                break  # Found data for this seed, move to next seed
+
+            if found_data:
+                break  # Found data for this seed, move to next seed
+
+        if not found_data:
+            print(f"Warning: no data found for seed {seed} with any repetition >= {repeats}")
 
     # pad to equal length so we can average ----------------------------------
     processed: list[np.ndarray] = []

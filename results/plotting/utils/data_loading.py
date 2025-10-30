@@ -13,7 +13,8 @@ import numpy as np
 from .common import load_series
 
 
-def collect_runs(base: Path, algo: str, method: str, strat: str, seq_len: int, seeds: List[int], metric: str, level: int = 1) -> Tuple[
+def collect_runs(base: Path, algo: str, method: str, strat: str, seq_len: int, seeds: List[int], metric: str,
+                 level: int = 1) -> Tuple[
     np.ndarray, List[str]]:
     """
     Collect run data for training plots.
@@ -64,8 +65,8 @@ def collect_runs(base: Path, algo: str, method: str, strat: str, seq_len: int, s
     return data, env_names
 
 
-def collect_env_curves(base: Path, algo: str, method: str, strat: str,
-                       seq_len: int, seeds: List[int], metric: str = "reward", level: int = 1) -> Tuple[List[str], List[np.ndarray]]:
+def collect_env_curves(base: Path, algo: str, method: str, strat: str, seq_len: int, seeds: List[int],
+                       metric: str = "reward", level: int = 1, partners: bool = False) -> Tuple[List[str], List[np.ndarray]]:
     """
     Collect per-environment curves for per-task evaluation plots.
 
@@ -109,6 +110,69 @@ def collect_env_curves(base: Path, algo: str, method: str, strat: str,
             fp = sd / f"{idx}_{env}_{metric}.json"
             if not fp.exists():
                 fp = sd / f"{idx}_{env}_{metric}.npz"
+            if not fp.exists():
+                continue
+            arr = load_series(fp)
+            per_env_seed[idx].append(arr)
+
+    T_max = max(max(map(len, curves)) for curves in per_env_seed if curves)
+    curves = []
+    for env_curves in per_env_seed:
+        if env_curves:
+            stacked = np.vstack([np.pad(a, (0, T_max - len(a)), constant_values=np.nan)
+                                 for a in env_curves])
+        else:
+            stacked = np.full((1, T_max), np.nan)
+        curves.append(stacked)
+
+    return env_names, curves
+
+
+def collect_partner_curves(base: Path, algo: str, method: str, seq_len: int, seeds: List[int],
+                       metric: str = "soup") -> Tuple[List[str], List[np.ndarray]]:
+    """
+    Collect per-environment curves for per-task evaluation plots.
+
+    Args:
+        base: Base directory for data
+        algo: Algorithm name
+        method: Method name
+        strat: Strategy name
+        seq_len: Sequence length
+        seeds: List of seeds to collect
+        metric: Metric to collect (default: 'reward')
+        level: Difficulty level (default: 1)
+
+    Returns:
+        Tuple of (environment_names, curves_per_environment)
+    """
+    folder = base / algo / method / f"partners_{seq_len}"
+    env_names, per_env_seed = [], []
+
+    # discover envs
+    for seed in seeds:
+        sd = folder / f"seed_{seed}"
+        if not sd.exists():
+            continue
+        files = sorted(f for f in sd.glob(f"*_{metric}.*") if "training" not in f.name)
+        if not files:
+            continue
+        suffix = f"_{metric}"
+        env_names = [f.name.split('_', 1)[1].rsplit(suffix, 1)[0] for f in files]
+        per_env_seed = [[] for _ in env_names]
+        break
+    if not env_names:
+        raise RuntimeError(f'No data for {method}')
+
+    # gather
+    for seed in seeds:
+        sd = folder / f"seed_{seed}"
+        if not sd.exists():
+            continue
+        for idx, env in enumerate(env_names):
+            fp = sd / f"eval_{env}_{metric}.json"
+            if not fp.exists():
+                fp = sd / f"eval_{env}_{metric}.npz"
             if not fp.exists():
                 continue
             arr = load_series(fp)
