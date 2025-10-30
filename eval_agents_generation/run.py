@@ -31,9 +31,9 @@ class TrainConfig:
     env_name: str = "overcooked"
     layout_difficulty: str = "easy"
     layout_idx: int = 0
-    layout_name: str = ""  # If specified, overrides layout_idx
+    layout_name: str = "coord_ring"  # If specified, overrides layout_idx
 
-    rew_shaping_horizon: int = 2.5e8
+    rew_shaping_horizon: int = 10e8
     num_agents: int = 2
 
     # teammate generation
@@ -45,7 +45,7 @@ class TrainConfig:
     gru_hidden_dim: int = 256
 
     partner_pop_size: int = 3
-    xp_loss_weights: float = 1
+    xp_loss_weights: float = 10
     num_checkpoints: int = 5
     num_seeds: int = 1
 
@@ -54,12 +54,12 @@ class TrainConfig:
     # Training
     lr: float = 1e-3
     anneal_lr: bool = False
-    num_envs_xp: int = 32
-    num_envs_sp: int = 32
+    num_envs_xp: int = 512  # 32
+    num_envs_sp: int = 512  # 32
     num_steps: int = 400
-    total_timesteps: int = 2.5e8
-    update_epochs: int = 15
-    num_minibatches: int = 16
+    total_timesteps: int = 5e8
+    update_epochs: int = 6
+    num_minibatches: int = 8
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_eps: float = 0.1
