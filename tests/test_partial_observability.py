@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from meal.env.overcooked_po import OvercookedPO
 from meal.visualization.visualizer_po import OvercookedVisualizerPO
-from meal.env.generation.layout_generator import generate_random_layout
+from meal.env.generation.layout_generator import generate_layout
 from meal.env.utils.difficulty_config import get_difficulty_params
 
 # For GIF creation
@@ -275,7 +275,7 @@ def create_episode_gif(num_steps=50, gif_filename="overcooked_po_episode.gif", t
     # Generate random layout with specified difficulty
     print(f"Generating {difficulty} difficulty environment...")
     try:
-        grid_str, layout = generate_random_layout(
+        grid_str, layout = generate_layout(
             num_agents=2,
             difficulty=difficulty,
             seed=seed,

@@ -15,7 +15,7 @@ from meal.env.common import (
     OBJECT_INDEX_TO_VEC,
     DIR_TO_VEC,
     make_overcooked_map)
-from meal.env.generation.layout_generator import generate_random_layout
+from meal.env.generation.layout_generator import generate_layout
 from meal.env.layouts.presets import overcooked_layouts as layouts
 from meal.env.utils import spaces
 from meal.env.utils.difficulty_config import get_difficulty_params
@@ -105,8 +105,8 @@ class Overcooked(MultiAgentEnv):
             self.layout_name = names[task_id]
         # 3) otherwise: generate by difficulty
         else:
-            grid, self.layout = generate_random_layout(num_agents=num_agents, max_pots=max_pots, max_stations=max_goals,
-                                                       difficulty=difficulty, **env_kwargs)
+            grid, self.layout = generate_layout(num_agents=num_agents, max_pots=max_pots, max_stations=max_goals,
+                                                difficulty=difficulty, **env_kwargs)
             self.layout_name = f"{difficulty}_gen_{task_id}"
 
         # Determine the width and height for this difficulty. We need to set it to the max across all layouts in the sequence so JAX doesn't complain

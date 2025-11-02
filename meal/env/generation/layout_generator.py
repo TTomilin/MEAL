@@ -138,19 +138,17 @@ def remove_unreachable_items(grid: List[List[str]]) -> bool:
     return items_removed
 
 
-def generate_random_layout(
+def generate_layout(
         num_agents: int = 2,
         difficulty: str | None = None,
         height: int = 10,
         width: int = 10,
         wall_density: float = 0.15,
+        num_stations: int = 2,
+        num_pots: int = 3,
         seed: Optional[int] = None,
         max_attempts: int = 2000,
         allow_invalid: bool = False,
-        max_stations: int = 2,
-        min_stations: int = 1,
-        max_pots: int = 3,
-        min_pots: int = 2,
 ):
     """Generate and return a random solvable Overcooked layout.
 
@@ -174,6 +172,8 @@ def generate_random_layout(
         height = params["height"]
         width = params["width"]
         wall_density = params["wall_density"]
+        num_stations = params["num_stations"]
+        num_pots = params["num_pots"]
 
     for attempt in range(1, max_attempts + 1):
         # Initialise grid with FLOOR
@@ -189,7 +189,7 @@ def generate_random_layout(
         # Up to two of each interactive type
         for symbol in (GOAL, POT, ONION_PILE, PLATE_PILE):
             # Generate more pots than other items to increase throughput potential
-            copies = rng.randint(min_pots, max_pots) if symbol == POT else rng.randint(min_stations, max_stations)
+            copies = num_pots if symbol == POT else num_stations
             if not place_tiles(grid, symbol, copies, rng):
                 print(f"[Attempt {attempt}] Not enough space for {symbol}. Retrying…")
                 break  # go to next attempt
@@ -338,7 +338,7 @@ def main(argv=None):
         # Use a different seed for each environment if seed is provided
         env_seed = None if args.seed is None else args.seed + i
 
-        grid_str, layout = generate_random_layout(
+        grid_str, layout = generate_layout(
             num_agents=args.num_agents,
             height=args.height,
             width=args.width,

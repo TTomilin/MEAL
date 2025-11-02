@@ -13,7 +13,7 @@ from flax.core import FrozenDict
 
 from meal.env import Overcooked
 from meal.env.generation.layout_generator import (
-    generate_random_layout, layout_grid_to_dict
+    generate_layout, layout_grid_to_dict
 )
 from meal.env.generation.layout_validator import (
     evaluate_grid, WALL, FLOOR, AGENT, GOAL, ONION_PILE, POT
@@ -26,7 +26,7 @@ def create_invalid_layout(issue_type, seed=None):
     rng = random.Random(seed)
 
     # Start with a valid layout
-    grid_str, _ = generate_random_layout(
+    grid_str, _ = generate_layout(
         num_agents=2,
         height_rng=(6, 8),
         width_rng=(6, 8),
@@ -148,7 +148,7 @@ def test_layouts():
     for _ in range(10):
         seed = random.randint(0, 10000)
         try:
-            grid_str, _ = generate_random_layout(
+            grid_str, _ = generate_layout(
                 num_agents=2,
                 height_rng=(5, 6),
                 width_rng=(5, 6),
