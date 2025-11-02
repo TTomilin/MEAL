@@ -77,11 +77,13 @@ DIR_TO_VEC = jnp.array([
 def make_overcooked_map(
         wall_map,
         goal_pos,
+        goal_mask,
         agent_pos,
         agent_dir_idx,
         plate_pile_pos,
         onion_pile_pos,
         pot_pos,
+        pot_mask,
         pot_status,
         onion_pos,
         plate_pos,
@@ -107,11 +109,21 @@ def make_overcooked_map(
                                                                                           jnp.arange(num_agents))
     maze_map = maze_map.at[agent_y_vec, agent_x_vec, :].set(agent_vec)
 
+    # masked single-pixel scatter
+    def masked_set(maze, xy, val, m):
+        y, x = xy[1], xy[0]
+        return jax.lax.cond(
+            m,
+            lambda _: maze.at[y, x, :].set(val),
+            lambda _: maze,
+            operand=None
+        )
+
     # Add goals
-    goal = jnp.array([OBJECT_TO_INDEX['goal'], COLOR_TO_INDEX['green'], 0], dtype=jnp.uint8)
-    goal_x = goal_pos[:, 0]
-    goal_y = goal_pos[:, 1]
-    maze_map = maze_map.at[goal_y, goal_x, :].set(goal)
+    goal_vec = jnp.array([OBJECT_TO_INDEX['goal'], COLOR_TO_INDEX['green'], 0], dtype=jnp.uint8)
+    def _set_goal(carry, i):
+        return masked_set(carry, goal_pos[i], goal_vec, goal_mask[i]), None
+    maze_map, _ = jax.lax.scan(_set_goal, maze_map, jnp.arange(goal_pos.shape[0]))
 
     # Add onions
     onion_x = onion_pile_pos[:, 0]
@@ -126,13 +138,10 @@ def make_overcooked_map(
     maze_map = maze_map.at[plate_y, plate_x, :].set(plate_pile)
 
     # Add pots
-    pot_x = pot_pos[:, 0]
-    pot_y = pot_pos[:, 1]
-    pots = jnp.stack(
-        [jnp.array([OBJECT_TO_INDEX['pot'], COLOR_TO_INDEX["black"], status]) for status in pot_status],
-        dtype=jnp.uint8
-    )
-    maze_map = maze_map.at[pot_y, pot_x, :].set(pots)
+    def _set_pot(carry, i):
+        pot_vec = jnp.array([OBJECT_TO_INDEX['pot'], COLOR_TO_INDEX["black"], pot_status[i]], dtype=jnp.uint8)
+        return masked_set(carry, pot_pos[i], pot_vec, pot_mask[i]), None
+    maze_map, _ = jax.lax.scan(_set_pot, maze_map, jnp.arange(pot_pos.shape[0]))
 
     if len(onion_pos) > 0:
         onion_x = onion_pos[:, 0]

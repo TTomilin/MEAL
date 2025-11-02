@@ -1,4 +1,3 @@
-import json
 from enum import IntEnum
 from typing import Tuple, Dict
 
@@ -17,8 +16,9 @@ from meal.env.common import (
     DIR_TO_VEC,
     make_overcooked_map)
 from meal.env.generation.layout_generator import generate_random_layout
-from meal.env.layouts.presets import overcooked_layouts as layouts, _parse_layout_string
+from meal.env.layouts.presets import overcooked_layouts as layouts
 from meal.env.utils import spaces
+from meal.env.utils.difficulty_config import get_difficulty_params
 
 BASE_REW_SHAPING_PARAMS = {
     "PLACEMENT_IN_POT_REW": 3,  # reward for putting ingredients
@@ -49,6 +49,8 @@ class State:
     agent_inv: chex.Array
     goal_pos: chex.Array
     pot_pos: chex.Array
+    goal_mask: chex.Array  # (MAX_GOALS,) bool
+    pot_mask: chex.Array  # (MAX_POTS,) bool
     wall_map: chex.Array
     maze_map: chex.Array
     time: int
@@ -80,9 +82,13 @@ class Overcooked(MultiAgentEnv):
             task_id: int = 0,
             num_agents: int = 2,
             agent_restrictions: dict = None,
+            max_pots: int = 4,
+            max_goals: int = 2,
             **env_kwargs
     ):
         super().__init__(num_agents=num_agents)
+        self.max_pots = max_pots
+        self.max_goals = max_goals
 
         # 1) explicit layout given
         if layout is not None:
@@ -99,12 +105,16 @@ class Overcooked(MultiAgentEnv):
             self.layout_name = names[task_id]
         # 3) otherwise: generate by difficulty
         else:
-            grid, self.layout = generate_random_layout(num_agents=num_agents, difficulty=difficulty, **env_kwargs)
+            grid, self.layout = generate_random_layout(num_agents=num_agents, max_pots=max_pots, max_stations=max_goals,
+                                                       difficulty=difficulty, **env_kwargs)
             self.layout_name = f"{difficulty}_gen_{task_id}"
 
+        # Determine the width and height for this difficulty. We need to set it to the max across all layouts in the sequence so JAX doesn't complain
+        params = get_difficulty_params(difficulty)
+        self.height = params["height_max"]
+        self.width = params["width_max"]
+
         # Observations given by 26 channels, most of which are boolean masks
-        self.height = self.layout["height"]
-        self.width = self.layout["width"]
         self.env_layers = 16  # Number of environment layers (static, dynamic, pot, soup, etc.)
         self.obs_channels = 18 + 4 * num_agents  # 26 when n = 2
         self.obs_shape = (self.width, self.height, self.obs_channels)
@@ -273,27 +283,27 @@ class Overcooked(MultiAgentEnv):
     # ───────────────────────── movement / step ────────────────────
 
     def _proposed_positions(self, state: State, action: chex.Array):
-        # Match the original overcooked.py logic exactly
         is_move_action = jnp.logical_and(action != Actions.stay, action != Actions.interact)
         is_move_action_transposed = jnp.expand_dims(is_move_action, 0).transpose()
 
-        # Calculate proposed positions like original
+        # Calculate proposed positions
         fwd_pos = jnp.minimum(
             jnp.maximum(state.agent_pos + is_move_action_transposed * DIR_TO_VEC[jnp.minimum(action, 3)] \
                         + ~is_move_action_transposed * state.agent_dir, 0),
             jnp.array((self.width - 1, self.height - 1), dtype=jnp.uint32)
         )
 
-        # Can't go past wall or goal - match original logic
-        def _wall_or_goal(fwd_position, wall_map, goal_pos):
+        # Can't go past wall or goal
+        def _wall_or_goal(fwd_position, wall_map, goal_pos, goal_mask):
             fwd_wall = wall_map.at[fwd_position[1], fwd_position[0]].get()
-            goal_collision = lambda pos, goal: jnp.logical_and(pos[0] == goal[0], pos[1] == goal[1])
-            fwd_goal = jax.vmap(goal_collision, in_axes=(None, 0))(fwd_position, goal_pos)
-            fwd_goal = jnp.any(fwd_goal)
+            # check equality against all goal positions, but mask out padded entries
+            same = (goal_pos[:, 0] == fwd_position[0]) & (goal_pos[:, 1] == fwd_position[1])
+            fwd_goal = jnp.any(same & goal_mask)
             return jnp.asarray(fwd_wall), jnp.asarray(fwd_goal)
 
-        fwd_pos_has_wall, fwd_pos_has_goal = jax.vmap(_wall_or_goal, in_axes=(0, None, None))(fwd_pos, state.wall_map,
-                                                                                              state.goal_pos)
+        fwd_pos_has_wall, fwd_pos_has_goal = jax.vmap(_wall_or_goal, in_axes=(0, None, None, None))(
+            fwd_pos, state.wall_map, state.goal_pos, state.goal_mask
+        )
         fwd_pos_blocked = jnp.logical_or(fwd_pos_has_wall, fwd_pos_has_goal)
         fwd_pos_blocked = fwd_pos_blocked.flatten()[:self.num_agents]
         fwd_pos_blocked = fwd_pos_blocked.reshape((self.num_agents, 1))
@@ -304,65 +314,41 @@ class Overcooked(MultiAgentEnv):
         return proposed
 
     def _resolve_collisions(self, current, proposed):
-        n = current.shape[0]
+        num_agents = current.shape[0]
 
-        # For 2 agents, match the original overcooked.py logic exactly
-        if n == 2:
-            # Check for collision (both agents going to same position)
-            collision = jnp.all(proposed[0] == proposed[1])
+        # same destination (collision)  ────────────────────────────────
+        same_dest = (proposed[:, None, :] == proposed[None, :, :]).all(-1)
+        coll = (same_dest.sum(-1) > 1)  # True if ≥2 agents share a tile
+        blocked = coll  # if no other agents → no swap test
 
-            # If collision, both agents stay in place
-            alice_pos = jnp.where(collision, current[0], proposed[0])
-            bob_pos = jnp.where(collision, current[1], proposed[1])
+        # swap places and circular movements ──────────────────────────
+        if num_agents > 1:
+            # Check for direct pairwise swaps (i ↔ j)
+            swap = ((proposed[:, None, :] == current[None, :, :]).all(-1) &
+                    (proposed[None, :, :] == current[:, None, :]).all(-1))
+            # ignore i==j diagonal ─ we only care about pairs (i ≠ j)
+            swap = swap & (~jnp.eye(num_agents, dtype=bool))
 
-            # Check for swapping places (agents passing through each other)
-            swap_places = jnp.logical_and(
-                jnp.all(proposed[0] == current[1]),
-                jnp.all(proposed[1] == current[0]),
-            )
+            # Check for circular movements (A→B→C→A, etc.)
+            # An agent is part of a circular movement if it's moving to another agent's
+            # current position AND that other agent is also moving
 
-            # If swapping and no collision, prevent the swap
-            alice_pos = jnp.where(~collision & swap_places, current[0], alice_pos)
-            bob_pos = jnp.where(~collision & swap_places, current[1], bob_pos)
+            # Find agents that are actually moving (not staying in place)
+            is_moving = ~(proposed == current).all(-1)
 
-            return jnp.array([alice_pos, bob_pos]).astype(jnp.uint32)
+            # Create a matrix where entry (i,j) is True if agent i is moving to agent j's current position
+            moving_to_agent_pos = (proposed[:, None, :] == current[None, :, :]).all(-1)
+            moving_to_agent_pos = moving_to_agent_pos & (~jnp.eye(num_agents, dtype=bool))  # ignore self
 
-        else:
-            # For n > 2 agents, use the original generic logic
-            # same destination (collision)  ────────────────────────────────
-            same_dest = (proposed[:, None, :] == proposed[None, :, :]).all(-1)
-            coll = (same_dest.sum(-1) > 1)  # True if ≥2 agents share a tile
+            # An agent is blocked if it's moving to another agent's position AND that other agent is also moving
+            # This prevents both simple swaps and circular movements
+            # For each agent, check if it's moving to any other moving agent's current position
+            targets_moving_agents = moving_to_agent_pos & is_moving[None, :]  # broadcast is_moving
+            circular_blocked = targets_moving_agents.any(axis=1)  # True if agent targets any moving agent
 
-            # swap places and circular movements ──────────────────────────
-            if n == 1:  # no other agents → no swap test
-                blocked = coll
-            else:
-                # Check for direct pairwise swaps (i ↔ j)
-                swap = ((proposed[:, None, :] == current[None, :, :]).all(-1) &
-                        (proposed[None, :, :] == current[:, None, :]).all(-1))
-                # ignore i==j diagonal ─ we only care about pairs (i ≠ j)
-                swap = swap & (~jnp.eye(n, dtype=bool))
+            blocked = coll | swap.any(-1) | circular_blocked
 
-                # Check for circular movements (A→B→C→A, etc.)
-                # An agent is part of a circular movement if it's moving to another agent's 
-                # current position AND that other agent is also moving
-
-                # Find agents that are actually moving (not staying in place)
-                is_moving = ~(proposed == current).all(-1)
-
-                # Create a matrix where entry (i,j) is True if agent i is moving to agent j's current position
-                moving_to_agent_pos = (proposed[:, None, :] == current[None, :, :]).all(-1)
-                moving_to_agent_pos = moving_to_agent_pos & (~jnp.eye(n, dtype=bool))  # ignore self
-
-                # An agent is blocked if it's moving to another agent's position AND that other agent is also moving
-                # This prevents both simple swaps and circular movements
-                # For each agent, check if it's moving to any other moving agent's current position
-                targets_moving_agents = moving_to_agent_pos & is_moving[None, :]  # broadcast is_moving
-                circular_blocked = targets_moving_agents.any(axis=1)  # True if agent targets any moving agent
-
-                blocked = coll | swap.any(-1) | circular_blocked
-
-            return jnp.where(blocked[:, None], current, proposed).astype(jnp.uint32)
+        return jnp.where(blocked[:, None], current, proposed).astype(jnp.uint32)
 
     def step_agents(self, key, state, action):
         assert action.shape == (self.num_agents,)
@@ -378,7 +364,7 @@ class Overcooked(MultiAgentEnv):
         fwd_pos_all = agent_pos + agent_dir  # shape (n, 2)
 
         # ---------------------------------------------------------------------
-        # interactions – sequential scan to mimic original ordering
+        # interactions – sequential scan
         # ---------------------------------------------------------------------
         def body(carry, idx):
             maze, inv, rew, shaped, soups = carry
@@ -410,15 +396,26 @@ class Overcooked(MultiAgentEnv):
                                                                                jnp.arange(self.num_agents))
 
         # ─── tick every pot exactly once per env-step ────────────────────────
-        pot_x, pot_y = state.pot_pos[:, 0], state.pot_pos[:, 1]
+        def tick_one(carry, i):
+            maze = carry
+            pos = state.pot_pos[i]  # (2,)
+            is_real = state.pot_mask[i]  # bool
+            y, x = pos[1], pos[0]
 
-        def _tick(pot):
-            status = pot[-1]
+            status = maze.at[y, x, -1].get()
             cooking = (status <= POT_FULL_STATUS) & (status > POT_READY_STATUS)
-            return pot.at[-1].set(jnp.where(cooking, status - 1, status))
+            new_status = jnp.where(cooking, status - 1, status)
 
-        pots = jax.vmap(_tick)(maze_map[pot_y, pot_x])
-        maze_map = maze_map.at[pot_y, pot_x, :].set(pots)
+            # only write back if this is a real pot
+            maze = jax.lax.cond(
+                is_real,
+                lambda _: maze.at[y, x, -1].set(new_status),
+                lambda _: maze,
+                operand=None
+            )
+            return maze, None
+
+        maze_map, _ = jax.lax.scan(tick_one, maze_map, jnp.arange(self.max_pots))
 
         # ─── repaint agents (always, not only on INTERACT) ───────────────────
         empty_vec = OBJECT_INDEX_TO_VEC[OBJECT_TO_INDEX["empty"]]
@@ -448,13 +445,13 @@ class Overcooked(MultiAgentEnv):
     ) -> Tuple[Dict[str, chex.Array], State, Dict[str, float], Dict[str, bool], Dict]:
         """Perform single timestep state transition."""
 
-        # convert incoming dict → jnp.array([a0,a1,…]) and apply action_set.take() like original
+        # convert incoming dict → jnp.array([a0,a1,…]) and apply action_set.take()
         if isinstance(actions, dict):
             action_indices = jnp.array([actions[a].flatten()[0] for a in self.agents], dtype=jnp.uint8)
         else:
             action_indices = actions
 
-        # Use action_set.take() to convert indices to action values, matching original behavior
+        # Use action_set.take() to convert indices to action values
         act_arr = self.action_set.take(indices=action_indices)
 
         state, reward, shaped_rewards, soups_delivered = self.step_agents(key, state, act_arr)
@@ -500,23 +497,38 @@ class Overcooked(MultiAgentEnv):
         random_reset = self.random_reset
         layout = self.layout
 
-        h = self.height
-        w = self.width
+        height = self.height
+        width = self.width
+        real_height = self.layout["height"]
+        real_width = self.layout["width"]
         num_agents = self.num_agents
-        all_pos = np.arange(h * w, dtype=jnp.uint32)
+        all_pos = np.arange(height * width, dtype=jnp.uint32)
+
+        # Build "valid" mask for cells that belong to the original layout region (top-left aligned)
+        valid_mask = jnp.zeros((height, width), dtype=jnp.bool_)
+        valid_mask = valid_mask.at[:real_height, :real_width].set(True)
 
         wall_idx = layout.get("wall_idx")
         occupied = jnp.zeros_like(all_pos).at[wall_idx].set(1)
 
-        # Agent positioning - match original overcooked.py logic
-        wall_map = occupied.reshape(h, w).astype(jnp.bool_)
+        # Start with everything as walls
+        wall_map = jnp.ones((height, width), dtype=jnp.bool_)
 
-        # Reset agent position + dir - like original
+        # Real wall_idx are flat indices in real_height x real_width
+        wall_idx = self.layout.get("wall_idx")
+        wall_y = wall_idx // real_height
+        wall_x = wall_idx %  real_width
+
+        # Inside the real region, set walls according to layout and free space elsewhere
+        wall_inside = jnp.zeros((real_height, real_width), dtype=jnp.bool_).at[wall_y, wall_x].set(True)
+        wall_map = wall_map.at[:real_height, :real_width].set(wall_inside)
+
+        # Reset agent position + dir
         key, subkey = jax.random.split(key)
         agent_idx = jax.random.choice(subkey, all_pos, shape=(num_agents,),
                                       p=(~occupied.astype(jnp.bool_)).astype(jnp.float32), replace=False)
 
-        # Replace with fixed layout if applicable - like original
+        # Replace with fixed layout if applicable
         layout_agent_idx = layout.get("agent_idx", jnp.array([], dtype=jnp.uint32))
         if not random_reset and len(layout_agent_idx) > 0:
             if len(layout_agent_idx) >= num_agents:
@@ -527,7 +539,7 @@ class Overcooked(MultiAgentEnv):
                 if len(layout_agent_idx) > num_agents:
                     unused_agent_positions = layout_agent_idx[num_agents:]
                     # Add unused agent spawn positions to the wall map so they appear as counters
-                    wall_map = wall_map.at[unused_agent_positions // w, unused_agent_positions % w].set(True)
+                    wall_map = wall_map.at[unused_agent_positions // width, unused_agent_positions % width].set(True)
                     occupied = occupied.at[unused_agent_positions].set(1)
             else:
                 # Layout has fewer agent positions than requested
@@ -548,7 +560,7 @@ class Overcooked(MultiAgentEnv):
                 # Combine layout and random positions
                 agent_idx = jnp.concatenate([available_positions, additional_positions])
 
-        agent_pos = jnp.array([agent_idx % w, agent_idx // w], dtype=jnp.uint32).transpose()  # dim = n_agents x 2
+        agent_pos = jnp.array([agent_idx % width, agent_idx // width], dtype=jnp.uint32).transpose()  # dim = n_agents x 2
         occupied = occupied.at[agent_idx].set(1)
 
         key, subkey = jax.random.split(key)
@@ -560,20 +572,30 @@ class Overcooked(MultiAgentEnv):
         empty_table_mask = empty_table_mask.at[wall_idx].set(1)
 
         goal_idx = layout.get("goal_idx")
-        goal_pos = jnp.array([goal_idx % w, goal_idx // w], dtype=jnp.uint32).transpose()
-        empty_table_mask = empty_table_mask.at[goal_idx].set(0)
+        raw_goal_pos = jnp.stack([goal_idx % width, goal_idx // width], axis=1).astype(jnp.uint32)
+        n_goals = raw_goal_pos.shape[0]
+        pad_g = self.max_goals - n_goals
+        goal_pos = jnp.pad(raw_goal_pos, ((0, pad_g), (0, 0)))
+        goal_mask = jnp.concatenate(
+            [jnp.ones((n_goals,), dtype=jnp.bool_), jnp.zeros((pad_g,), dtype=jnp.bool_)]
+        )
 
         onion_pile_idx = layout.get("onion_pile_idx")
-        onion_pile_pos = jnp.array([onion_pile_idx % w, onion_pile_idx // w], dtype=jnp.uint32).transpose()
+        onion_pile_pos = jnp.array([onion_pile_idx % width, onion_pile_idx // width], dtype=jnp.uint32).transpose()
         empty_table_mask = empty_table_mask.at[onion_pile_idx].set(0)
 
         plate_pile_idx = layout.get("plate_pile_idx")
-        plate_pile_pos = jnp.array([plate_pile_idx % w, plate_pile_idx // w], dtype=jnp.uint32).transpose()
+        plate_pile_pos = jnp.array([plate_pile_idx % width, plate_pile_idx // width], dtype=jnp.uint32).transpose()
         empty_table_mask = empty_table_mask.at[plate_pile_idx].set(0)
 
         pot_idx = layout.get("pot_idx")
-        pot_pos = jnp.array([pot_idx % w, pot_idx // w], dtype=jnp.uint32).transpose()
-        empty_table_mask = empty_table_mask.at[pot_idx].set(0)
+        raw_pot_pos = jnp.stack([pot_idx % width, pot_idx // width], axis=1).astype(jnp.uint32)
+        n_pots = raw_pot_pos.shape[0]
+        pad_p = self.max_pots - n_pots
+        pot_pos = jnp.pad(raw_pot_pos, ((0, pad_p), (0, 0)))
+        pot_mask = jnp.concatenate(
+            [jnp.ones((n_pots,), dtype=jnp.bool_), jnp.zeros((pad_p,), dtype=jnp.bool_)]
+        )
 
         key, subkey = jax.random.split(key)
         # Pot status is determined by a number between 0 (inclusive) and pot_empty_status+1 (exclusive)
@@ -588,11 +610,13 @@ class Overcooked(MultiAgentEnv):
         maze_map = make_overcooked_map(
             wall_map,
             goal_pos,
+            goal_mask,
             agent_pos,
             agent_dir_idx,
             plate_pile_pos,
             onion_pile_pos,
             pot_pos,
+            pot_mask,
             pot_status,
             onion_pos,
             plate_pos,
@@ -615,6 +639,8 @@ class Overcooked(MultiAgentEnv):
             agent_inv=agent_inv,
             goal_pos=goal_pos,
             pot_pos=pot_pos,
+            goal_mask=goal_mask,
+            pot_mask=pot_mask,
             wall_map=wall_map.astype(jnp.bool_),
             maze_map=maze_map,
             time=0,

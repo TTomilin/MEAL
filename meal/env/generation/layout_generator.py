@@ -147,6 +147,10 @@ def generate_random_layout(
         seed: Optional[int] = None,
         max_attempts: int = 2000,
         allow_invalid: bool = False,
+        max_stations: int = 2,
+        min_stations: int = 1,
+        max_pots: int = 3,
+        min_pots: int = 2,
 ):
     """Generate and return a random solvable Overcooked layout.
 
@@ -188,7 +192,7 @@ def generate_random_layout(
         # Up to two of each interactive type
         for symbol in (GOAL, POT, ONION_PILE, PLATE_PILE):
             # Generate more pots than other items to increase throughput potential
-            copies = rng.randint(2, 3) if symbol == POT else rng.randint(1, 2)
+            copies = rng.randint(min_pots, max_pots) if symbol == POT else rng.randint(min_stations, max_stations)
             if not place_tiles(grid, symbol, copies, rng):
                 print(f"[Attempt {attempt}] Not enough space for {symbol}. Retrying…")
                 break  # go to next attempt
