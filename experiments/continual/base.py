@@ -14,7 +14,7 @@ class CLState:
 
 
 class RegCLMethod(Protocol):
-    """Minimal interface every regularisation-based CL method must expose."""
+    """Minimal interface every regularization-based CL method must expose."""
     name: str
 
     # ---- life-cycle ---------------------------------------------------------
@@ -28,12 +28,17 @@ class RegCLMethod(Protocol):
 
     # ---- importance weights -------------------------------------------------
     def compute_importance(self,
-                           params,
-                           env,
-                           net,
+                           params: FrozenDict,
+                           reset_switch,
+                           step_switch,
+                           network,
                            env_idx: int,
                            rng: jax.random.PRNGKey,
+                           agents,
                            use_cnn: bool,
                            max_episodes: int,
                            max_steps: int,
-                           normalize_importance: bool) -> FrozenDict | None: ...
+                           norm_importance: bool,
+                           stride: int) -> FrozenDict: ...
+
+

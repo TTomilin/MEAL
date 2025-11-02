@@ -1,9 +1,105 @@
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 
-from experiments.utils import build_reg_weights
 from experiments.continual.base import RegCLMethod, CLState
+from experiments.utils import build_reg_weights, batchify, unbatchify
+
+
+def make_mas_importance_fn(reset_switch, step_switch, network, agents, use_cnn: bool):
+    """
+    Returns a jitted function:
+      mas_importance(params, env_idx, rng, max_episodes=5, max_steps=500,
+                     norm_importance=False, stride=1)
+    that computes MAS importance.
+    """
+    num_agents = len(agents)
+
+    @partial(jax.jit, static_argnames=('max_episodes', 'max_steps', 'norm_importance', 'stride'))
+    def mas_importance(params,
+                       env_idx: jnp.int32,
+                       rng: jax.random.PRNGKey,
+                       max_episodes: int,
+                       max_steps: int,
+                       norm_importance: bool,
+                       stride: int):
+        # zeros tree
+        importance0 = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), params)
+
+        def one_episode(carry, _):
+            imp_accum, total_steps, rng = carry
+            rng, r = jax.random.split(rng)
+            obs, state = reset_switch(r, env_idx)
+            done = jnp.array(0.0, dtype=jnp.float32)
+
+            def one_step(carry, t):
+                imp_accum, state, obs, rng, done, steps = carry
+
+                # batchify observations once per step: (A, obs_dim or HWC)
+                obs_b = batchify(obs, agents, num_agents, not use_cnn)
+                # forward
+                pi, v, _ = network.apply(params, obs_b, env_idx=env_idx)  # v shape (A,) or (A,1)
+                logits = pi.logits  # (A, action_dim)
+                v = v.reshape(num_agents, 1)
+                vec = jnp.concatenate([logits, v], axis=-1)  # (A, action_dim+1)
+                l2 = 0.5 * jnp.sum(vec * vec) / vec.shape[0]  # mean over agents
+
+                # grads of l2 wrt params
+                grads = jax.grad(lambda p: l2)(params)
+                # only accumulate if not done; optionally subsample by stride
+                alpha = (t % stride == 0).astype(jnp.float32)
+                factor = (1.0 - done) * alpha
+                grads2 = jax.tree_util.tree_map(lambda g: (g * g) * factor, grads)
+                imp_accum = jax.tree_util.tree_map(lambda a, g: a + g, imp_accum, grads2)
+
+                # step env with greedy/sample action (doesn't matter for MAS)
+                rng, s1, s2 = jax.random.split(rng, 3)
+                action = pi.sample(seed=s1)  # (A,)
+                env_act = unbatchify(action, agents, 1, num_agents)  # dict -> (1,) then flatten
+                env_act = {k: v.flatten() for k, v in env_act.items()}
+
+                obs2, state2, _rew, done_dict, _info = step_switch(s2, state, env_act, env_idx)
+                done2 = done_dict["__all__"].astype(jnp.float32)
+
+                steps = steps + (1.0 - done)
+                done = jnp.maximum(done, done2)
+
+                return (imp_accum, state2, obs2, rng, done, steps), None
+
+            (imp_accum, state, obs, rng, done, steps), _ = jax.lax.scan(
+                one_step,
+                (imp_accum, state, obs, rng, done, jnp.array(0.0, jnp.float32)),
+                xs=jnp.arange(max_steps)
+            )
+
+            return (imp_accum, total_steps + steps, rng), None
+
+        (importance_accum, total_steps, rng), _ = jax.lax.scan(
+            one_episode,
+            (importance0, jnp.array(0.0, jnp.float32), rng),
+            xs=jnp.arange(max_episodes)
+        )
+
+        # average over visited steps
+        importance_accum = jax.tree_util.tree_map(
+            lambda x: x / (total_steps + 1e-8), importance_accum
+        )
+
+        if norm_importance:
+            total_abs = jax.tree_util.tree_reduce(
+                lambda acc, x: acc + jnp.sum(jnp.abs(x)), importance_accum, 0.0
+            )
+            n_params = jax.tree_util.tree_reduce(lambda acc, x: acc + x.size, importance_accum, 0)
+            mean_abs = total_abs / (n_params + 1e-8)
+            importance_accum = jax.tree_util.tree_map(
+                lambda x: x / (mean_abs + 1e-8), importance_accum
+            )
+
+        return importance_accum
+
+    return mas_importance
 
 
 class MAS(RegCLMethod):
@@ -43,131 +139,17 @@ class MAS(RegCLMethod):
 
     def compute_importance(self,
                            params: FrozenDict,
-                           env,
-                           net,
+                           reset_switch,
+                           step_switch,
+                           network,
                            env_idx: int,
-                           key: jax.random.PRNGKey,
-                           use_cnn: bool = True,
-                           max_episodes: int = 5,
-                           max_steps: int = 500,
-                           norm_importance: bool = False):
-        return compute_importance(params, env, net, env_idx, key, use_cnn, max_episodes, max_steps, norm_importance)
-
-
-def compute_importance(params,
-                       env,
-                       net,
-                       env_idx: int,
-                       rng,
-                       use_cnn: bool = True,
-                       max_episodes=5,
-                       max_steps=500,
-                       norm_importance=False) -> FrozenDict:
-    """
-    Perform rollouts and compute MAS importance by averaging the squared gradients of
-    the output’s L2 norm. That is, for each state x, we compute
-        L = 1/2 * ||f_\theta(x)||^2
-    then accumulate (dL/dθ)^2 across steps/states.
-    """
-
-    # Initialize importance accumulation to zeros
-    importance_init = jax.tree_util.tree_map(
-        lambda x: jnp.zeros_like(x),
-        params
-    )
-
-    def l2_norm_output(params, obs_dict):
-        # We'll sum over all agents the 1/2 * || f_\theta(obs) ||^2.
-        # You can pick what "output" means: maybe just the policy logits,
-        # or the value function, or both. Here, let's do policy logits + value.
-        total_loss = 0.0
-        for agent_id, obs_val in obs_dict.items():
-            pi, v, _ = net.apply(params, obs_val, env_idx=env_idx)
-            # Example: L2 norm of the concatenation of logits and the value.
-            # shape: (1, action_dim + 1)
-            # sum of squares / 2
-            logits_and_v = jnp.concatenate([pi.logits, jnp.expand_dims(v, -1)], axis=-1)
-            l2 = 0.5 * jnp.sum(logits_and_v ** 2)
-            total_loss += l2
-        return total_loss
-
-    def single_episode_importance(rng_ep, importance_accum):
-        rng, rng_reset = jax.random.split(rng_ep)
-        obs, state = env.reset(rng_reset)
-        done = False
-        step_count = 0
-
-        while (not done) and (step_count < max_steps):
-            # Prepare obs for all agents as a batch
-            flat_obs = {}
-            for agent_id, obs_v in obs.items():
-                expected_shape = env.observation_space().shape
-                if obs_v.ndim == len(expected_shape):
-                    obs_v = jnp.expand_dims(obs_v, axis=0)  # (1, ...)
-                if not use_cnn:
-                    obs_v = jnp.reshape(obs_v, (obs_v.shape[0], -1))  # make it (1, obs_dim)
-                flat_obs[agent_id] = obs_v
-
-            # Optional: step environment with some policy actions
-            # (not necessary for importance computation, but you'd do it for exploring states)
-
-            # Grad wrt L2 norm of the outputs
-            def mas_loss_fn(p):
-                return l2_norm_output(p, flat_obs)
-
-            grads = jax.grad(mas_loss_fn)(params)
-            grads_sqr = jax.tree_util.tree_map(lambda g: g ** 2, grads)
-            # Accumulate
-            importance_accum = jax.tree_util.tree_map(
-                lambda acc, gs: acc + gs, importance_accum, grads_sqr
-            )
-
-            # Step environment or break if done
-            rng, rng_step = jax.random.split(rng)
-            actions = {}
-            for i, agent_id in enumerate(env.agents):
-                pi, _v, _ = net.apply(params, flat_obs[agent_id], env_idx=env_idx)
-                actions[agent_id] = jnp.squeeze(pi.sample(seed=rng_step), axis=0)
-
-            next_obs, next_state, reward, done_info, _info = env.step(rng_step, state, actions)
-            done = done_info["__all__"]
-            obs, state = next_obs, next_state
-            step_count += 1
-
-        return importance_accum, step_count
-
-    # Main loop
-    importance_accum = importance_init
-    total_steps = 0
-    rngs = jax.random.split(rng, max_episodes)
-
-    for ep_i in range(max_episodes):
-        importance_accum, ep_steps = single_episode_importance(rngs[ep_i], importance_accum)
-        total_steps += ep_steps
-
-    # Average over total steps
-    if total_steps > 0:
-        importance_accum = jax.tree_util.tree_map(
-            lambda x: x / float(total_steps),
-            importance_accum
-        )
-
-    # Optional normalization
-    if norm_importance and total_steps > 0:
-        total_abs = jax.tree_util.tree_reduce(
-            lambda acc, x: acc + jnp.sum(jnp.abs(x)),
-            importance_accum,
-            0.0
-        )
-        param_count = jax.tree_util.tree_reduce(
-            lambda acc, x: acc + x.size,
-            importance_accum,
-            0
-        )
-        importance_mean = total_abs / (param_count + 1e-8)
-        importance_accum = jax.tree_util.tree_map(
-            lambda x: x / (importance_mean + 1e-8),
-            importance_accum
-        )
-
-    return importance_accum
+                           rng: jax.random.PRNGKey,
+                           agents,
+                           use_cnn: bool,
+                           max_episodes: int,
+                           max_steps: int,
+                           norm_importance: bool,
+                           stride: int) -> FrozenDict:
+        """ Fully-jitted MAS importance using reset/step switches. """
+        mas_imp = make_mas_importance_fn(reset_switch, step_switch, network, agents, use_cnn)
+        return mas_imp(params, jnp.int32(env_idx), rng, max_episodes, max_steps, norm_importance, stride)

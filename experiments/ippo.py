@@ -79,6 +79,7 @@ class Config:
 
     # Regularization method specific parameters
     importance_episodes: int = 5
+    importance_stride: int = 5  # compute and accumulate importance once every N steps
     importance_steps: int = 500
 
     # EWC specific parameters
@@ -874,9 +875,10 @@ def main():
             train_state = runner_state[0]
             cl_state = runner_state[6]
 
-            importance = cl.compute_importance(train_state.params, env, network, task_idx, rng, cfg.use_cnn,
-                                               cfg.importance_episodes, cfg.importance_steps,
-                                               cfg.normalize_importance)
+            importance = cl.compute_importance(train_state.params, reset_switch, step_switch, network, task_idx, rng,
+                agents, cfg.use_cnn, cfg.importance_episodes, cfg.importance_steps, cfg.normalize_importance,
+                cfg.importance_stride
+            )
 
             cl_state = cl.update_state(cl_state, train_state.params, importance)
 
