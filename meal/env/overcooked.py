@@ -111,8 +111,8 @@ class Overcooked(MultiAgentEnv):
 
         # Determine the width and height for this difficulty. We need to set it to the max across all layouts in the sequence so JAX doesn't complain
         params = get_difficulty_params(difficulty)
-        self.height = params["height_max"]
-        self.width = params["width_max"]
+        self.height = params["height"]
+        self.width = params["width"]
 
         # Observations given by 26 channels, most of which are boolean masks
         self.env_layers = 16  # Number of environment layers (static, dynamic, pot, soup, etc.)

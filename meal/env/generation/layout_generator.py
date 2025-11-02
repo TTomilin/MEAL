@@ -141,8 +141,8 @@ def remove_unreachable_items(grid: List[List[str]]) -> bool:
 def generate_random_layout(
         num_agents: int = 2,
         difficulty: str | None = None,
-        height_rng: Tuple[int, int] = (5, 10),
-        width_rng: Tuple[int, int] = (5, 10),
+        height: int = 10,
+        width: int = 10,
         wall_density: float = 0.15,
         seed: Optional[int] = None,
         max_attempts: int = 2000,
@@ -171,14 +171,11 @@ def generate_random_layout(
 
     if difficulty:
         params = get_difficulty_params(difficulty)
-        height_rng = params["height_rng"]
-        width_rng = params["width_rng"]
+        height = params["height"]
+        width = params["width"]
         wall_density = params["wall_density"]
 
     for attempt in range(1, max_attempts + 1):
-        height = rng.randint(*height_rng)
-        width = rng.randint(*width_rng)
-
         # Initialise grid with FLOOR
         grid = [[FLOOR for _ in range(width)] for _ in range(height)]
 
@@ -223,12 +220,12 @@ def generate_random_layout(
                 print(
                     f"[Attempt {attempt}] Removed unreachable interactive tiles and replaced unreachable floor tiles with walls.")
 
-            # 5. Ensure exactly 2 pots are in the layout -----------------------------
+            # 5. Ensure at least 2 pots are in the layout -----------------------------
             pot_count = sum(1 for row in grid for cell in row if cell == POT)
-            if pot_count < 2:
+            if pot_count < min_pots:
                 print(
                     f"[Attempt {attempt}] Only {pot_count} pots remain after removing unreachable items. Adding more pots.")
-                additional_pots_needed = 2 - pot_count
+                additional_pots_needed = min_pots - pot_count
                 if not place_tiles(grid, POT, additional_pots_needed, rng):
                     print(f"[Attempt {attempt}] Could not add more pots. Retrying...")
                     continue  # next attempt
@@ -306,10 +303,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser("Random Overcooked layout generator")
     parser.add_argument("--seed", type=int, default=None, help="RNG seed")
     parser.add_argument("--num_agents", type=int, default=2, help="number of agents in layout")
-    parser.add_argument("--height-min", type=int, default=10, help="minimum layout height")
-    parser.add_argument("--height-max", type=int, default=11, help="maximum layout height")
-    parser.add_argument("--width-min", type=int, default=10, help="minimum layout width")
-    parser.add_argument("--width-max", type=int, default=11, help="maximum layout width")
+    parser.add_argument("--height", type=int, default=10, help="layout height")
+    parser.add_argument("--width", type=int, default=10, help="layout width")
     parser.add_argument("--wall-density", type=float, default=0.35, help="fraction of unpassable internal cells")
     parser.add_argument("--difficulty", type=str, choices=["easy", "med", "medium", "hard"],
                         help="difficulty level (overrides height, width, and wall density)")
@@ -345,8 +340,8 @@ def main(argv=None):
 
         grid_str, layout = generate_random_layout(
             num_agents=args.num_agents,
-            height_rng=(args.height_min, args.height_max),
-            width_rng=(args.width_min, args.width_max),
+            height=args.height,
+            width=args.width,
             wall_density=args.wall_density,
             seed=env_seed,
         )

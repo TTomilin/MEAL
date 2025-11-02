@@ -104,18 +104,6 @@ class Config:
     random_reset: bool = False
     random_agent_start: bool = True
 
-    # Random layout generator parameters
-    height_min: int = 6  # minimum layout height
-    height_max: int = 7  # maximum layout height
-    width_min: int = 6  # minimum layout width
-    width_max: int = 7  # maximum layout width
-    wall_density: float = 0.15  # fraction of internal tiles that are untraversable
-
-    # Partial Observability parameters (default: easy difficulty)
-    view_ahead: int = 1
-    view_sides: int = 1
-    view_behind: int = 0
-
     # Agent restriction parameters
     complementary_restrictions: bool = False  # One agent can't pick up onions, other can't pick up plates
 
@@ -211,9 +199,6 @@ def main():
         random_reset=cfg.random_reset,
         layout_names=cfg.layouts,
         difficulty=cfg.difficulty,
-        height_rng=(cfg.height_min, cfg.height_max),
-        width_rng=(cfg.width_min, cfg.width_max),
-        wall_density=cfg.wall_density,
         repeat_sequence=cfg.repeat_sequence,
         random_agent_start=cfg.random_agent_start
     )
@@ -339,10 +324,8 @@ def main():
         returns the runner state and the metrics
         '''
 
-        # print(f"Training on environment: {env.task_id} - {env.layout_name}")
-
         # reset the learning rate and the optimizer
-        tx = optax.chain(
+        tx = optax.chain(  # TODO verify if we need to reinitialize the optimizer here
             optax.clip_by_global_norm(cfg.max_grad_norm),
             optax.adam(learning_rate=linear_schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
         )
@@ -352,7 +335,7 @@ def main():
         # Initialize and reset the environment
         rng, env_rng = jax.random.split(rng)
         reset_rng = jax.random.split(env_rng, cfg.num_envs)
-        obsv, env_state = jax.vmap(lambda k: reset_switch(k, env_idx))(reset_rng)
+        obsv, env_state = jax.vmap(lambda k: reset_switch(k, jnp.int32(env_idx)))(reset_rng)
 
         reward_shaping_horizon = cfg.steps_per_task / 2
         rew_shaping_anneal = optax.linear_schedule(
@@ -405,7 +388,7 @@ def main():
 
                 # simultaniously step all environments with the selected actions (parallelized over the number of environments with vmap)
                 obsv, env_state, reward, done, info = jax.vmap(
-                    lambda k, s, a: step_switch(k, s, a, env_idx)
+                    lambda k, s, a: step_switch(k, s, a, jnp.int32(env_idx))
                 )(rng_step, env_state, env_act)
 
                 current_timestep = update_step * cfg.num_steps * cfg.num_envs
@@ -896,7 +879,8 @@ def main():
 
         visualizer = None
         for task_idx, (rng, env) in enumerate(zip(env_rngs, envs)):
-            # --- Train on environment i using the *current* ewc_state ---
+            # --- Train on environment [task_idx] using the *current* ewc_state ---
+            print(f"Training on environment: {task_idx} - {env.layout_name}")
             runner_state, metrics = train_on_environment(rng, train_state, cl_state, task_idx)
             train_state = runner_state[0]
             cl_state = runner_state[6]
@@ -987,11 +971,6 @@ def main():
                     "activation": config.activation,
                     "strategy": config.strategy,
                     "seed": config.seed,
-                    "height_min": config.height_min,
-                    "height_max": config.height_max,
-                    "width_min": config.width_min,
-                    "width_max": config.width_max,
-                    "wall_density": config.wall_density
                 }
                 # Convert any FrozenDict objects in the config
                 config_dict = convert_frozen_dict(config_dict)
