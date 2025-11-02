@@ -105,7 +105,6 @@ def evaluate_model(envs, cfg, num_agents, agents, train_state, key):
     all_avg_rewards = []
     all_avg_soups = []
 
-    # Use the already created environments
     for eval_idx, env in enumerate(envs):
         # Run k episodes
         all_rewards, all_soups = jax.vmap(

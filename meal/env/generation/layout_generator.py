@@ -220,12 +220,12 @@ def generate_layout(
                 print(
                     f"[Attempt {attempt}] Removed unreachable interactive tiles and replaced unreachable floor tiles with walls.")
 
-            # 5. Ensure at least 2 pots are in the layout -----------------------------
+            # 5. Ensure enough pots are in the layout -----------------------------
             pot_count = sum(1 for row in grid for cell in row if cell == POT)
-            if pot_count < min_pots:
+            if pot_count < num_pots:
                 print(
                     f"[Attempt {attempt}] Only {pot_count} pots remain after removing unreachable items. Adding more pots.")
-                additional_pots_needed = min_pots - pot_count
+                additional_pots_needed = num_pots - pot_count
                 if not place_tiles(grid, POT, additional_pots_needed, rng):
                     print(f"[Attempt {attempt}] Could not add more pots. Retrying...")
                     continue  # next attempt

@@ -105,8 +105,7 @@ class Overcooked(MultiAgentEnv):
             self.layout_name = names[task_id]
         # 3) otherwise: generate by difficulty
         else:
-            grid, self.layout = generate_layout(num_agents=num_agents, max_pots=max_pots, max_stations=max_goals,
-                                                difficulty=difficulty, **env_kwargs)
+            grid, self.layout = generate_layout(num_agents=num_agents, difficulty=difficulty, **env_kwargs)
             self.layout_name = f"{difficulty}_gen_{task_id}"
 
         # Determine the width and height for this difficulty. We need to set it to the max across all layouts in the sequence so JAX doesn't complain
