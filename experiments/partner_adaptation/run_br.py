@@ -18,7 +18,7 @@ from gym import make
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.model.mlp import ActorCritic as MLPActorCritic
 # Import utility functions from baselines
-from experiments.utils import record_gif_of_episode
+from experiments.utils import rollout_for_video
 # Import continual learning methods
 from experiments.continual.agem import AGEM, init_agem_memory
 from experiments.continual.ewc import EWC
@@ -374,8 +374,8 @@ def run_training():
                     params=ego_params,
                     tx=optax.adam(1e-4)  # dummy optimizer
                 )
-                states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=i,
-                                               max_steps=config.gif_len)
+                states = rollout_for_video(config, temp_train_state, env, ego_policy.network, env_idx=i,
+                                           max_steps=config.gif_len)
                 partner_name = f"BRDiv_Partner_{i}"
                 visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=partner_name,
                                    exp_dir=f"gifs/{run.name}")
@@ -397,8 +397,8 @@ def run_training():
             if hasattr(config, 'record_gif') and config.record_gif:
                 temp_train_state = TrainState.create(
                     apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
-                states = record_gif_of_episode(config, temp_train_state, env, ego_policy.network, env_idx=env_id_idx,
-                                               max_steps=config.gif_len)
+                states = rollout_for_video(config, temp_train_state, env, ego_policy.network, env_idx=env_id_idx,
+                                           max_steps=config.gif_len)
                 visualizer.animate(states, agent_view_size=5, task_idx=env_id_idx, task_name=partner_name,
                                    exp_dir=f"gifs/{run.name}")
     else:

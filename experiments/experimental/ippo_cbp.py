@@ -840,7 +840,7 @@ def main():
 
             # Generate & log a GIF after finishing task i
             env_name = config.layout_name[i]
-            states = record_gif_of_episode(config, train_state, env, network, env_idx=i, max_steps=config.gif_len)
+            states = rollout_for_video(config, train_state, env, network, env_idx=i, max_steps=config.gif_len)
             visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir)
 
             if config.evaluation:

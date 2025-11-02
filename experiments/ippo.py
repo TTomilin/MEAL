@@ -113,8 +113,8 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     evaluation: bool = True
     eval_num_episodes: int = 5
-    record_gif: bool = True
-    gif_len: int = 250
+    record_video: bool = False
+    video_length: int = 250
     log_interval: int = 5
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -880,18 +880,18 @@ def main():
 
             cl_state = cl.update_state(cl_state, train_state.params, importance)
 
-            if cfg.record_gif:
+            if cfg.record_video:
                 if visualizer is None:
                     visualizer = create_visualizer(num_agents, cfg.env_name)
-                # Generate a GIF after finishing training on a task
+                # Record a video after finishing training on a task
                 env_name = env.layout_name
                 start_time = time.time()
-                states = record_gif_of_episode(cfg, train_state, env, network, task_idx, cfg.gif_len)
-                print(f"Rollout for GIF took {time.time() - start_time:.2f} seconds.")
+                states = rollout_for_video(cfg, train_state, env, network, task_idx, cfg.video_length)
+                print(f"Rollout for video took {time.time() - start_time:.2f} seconds.")
                 start_time = time.time()
-                file_path = f"{exp_dir}/task_{task_idx}_{env_name}.gif"
+                file_path = f"{exp_dir}/task_{task_idx}_{env_name}.mp4"
                 visualizer.animate(states, out_path=file_path, task_idx=task_idx, env=env)
-                print(f"Animating GIF took {time.time() - start_time:.2f} seconds.")
+                print(f"Animating video took {time.time() - start_time:.2f} seconds.")
 
             # save the model
             repo_root = Path(__file__).resolve().parent.parent

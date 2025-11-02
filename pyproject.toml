@@ -43,6 +43,7 @@ viz = [
     "seaborn",
     "ipython",
     "ipywidgets",
+    "imageio[ffmpeg]",
 ]
 utils = [
     "optax",

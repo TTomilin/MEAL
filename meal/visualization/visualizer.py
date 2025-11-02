@@ -6,7 +6,7 @@ from typing import Sequence, Optional, List
 import numpy as np
 import pygame
 import wandb
-from PIL import Image
+import imageio.v3 as iio
 
 from meal.visualization.adapters import to_drawable_state, char_grid_to_drawable_state
 from meal.visualization.bridge_stateviz import render_drawable_with_stateviz
@@ -37,7 +37,8 @@ class OvercookedVisualizer:
 
     def _drawable_state_to_frame(self, drawable_state: DrawableState) -> np.ndarray:
         surface = render_drawable_with_stateviz(drawable_state, self.state_visualizer)
-        frame = pygame.surfarray.array3d(surface).transpose(1, 0, 2)  # (H, W, 3)
+        frame = pygame.surfarray.pixels3d(surface)
+        frame = np.ascontiguousarray(frame.transpose(1, 0, 2))  # (H, W, 3)
         return frame
 
     def _render_drawable_state(self, drawable_state: DrawableState, show: bool = False) -> np.ndarray:
@@ -73,46 +74,41 @@ class OvercookedVisualizer:
         drawable_state = char_grid_to_drawable_state(char_grid)
         return self._render_drawable_state(drawable_state, show)
 
-    # ---------- sequence / GIF ----------
+    # ---------- sequence ----------
     def animate(self, state_seq: Sequence[object], out_path: str, task_idx: int = 0, fps: int = 10, pad_to_max: bool = False, env = None) -> str:
         """
-        Render a sequence of env states to an animated GIF (palette-safe).
+        Render a sequence of env states to video.
         """
 
         # 1) convert
-        dseq = [
+        state_seq = [
             to_drawable_state(s, pot_full=self.pot_full, pot_empty=self.pot_empty, num_agents=self.num_agents)
             for s in state_seq
         ]
 
         # 2) optional pad all layouts to the largest WxH
         if pad_to_max:
-            maxH = max(ds.H for ds in dseq)
-            maxW = max(ds.W for ds in dseq)
-            dseq = [ds.pad_to(maxH, maxW) for ds in dseq]
+            maxH = max(drawable_state.H for drawable_state in state_seq)
+            maxW = max(ds.W for ds in state_seq)
+            state_seq = [ds.pad_to(maxH, maxW) for ds in state_seq]
 
-        # 3) paint frames
+        # 3) paint the frames
         frames = []
-        for ds in dseq:
-            frame = self._drawable_state_to_frame(ds)
-            frames.append(frame.copy())  # copy to detach from pygame surface buffer
+        for drawable_state in state_seq:
+            frames.append(self._drawable_state_to_frame(drawable_state))
+        frames = np.stack(frames, axis=0)  # shape (T, H, W, 3)
 
-        # 4) write the GIF
+        # 4) record the video
         os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-        pil_frames = [Image.fromarray(f, mode="RGB") for f in frames]
-        duration_ms = int(1000 / fps)
-
-        pil_frames[0].save(
+        iio.imwrite(
             out_path,
-            save_all=True,
-            append_images=pil_frames[1:],
-            optimize=False,
-            duration=duration_ms,
-            loop=0,
-            disposal=2,
+            frames,
+            fps=fps,
+            codec="h264",
         )
 
+        # 5) log to wandb
         if wandb.run is not None:
-            wandb.log({f"task_{task_idx}": wandb.Video(out_path, format="gif")})
+            wandb.log({f"task_{task_idx}": wandb.Video(out_path, format="mp4")})
 
         return out_path

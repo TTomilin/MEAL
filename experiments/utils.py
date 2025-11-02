@@ -186,11 +186,9 @@ def initialize_logging_setup(config, run_name, exp_dir):
     return writer
 
 
-def record_gif_of_episode(config, train_state, env, network, env_idx=0, max_steps=300):
+def rollout_for_video(config, train_state, env, network, env_idx=0, max_steps=300):
     """
-    Records a GIF of an episode by running the trained network on the environment.
-
-    This is the centralized version from IPPO_CL.py that works reliably across all baselines.
+    Records a rollout of an episode by running the trained network on the environment.
 
     Args:
         config: Configuration object containing use_cnn flag
