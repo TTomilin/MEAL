@@ -132,11 +132,11 @@ def make_eval_fn(reset_switch, step_switch, network, agents, num_envs: int, num_
         obs, env_state = jax.vmap(lambda k: reset_switch(k, jnp.int32(env_idx)))(reset_rng)
 
         # Accumulators across the horizon per parallel env
-        agent_ret = {a: jnp.zeros((num_envs,), jnp.float32) for a in agents}
-        soups_env = jnp.zeros((num_envs,), jnp.float32)
+        total_rewards = jnp.zeros((num_envs,), jnp.float32)
+        total_soups = jnp.zeros((num_envs,), jnp.float32)
 
         def one_step(carry, _):
-            env_state, obs, agent_ret, soups, rng = carry
+            env_state, obs, rewards, soups, rng = carry
 
             # policy forward (greedy) on batched obs
             obs_batch = batchify(obs, agents, len(agents) * num_envs, not use_cnn)  # (num_actors, obs_dim)
@@ -155,20 +155,20 @@ def make_eval_fn(reset_switch, step_switch, network, agents, num_envs: int, num_
             )(step_rng, env_state, env_act)
 
             # accumulate per-agent rewards and soups
-            agent_ret = {a: agent_ret[a] + reward[a] for a in agents}
-            soups = soups + sum(info["soups"][a] for a in agents)
+            rewards += sum(reward[a] for a in agents)
+            soups += sum(info["soups"][a] for a in agents)
 
-            return (env_state2, obs2, agent_ret, soups, rng), None
+            return (env_state2, obs2, rewards, soups, rng), None
 
-        (env_state, obs, agent_ret, soups_env, rng), _ = jax.lax.scan(
+        (env_state, obs, total_rewards, total_soups, rng), _ = jax.lax.scan(
             one_step,
-            (env_state, obs, agent_ret, soups_env, rng),
+            (env_state, obs, total_rewards, total_soups, rng),
             xs=None,
             length=num_steps
         )
 
-        avg_rewards = {a: agent_ret[a].mean() for a in agents}
-        avg_soups = soups_env.mean()
+        avg_rewards = total_rewards.mean()
+        avg_soups = total_soups.mean()
         return avg_rewards, avg_soups
 
     return evaluate_env
