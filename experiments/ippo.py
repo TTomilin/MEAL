@@ -224,7 +224,7 @@ def main():
     exp_dir = os.path.join("runs", run_name)
 
     # Initialize WandB
-    if use_wandb:
+    if cfg.use_wandb:
         wandb_tags = cfg.tags if cfg.tags is not None else []
         wandb.login(key=os.environ.get("WANDB_API_KEY"))
         wandb.init(
