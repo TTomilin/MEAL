@@ -83,9 +83,9 @@ def copy_params(params):
 
 def add_eval_metrics(avg_rewards, avg_soups, layout_names, max_soup_dict, metrics):
     for i, layout_name in enumerate(layout_names):
-        metrics[f"Evaluation/Returns/{i}__{layout_name}"] = avg_rewards[i]
-        metrics[f"Evaluation/Soup/{i}__{layout_name}"] = avg_soups[i]
-        metrics[f"Evaluation/Soup_Scaled/{i}__{layout_name}"] = avg_soups[i] / max_soup_dict[layout_name]
+        metrics[f"Evaluation/Returns/{i}_{layout_name}"] = avg_rewards[i]
+        metrics[f"Evaluation/Soup/{i}_{layout_name}"] = avg_soups[i]
+        metrics[f"Evaluation/Soup_Scaled/{i}_{layout_name}"] = avg_soups[i] / max_soup_dict[i]
     return metrics
 
 

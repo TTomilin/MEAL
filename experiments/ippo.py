@@ -19,7 +19,7 @@ from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
-from experiments.evaluation import evaluate_model
+from experiments.evaluation import evaluate_all_envs, make_eval_fn
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.model.mlp import ActorCritic as MLPActorCritic
 from experiments.utils import *
@@ -206,7 +206,7 @@ def main():
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
     network = "cnn" if cfg.use_cnn else "mlp"
-    run_name = f'{cfg.alg_name}_{cfg.cl_method}_{difficulty}_{cfg.num_agents}agents_{network}_seq{len(envs)}_{strategy}_seed_{seed}_{timestamp}'
+    run_name = f'{cfg.alg_name}_{cfg.cl_method}_{difficulty}_{cfg.num_agents}agents_{network}_seq{seq_length}_{strategy}_seed_{seed}_{timestamp}'
     exp_dir = os.path.join("runs", run_name)
 
     # Initialize WandB
@@ -252,8 +252,6 @@ def main():
         pot_counts.append(env.layout['pot_idx'].shape[0])
 
     max_soup_vals = jnp.asarray(max_soup_vals, dtype=jnp.float32)
-    max_goals = max(goal_counts)
-    max_pots = max(pot_counts)
 
     # set extra config parameters based on the environment
     temp_env = envs[0]
@@ -274,7 +272,7 @@ def main():
 
     ac_cls = CNNActorCritic if cfg.use_cnn else MLPActorCritic
 
-    network = ac_cls(temp_env.action_space().n, cfg.activation, len(envs), cfg.use_multihead,
+    network = ac_cls(temp_env.action_space().n, cfg.activation, seq_length, cfg.use_multihead,
                      cfg.shared_backbone, cfg.big_network, cfg.use_task_id, cfg.regularize_heads,
                      cfg.use_layer_norm)
 
@@ -316,6 +314,8 @@ def main():
 
     def step_switch(key, state, actions, task_idx):
         return jax.lax.switch(task_idx, step_fns, key, state, actions)
+
+    evaluate_env = make_eval_fn(reset_switch, step_switch, network, agents, seq_length, cfg.num_steps, cfg.use_cnn)
 
     @partial(jax.jit)
     def train_on_environment(rng, train_state, cl_state, env_idx):
@@ -814,13 +814,14 @@ def main():
 
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
-                        avg_rewards, avg_soups = evaluate_model(envs, cfg, num_agents, agents, train_state_eval,
-                                                                eval_rng)
+                        avg_rewards, avg_soups = evaluate_all_envs(
+                            eval_rng, train_state_eval.params, seq_length, evaluate_env
+                        )
                         metrics = add_eval_metrics(avg_rewards, avg_soups, env_names, max_soup_vals, metrics)
 
                     def callback(args):
                         metrics, update_step, env_counter = args
-                        real_step = (int(env_counter) - 1) * cfg.num_updates + int(update_step)
+                        real_step = (env_counter - 1) * cfg.num_updates + update_step
                         for key, value in metrics.items():
                             writer.add_scalar(key, value, real_step)
 
@@ -864,7 +865,7 @@ def main():
         returns the runner state and the metrics
         '''
         # split the random number generator for training on the environments
-        rng, *env_rngs = jax.random.split(rng, len(envs) + 1)
+        rng, *env_rngs = jax.random.split(rng, seq_length + 1)
 
         visualizer = None
         for task_idx, (rng, env) in enumerate(zip(env_rngs, envs)):
@@ -950,7 +951,7 @@ def main():
             if config is not None:
                 config_dict = {
                     "use_cnn": config.use_cnn,
-                    "num_tasks": len(envs),
+                    "num_tasks": seq_length,
                     "use_multihead": config.use_multihead,
                     "shared_backbone": config.shared_backbone,
                     "big_network": config.big_network,
@@ -985,7 +986,7 @@ def main():
         if not cfg.use_cnn:
             obs_dim = (np.prod(obs_dim),)
         # Initialize memory buffer
-        cl_state = init_agem_memory(cfg.agem_memory_size, obs_dim, max_tasks=len(envs))
+        cl_state = init_agem_memory(cfg.agem_memory_size, obs_dim, max_tasks=seq_length)
 
     # apply the loop_over_envs function to the environments
     loop_over_envs(train_rng, train_state, cl_state, envs)
