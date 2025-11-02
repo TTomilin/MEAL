@@ -325,12 +325,12 @@ def main():
         '''
 
         # reset the learning rate and the optimizer
-        tx = optax.chain(  # TODO verify if we need to reinitialize the optimizer here
-            optax.clip_by_global_norm(cfg.max_grad_norm),
-            optax.adam(learning_rate=linear_schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
-        )
-        new_optimizer = tx.init(train_state.params)
-        train_state = train_state.replace(tx=tx, opt_state=new_optimizer)
+        # tx = optax.chain(  # TODO verify if we need to reinitialize the optimizer here
+        #     optax.clip_by_global_norm(cfg.max_grad_norm),
+        #     optax.adam(learning_rate=linear_schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
+        # )
+        # new_optimizer = train_state.tx.init(train_state.params)
+        # train_state = train_state.replace(tx=tx, opt_state=new_optimizer)
 
         # Initialize and reset the environment
         rng, env_rng = jax.random.split(rng)
