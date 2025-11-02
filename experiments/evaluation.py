@@ -175,11 +175,8 @@ def make_eval_fn(reset_switch, step_switch, network, agents, num_envs: int, num_
 
 
 def evaluate_all_envs(rng, params, num_envs, evaluate_env):
-    avg_rewards_list = []
-    avg_soups_list = []
-    for env_idx in range(num_envs):
-        rng, env_rng = jax.random.split(rng)
-        avg_rewards, avg_soups = evaluate_env(env_rng, params, jnp.int32(env_idx))
-        avg_rewards_list.append(avg_rewards)
-        avg_soups_list.append(avg_soups)
-    return avg_rewards_list, avg_soups_list
+    env_indices = jnp.arange(num_envs, dtype=jnp.int32)
+    rngs = jax.random.split(rng, num_envs)
+    eval_vmapped = jax.vmap(evaluate_env, in_axes=(0, None, 0))
+    avg_rewards, avg_soups = eval_vmapped(rngs, params, env_indices)
+    return avg_rewards, avg_soups
