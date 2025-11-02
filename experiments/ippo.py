@@ -1,4 +1,5 @@
 import json
+import time
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -883,11 +884,15 @@ def main():
             if cfg.record_gif:
                 if visualizer is None:
                     visualizer = create_visualizer(num_agents, cfg.env_name)
-                # Generate & log a GIF after finishing task i
+                # Generate a GIF after finishing training on a task
                 env_name = env.layout_name
+                start_time = time.time()
                 states = record_gif_of_episode(cfg, train_state, env, network, task_idx, cfg.gif_len)
+                print(f"Rollout for GIF took {time.time() - start_time:.2f} seconds.")
+                start_time = time.time()
                 file_path = f"{exp_dir}/task_{task_idx}_{env_name}.gif"
                 visualizer.animate(states, out_path=file_path, task_idx=task_idx, env=env)
+                print(f"Animating GIF took {time.time() - start_time:.2f} seconds.")
 
             # save the model
             repo_root = Path(__file__).resolve().parent.parent
