@@ -810,12 +810,11 @@ def main():
 
             def evaluate_and_log(rng, update_step):
                 rng, eval_rng = jax.random.split(rng)
-                train_state_eval = jax.tree_util.tree_map(lambda x: x.copy(), train_state)
 
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
                         avg_rewards, avg_soups = evaluate_all_envs(
-                            eval_rng, train_state_eval.params, seq_length, evaluate_env
+                            eval_rng, train_state.params, seq_length, evaluate_env
                         )
                         metrics = add_eval_metrics(avg_rewards, avg_soups, env_names, max_soup_vals, metrics)
 
