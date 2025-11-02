@@ -47,7 +47,13 @@ def make_mas_importance_fn(reset_switch, step_switch, network, agents, use_cnn: 
                 l2 = 0.5 * jnp.sum(vec * vec) / vec.shape[0]  # mean over agents
 
                 # grads of l2 wrt params
-                grads = jax.grad(lambda p: l2)(params)
+                def l2_norm_loss(p):
+                    pi, v, _ = network.apply(p, obs_b, env_idx=env_idx)
+                    vec = jnp.concatenate([pi.logits, v.reshape(num_agents, 1)], axis=-1)
+                    return 0.5 * jnp.sum(vec * vec) / vec.shape[0]
+
+                grads = jax.grad(l2_norm_loss)(params)
+
                 # only accumulate if not done; optionally subsample by stride
                 alpha = (t % stride == 0).astype(jnp.float32)
                 factor = (1.0 - done) * alpha
