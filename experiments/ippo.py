@@ -1,7 +1,6 @@
 import json
 import time
 from dataclasses import dataclass, field
-from functools import partial
 from pathlib import Path
 from typing import Sequence, Optional, List, Literal
 
@@ -318,7 +317,7 @@ def main():
 
     evaluate_env = make_eval_fn(reset_switch, step_switch, network, agents, seq_length, cfg.num_steps, cfg.use_cnn)
 
-    @partial(jax.jit)
+    @jax.jit
     def train_on_environment(rng, train_state, cl_state, env_idx):
         '''
         Trains the network using IPPO
