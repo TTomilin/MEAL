@@ -75,6 +75,7 @@ class Config:
     normalize_importance: bool = False
     regularize_critic: bool = False
     regularize_heads: bool = False
+    reset_optimizer: bool = True
 
     # Regularization method specific parameters
     importance_episodes: int = 5
@@ -324,13 +325,10 @@ def main():
         returns the runner state and the metrics
         '''
 
-        # reset the learning rate and the optimizer
-        # tx = optax.chain(  # TODO verify if we need to reinitialize the optimizer here
-        #     optax.clip_by_global_norm(cfg.max_grad_norm),
-        #     optax.adam(learning_rate=linear_schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
-        # )
-        # new_optimizer = train_state.tx.init(train_state.params)
-        # train_state = train_state.replace(tx=tx, opt_state=new_optimizer)
+        # reset the optimizer and learning rate
+        if cfg.reset_optimizer:
+            new_optimizer = train_state.tx.init(train_state.params)
+            train_state = train_state.replace(tx=tx, opt_state=new_optimizer)
 
         # Initialize and reset the environment
         rng, env_rng = jax.random.split(rng)
@@ -789,15 +787,6 @@ def main():
                 soups_te = soups_tea[:, :, ai].sum(axis=0)  # (E,)
                 per_agent = jnp.where(mask, soups_te / jnp.maximum(episodes_per_env, 1), 0.0)
                 metrics[f"Soup/{agent}"] = per_agent.sum() / num_finished_envs
-
-            # ------- RATE-based estimate (if no finished episodes) -------
-            # per-episode estimate: scale soups-per-window by (episode length / window steps)
-            episode_len = env.max_steps
-            per_ep_est_env = soups_per_env * (episode_len / T)  # (E,)
-
-            metrics["Soup/total_unf"] = per_ep_est_env.mean()
-            metrics["Soup/scaled_unf"] = jnp.where(max_per_episode > 0,
-                                                   (per_ep_est_env / max_per_episode).mean(), 0.0)
 
             metrics.pop('soups', None)
 
