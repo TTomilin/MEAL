@@ -34,7 +34,7 @@ import numpy as np
 import wandb
 from wandb.apis.public import Run
 
-from experiments.results.download.common import cli, want, experiment_suffix
+from experiments.results.download.common import cli, want, experiment_suffix, unwrap_wandb_config
 
 # ---------------------------------------------------------------------------
 # CONSTANTS
@@ -81,7 +81,10 @@ def discover_eval_keys(run: Run, include_dormant_ratio: bool = False) -> List[st
 def fetch_full_series(run: Run, key: str) -> List[float]:
     """Fetch every recorded value for a single key via scan_history."""
     vals: List[float] = []
-    page_size = 1e6 if run.config['seq_length'] > 20 else 1e4
+    cfg = run.config
+    if not isinstance(cfg, dict):
+        cfg = unwrap_wandb_config(json.loads(cfg))
+    page_size = 1e6 if cfg['seq_length'] > 20 else 1e4
     for row in run.scan_history(keys=[key], page_size=page_size):
         v = row.get(key)
         if v is not None:
@@ -215,6 +218,9 @@ def main() -> None:
             continue
 
         cfg = run.config
+        if not isinstance(cfg, dict):
+            cfg = unwrap_wandb_config(json.loads(cfg))
+
         algo = cfg.get("alg_name")
         cl_method = cfg.get("cl_method", "UNKNOWN_CL")
 

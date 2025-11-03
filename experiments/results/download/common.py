@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 
 from wandb.apis.public import Run
 
@@ -52,6 +53,12 @@ def cli() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 def want(run: Run, args: argparse.Namespace) -> bool:
     cfg = run.config
+    if not isinstance(cfg, dict):
+        try:
+            cfg = unwrap_wandb_config(json.loads(cfg))
+        except Exception as e:
+            print(f"Could not parse config for run {run.name}: {e}")
+            return False
     if any(tok in run.name for tok in args.include_runs): return True
     if run.state != "finished": return False
     if args.seeds and cfg.get("seed") not in args.seeds: return False
@@ -90,6 +97,19 @@ def want(run: Run, args: argparse.Namespace) -> bool:
         if tags.intersection(FORBIDDEN_TAGS) and not tags.intersection(args.wandb_tags):
             return False
     return True
+
+
+def unwrap_wandb_config(cfg_like):
+    if isinstance(cfg_like, dict):
+        # single-level wandb wrapper
+        if set(cfg_like.keys()) == {"value"}:
+            return unwrap_wandb_config(cfg_like["value"])
+        # otherwise recurse into all dict values
+        return {k: unwrap_wandb_config(v) for k, v in cfg_like.items()}
+    elif isinstance(cfg_like, list):
+        return [unwrap_wandb_config(v) for v in cfg_like]
+    else:
+        return cfg_like
 
 
 def experiment_suffix(cfg: dict) -> str:
