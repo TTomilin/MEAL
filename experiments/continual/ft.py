@@ -11,21 +11,11 @@ class FT(RegCLMethod):
     name = "ft"
 
     # ─── state update: nothing to store ─────────────────────────────────────
-    def update_state(
-            self,
-            cl_state: CLState,
-            new_params: FrozenDict,
-            new_importance: FrozenDict
-    ) -> CLState:
+    def update_state(self, cl_state: CLState, new_params: FrozenDict, new_importance: FrozenDict) -> CLState:
         return cl_state  # no change
 
     # ─── penalty: always zero ───────────────────────────────────────────────
-    def penalty(
-            self,
-            params: FrozenDict,
-            cl_state: CLState,
-            coef: float
-    ):
+    def penalty(self, params: FrozenDict, cl_state: CLState, coef: float):
         return jnp.array(0.0, dtype=jnp.float32)
 
     # ── importance function factory (to satisfy unified interface) ───────────
