@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import distrax
 from flax.core.frozen_dict import FrozenDict
 
-from experiments.utils import build_reg_weights, _prep_obs
+from experiments.utils import build_reg_weights, _prep_obs, batchify, unbatchify
 from experiments.continual.base import RegCLMethod, CLState
 
 
@@ -65,164 +65,72 @@ class EWC(RegCLMethod):
                                           cl_state.mask, 0.) + 1e-8
         return 0.5 * coef * tot / denom
 
-    def compute_importance(self,
-                           params: FrozenDict,
-                           env,
-                           net,
-                           env_idx: int,
-                           key: jax.random.PRNGKey,
-                           use_cnn: bool = True,
-                           max_episodes: int = 5,
-                           max_steps: int = 500,
-                           normalize_importance: bool = False):
-        return compute_fisher(params, env, net, env_idx, key, use_cnn=use_cnn, max_episodes=max_episodes,
-                              max_steps=max_steps, normalize_importance=normalize_importance)
+    def make_importance_fn(self, reset_switch, step_switch, network, agents, use_cnn: bool, max_episodes: int,
+                           max_steps: int, norm_importance: bool, stride: int):
+        """
+        Returns a jitted function:
+            fisher(params, env_idx, rng) -> FrozenDict
+        that computes diagonal Fisher using only reset/step switches and the network.
+        """
+        num_agents = len(agents)
 
+        @jax.jit
+        def fisher(params: FrozenDict, env_idx: jnp.int32, rng: jax.random.PRNGKey) -> FrozenDict:
 
-@functools.partial(
-    jax.jit,
-    static_argnums=(1, 2, 3),
-    static_argnames=(
-            "use_cnn",
-            "max_episodes",
-            "max_steps",
-            "normalize_importance",
-    ),
-)
-def compute_fisher(params: FrozenDict,
-                   env,
-                   net,
-                   env_idx: int,
-                   key: jax.random.PRNGKey,
-                   *,
-                   use_cnn: bool = True,
-                   max_episodes: int = 5,
-                   max_steps: int = 500,
-                   normalize_importance: bool = False):
-    # -----------------------------------------------------------------
-    # grad(log π) for a batch of agents, vectorised
-    # -----------------------------------------------------------------
-    def _logp(p, obs, act):
-        # Ensure obs has the right shape for the network
-        # If obs is from _prep_obs, it has shape (num_agents, obs_dim)
-        # We need to take the first agent's observation and ensure it has batch dim 1
-        if obs.ndim > 1 and obs.shape[0] > 1:
-            obs = obs[0:1]  # Take first agent, keep batch dimension
-        else:
-            obs = jnp.expand_dims(obs, 0) if obs.ndim == 1 else obs
-        net_output = net.apply(p, obs, env_idx=env_idx)  # (1, …)
+            fisher0 = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), params)
 
-        # Handle both policy networks (return distributions) and Q-networks (return Q-values)
-        if isinstance(net_output, tuple):
-            # Policy network case: returns (dists, values, dormant_ratio)
-            dists, _, _ = net_output
-        else:
-            # Q-network case: returns Q-values, convert to Categorical distribution
-            q_values = net_output  # (A, num_actions)
-            dists = distrax.Categorical(logits=q_values)
+            def one_episode(carry, _):
+                rng, acc = carry
+                rng, r = jax.random.split(rng)
+                obs, state = reset_switch(r, env_idx)
 
-        return jnp.sum(dists.log_prob(act))  # scalar
+                def one_step(carry, _):
+                    obs, state, acc, rng = carry
+                    rng, s1, s2 = jax.random.split(rng, 3)
 
-    batched_grad = jax.vmap(jax.grad(_logp), in_axes=(None, 0, 0))  # map over steps
+                    # batchify to (A, obs_dim) or (A, H, W, C)
+                    obs_b = batchify(obs, agents, num_agents, not use_cnn)
 
-    # -----------------------------------------------------------------
-    # one environment step inside lax.scan
-    # -----------------------------------------------------------------
-    def step_fn(carry, _):
-        rng, env_state, obs, fisher_acc = carry
-        rng, key_sample, key_step = jax.random.split(rng, 3)
+                    # forward once
+                    pi, _, _ = network.apply(params, obs_b, env_idx=env_idx)
+                    acts = jax.lax.stop_gradient(pi.sample(seed=s1))  # (A,)
 
-        obs_batch = _prep_obs(obs, use_cnn=use_cnn)
+                    # grad log π(a|obs) wrt params
+                    def logp(p):
+                        pi_p, _, _ = network.apply(p, obs_b, env_idx=env_idx)
+                        return jnp.sum(pi_p.log_prob(acts))
 
-        # Ensure obs_batch has the right shape for the network
-        # If obs_batch is from _prep_obs, it has shape (num_agents, obs_dim)
-        # We need to take the first agent's observation and ensure it has batch dim 1
-        if obs_batch.ndim > 1 and obs_batch.shape[0] > 1:
-            obs_batch = obs_batch[0:1]  # Take first agent, keep batch dimension
+                    g = jax.grad(logp)(params)
+                    g2 = jax.tree_util.tree_map(lambda x: x * x, g)
+                    acc = jax.tree_util.tree_map(jnp.add, acc, g2)
 
-        # sample & log-prob in one forward pass (batched)
-        net_output = net.apply(params, obs_batch, env_idx=env_idx)
+                    # env step with these actions
+                    env_act = unbatchify(acts, agents, 1, num_agents)
+                    env_act = {k: v.flatten() for k, v in env_act.items()}
+                    obs2, state2, _r, _d, _info = step_switch(s2, state, env_act, env_idx)
 
-        # Handle both policy networks (return distributions) and Q-networks (return Q-values)
-        if isinstance(net_output, tuple):
-            # Policy network case: returns (dists, values, dormant_ratio)
-            dists, _, _ = net_output
-            actions = dists.sample(seed=key_sample)  # (A,)
-        else:
-            # Q-network case: returns Q-values, convert to Categorical distribution
-            q_values = net_output  # (A, num_actions)
-            dists = distrax.Categorical(logits=q_values)
-            actions = dists.sample(seed=key_sample)  # (A,)
+                    return (obs2, state2, acc, rng), None
 
-        actions = jax.lax.stop_gradient(actions)  # no grad through sample
+                (obs, state, acc, rng), _ = jax.lax.scan(
+                    one_step, (obs, state, acc, rng), xs=None, length=max_steps
+                )
+                return (rng, acc), None
 
-        # grad(log π)²
-        # Since we're only using the first agent, we need to handle the gradient computation differently
-        # Create a single observation for gradient computation
-        single_obs = obs_batch[0] if obs_batch.shape[0] > 0 else obs_batch
-        single_action = actions[0] if actions.shape[0] > 0 else actions
+            (rng, fisher_acc), _ = jax.lax.scan(
+                one_episode, (rng, fisher0), xs=None, length=max_episodes
+            )
 
-        # Compute gradient for single observation/action pair
-        g_single = jax.grad(_logp)(params, single_obs, single_action)
-        g2 = jax.tree_util.tree_map(lambda x: x ** 2, g_single)
+            # average over steps and episodes
+            fisher_acc = jax.tree_util.tree_map(
+                lambda x: x / (max_episodes * max_steps + 1e-8), fisher_acc
+            )
 
-        fisher_acc = jax.tree_util.tree_map(jnp.add, fisher_acc, g2)
+            if norm_importance:
+                total_abs = jax.tree_util.tree_reduce(lambda a, x: a + jnp.sum(jnp.abs(x)), fisher_acc, 0.0)
+                n_params = jax.tree_util.tree_reduce(lambda a, x: a + x.size, fisher_acc, 0)
+                mean_abs = total_abs / (n_params + 1e-8)
+                fisher_acc = jax.tree_util.tree_map(lambda x: x / (mean_abs + 1e-8), fisher_acc)
 
-        # env step (batched over agents internally by env)
-        # Replicate the action for all agents since we only computed one action
-        action_value = actions[0] if actions.shape[0] > 0 else actions
-        act_dict = { agent: action_value for agent in env.agents }
-        obs_next, env_state, _, done_info, _ = env.step(key_step, env_state, act_dict)
+            return fisher_acc
 
-        # Handle both single-agent (boolean) and multi-agent (dictionary) done values
-        if isinstance(done_info, dict):
-            done = done_info["__all__"]
-        else:
-            # Single-agent environment returns done as boolean directly
-            done = done_info
-
-        return (rng, env_state, obs_next, fisher_acc), done
-
-    # -----------------------------------------------------------------
-    # run one episode under lax.while_loop
-    # -----------------------------------------------------------------
-    def run_episode(carry, key_ep):
-        params, fisher_global = carry
-        key_ep, key_reset = jax.random.split(key_ep)
-        obs0, env_state0 = env.reset(key_reset)
-
-        fisher_zero = jax.tree_util.tree_map(jnp.zeros_like, fisher_global)
-
-        ep_carry = (key_ep, env_state0, obs0, fisher_zero)
-        ep_carry, _ = jax.lax.scan(step_fn,
-                                   ep_carry,
-                                   xs=None,
-                                   length=max_steps)
-
-        fisher_ep = ep_carry[-1]
-        fisher_global = jax.tree_util.tree_map(jnp.add, fisher_global, fisher_ep)
-        return (params, fisher_global), None
-
-    # -----------------------------------------------------------------
-    # run many episodes under lax.scan
-    # -----------------------------------------------------------------
-    fisher_global_init = jax.tree_util.tree_map(jnp.zeros_like, params)
-    (_, fisher_tot), _ = jax.lax.scan(run_episode,
-                                      (params, fisher_global_init),
-                                      jax.random.split(key, max_episodes))
-
-    # -----------------------------------------------------------------
-    # average & optional normalisation
-    # -----------------------------------------------------------------
-    fisher_tot = jax.tree_util.tree_map(
-        lambda x: x / (max_episodes * max_steps), fisher_tot)
-
-    if normalize_importance:
-        total_abs = jax.tree_util.tree_reduce(lambda a, x: a + jnp.sum(jnp.abs(x)),
-                                              fisher_tot, 0.)
-        denom = total_abs / (jax.tree_util.tree_reduce(
-            lambda a, x: a + x.size, fisher_tot, 0) + 1e-8)
-        fisher_tot = jax.tree_util.tree_map(lambda x: x / (denom + 1e-8),
-                                            fisher_tot)
-
-    return fisher_tot  # FrozenDict
+        return fisher
