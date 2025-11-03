@@ -7,7 +7,7 @@ from flax.linen.initializers import orthogonal, constant
 
 
 def choose_head(t: jnp.ndarray, n_heads: int, env_idx):
-    env_idx = jnp.asarray(env_idx, jnp.int32)          # dynamic
+    env_idx = jnp.asarray(env_idx, jnp.int32)  # dynamic
     b, tot = t.shape
     base = tot // n_heads
     t3 = t.reshape(b, n_heads, base)
@@ -37,12 +37,13 @@ class ActorCritic(nn.Module):
     def _layer_dormant_ratio(self, h: jnp.ndarray, tag: str):
         """h: (batch, hidden). Implements Sokar et al.'s τ-dormant metric."""
         # mean |activation| per unit over the batch
-        m = jnp.mean(jnp.abs(h), axis=0)             # shape: (H,)
+        h = jax.lax.stop_gradient(h)
+        m = jnp.mean(jnp.abs(h), axis=0)  # shape: (H,)
         denom = jnp.mean(m) + 1e-12
-        s = m / denom                                # normalized score
+        s = m / denom  # normalized score
         ratio = jnp.mean(s <= self.dormant_threshold)
         # stash per-layer ratio for logging
-        self.sow("metrics", "dormant_layer", {tag: ratio})
+        self.sow("metrics", tag, ratio)
         return ratio
 
     # ------------------------------------------------------------------ forward
@@ -65,7 +66,7 @@ class ActorCritic(nn.Module):
                 x = self._dense(hid, f"common_dense{i + 1}", np.sqrt(2))(x)
                 x = act(x)
                 if self.track_dormant_ratio:
-                    per_layer_ratios.append(self._layer_dormant_ratio(x, f"shared_{i+1}"))
+                    per_layer_ratios.append(self._layer_dormant_ratio(x, f"shared_{i + 1}"))
                 if self.use_layer_norm:
                     x = nn.LayerNorm(name=f"common_ln{i + 1}", epsilon=1e-5)(x)
             trunk = x
@@ -79,7 +80,7 @@ class ActorCritic(nn.Module):
                         hid, f"{prefix}_dense{i + 1}", np.sqrt(2))(inp)
                     inp = act(inp)
                     if self.track_dormant_ratio:
-                        ratios.append(self._layer_dormant_ratio(inp, f"{prefix}_{i+1}"))
+                        ratios.append(self._layer_dormant_ratio(inp, f"{prefix}_{i + 1}"))
                     if self.use_layer_norm:
                         inp = nn.LayerNorm(name=f"{prefix}_ln{i + 1}", epsilon=1e-5)(inp)
                 return inp, ratios
@@ -92,7 +93,7 @@ class ActorCritic(nn.Module):
 
         # -------- actor head --------------------------------------------------
         logits_dim = self.action_dim * \
-            (self.num_tasks if self.use_multihead else 1)
+                     (self.num_tasks if self.use_multihead else 1)
         all_logits = self._dense(logits_dim, "actor_head", 0.01)(actor_in)
 
         logits = choose_head(all_logits, self.num_tasks,

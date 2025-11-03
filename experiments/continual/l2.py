@@ -25,8 +25,7 @@ class L2(RegCLMethod):
             params, cl_state.old_params, cl_state.mask)
 
         tot = jax.tree_util.tree_reduce(lambda a, b: a + b.sum(), diff2, 0.)
-        denom = jax.tree_util.tree_reduce(lambda a, b: a + b.sum(),
-                                          cl_state.mask, 0.) + 1e-8
+        denom = jax.tree_util.tree_reduce(lambda a, b: a + b.sum(), cl_state.mask, 0.) + 1e-8
         return 0.5 * coef * tot / denom
 
     # ── importance function factory (to satisfy unified interface) ───────────
