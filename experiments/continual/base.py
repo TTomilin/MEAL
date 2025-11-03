@@ -1,6 +1,5 @@
 from typing import Protocol
 
-import jax
 import jax.numpy as jnp
 from flax import struct
 from flax.core import FrozenDict
@@ -26,19 +25,6 @@ class RegCLMethod(Protocol):
     # ---- penalty ------------------------------------------------------------
     def penalty(self, params: FrozenDict, cl_state: CLState, coef: float) -> jnp.ndarray: ...
 
-    # ---- importance weights -------------------------------------------------
-    def compute_importance(self,
-                           params: FrozenDict,
-                           reset_switch,
-                           step_switch,
-                           network,
-                           env_idx: int,
-                           rng: jax.random.PRNGKey,
-                           agents,
-                           use_cnn: bool,
-                           max_episodes: int,
-                           max_steps: int,
-                           norm_importance: bool,
-                           stride: int) -> FrozenDict: ...
-
-
+    # ---- importance function ------------------------------------------------
+    def make_importance_fn(self, reset_switch, step_switch, network, agents, use_cnn, max_episodes: int, max_steps: int,
+                           norm_importance: bool, stride: int) -> callable: ...

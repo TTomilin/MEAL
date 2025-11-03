@@ -318,6 +318,10 @@ def main():
 
     evaluate_env = make_eval_fn(reset_switch, step_switch, network, agents, seq_length, cfg.num_steps, cfg.use_cnn)
 
+    importance_fn = cl.make_importance_fn(reset_switch, step_switch, network, agents, cfg.use_cnn,
+                                          cfg.importance_episodes, cfg.importance_steps, cfg.normalize_importance,
+                                          cfg.importance_stride)
+
     @jax.jit
     def train_on_environment(rng, train_state, cl_state, env_idx):
         '''
@@ -869,19 +873,17 @@ def main():
 
         visualizer = None
         for task_idx, (rng, env) in enumerate(zip(env_rngs, envs)):
-            # --- Train on environment [task_idx] using the *current* ewc_state ---
+            # --- Task Training ---
             print(f"Training on environment: {task_idx} - {env.layout_name}")
             runner_state, metrics = train_on_environment(rng, train_state, cl_state, task_idx)
             train_state = runner_state[0]
             cl_state = runner_state[6]
 
-            importance = cl.compute_importance(train_state.params, reset_switch, step_switch, network, task_idx, rng,
-                agents, cfg.use_cnn, cfg.importance_episodes, cfg.importance_steps, cfg.normalize_importance,
-                cfg.importance_stride
-            )
-
+            # Continual Learning
+            importance = importance_fn(train_state.params, task_idx, rng)
             cl_state = cl.update_state(cl_state, train_state.params, importance)
 
+            # Video Recording
             if cfg.record_video:
                 if visualizer is None:
                     visualizer = create_visualizer(num_agents, cfg.env_name)
