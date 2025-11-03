@@ -2,7 +2,6 @@ import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 
-from experiments.utils import build_reg_weights
 from experiments.continual.base import RegCLMethod, CLState
 
 
@@ -10,17 +9,6 @@ class FT(RegCLMethod):
     """Plain fine-tuning: keep training, add **zero** regularization."""
 
     name = "ft"
-
-    # ─── life-cycle ──────────────────────────────────────────────────────────
-    def init_state(
-            self,
-            params: FrozenDict,
-            regularize_critic: bool,
-            regularize_heads: bool
-    ) -> CLState:
-        # dummy mask only to satisfy the dataclass; never used
-        dummy_mask = build_reg_weights(params, regularize_critic, regularize_heads)
-        return CLState(old_params=params, importance=None, mask=dummy_mask)
 
     # ─── state update: nothing to store ─────────────────────────────────────
     def update_state(
@@ -47,4 +35,5 @@ class FT(RegCLMethod):
         @jax.jit
         def importance_fn(params: FrozenDict, env_idx: jnp.int32, rng):
             return jax.tree.map(jnp.zeros_like, params)
+
         return importance_fn

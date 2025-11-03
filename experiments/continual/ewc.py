@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 
 from experiments.continual.base import RegCLMethod, CLState
-from experiments.utils import build_reg_weights, batchify, unbatchify
+from experiments.utils import batchify, unbatchify
 
 
 class EWC(RegCLMethod):
@@ -22,14 +22,6 @@ class EWC(RegCLMethod):
         assert mode in {"last", "online", "multi"}
         self.mode = mode
         self.decay = decay
-
-    def init_state(self, params, regularize_critic, regularize_heads) -> CLState:
-        mask = build_reg_weights(params, regularize_critic=regularize_critic, regularize_heads=regularize_heads)
-        return CLState(
-            old_params=jax.tree.map(lambda x: x.copy(), params),
-            importance=jax.tree.map(jnp.zeros_like, params),
-            mask=mask
-        )
 
     def update_state(self, cl_state: CLState, new_params: FrozenDict, new_fisher: FrozenDict) -> CLState:
 

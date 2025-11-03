@@ -16,9 +16,6 @@ class RegCLMethod(Protocol):
     """Minimal interface every regularization-based CL method must expose."""
     name: str
 
-    # ---- life-cycle ---------------------------------------------------------
-    def init_state(self, params: FrozenDict, regularise_critic: bool, regularise_heads: bool) -> CLState: ...
-
     # ---- state update -------------------------------------------------------
     def update_state(self, cl_state: CLState, new_params: FrozenDict, new_importance: FrozenDict) -> CLState: ...
 

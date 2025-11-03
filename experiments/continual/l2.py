@@ -2,7 +2,6 @@ import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 
-from experiments.utils import build_reg_weights
 from experiments.continual.base import RegCLMethod, CLState
 
 
@@ -13,19 +12,9 @@ class L2(RegCLMethod):
     """
     name = "l2"
 
-    def init_state(self,
-                   params: FrozenDict,
-                   regularize_critic: bool,
-                   regularize_heads: bool) -> CLState:
-        return CLState(
-            old_params=jax.tree.map(lambda x: x.copy(), params),
-            importance=None,
-            mask=build_reg_weights(params, regularize_critic, regularize_heads)
-        )
-
     def update_state(self, cl_state: CLState, new_params: FrozenDict, new_importance: FrozenDict) -> CLState:
         # we only need to remember θᵗ
-        return CLState(old_params=new_params, importance=None, mask=cl_state.mask)
+        return CLState(old_params=new_params, importance=cl_state.importance, mask=cl_state.mask)
 
     def penalty(self,
                 params: FrozenDict,
@@ -47,4 +36,5 @@ class L2(RegCLMethod):
         @jax.jit
         def importance_fn(params: FrozenDict, env_idx: jnp.int32, rng):
             return jax.tree.map(jnp.zeros_like, params)
+
         return importance_fn

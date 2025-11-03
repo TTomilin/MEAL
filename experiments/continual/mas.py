@@ -1,11 +1,9 @@
-from functools import partial
-
 import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 
 from experiments.continual.base import RegCLMethod, CLState
-from experiments.utils import build_reg_weights, batchify, unbatchify
+from experiments.utils import batchify, unbatchify
 
 
 class MAS(RegCLMethod):
@@ -14,21 +12,7 @@ class MAS(RegCLMethod):
     """
     name = "mas"
 
-    def init_state(self,
-                   params: FrozenDict,
-                   regularize_critic: bool,
-                   regularize_heads: bool) -> CLState:
-        return CLState(
-            old_params=jax.tree.map(lambda x: x.copy(), params),
-            importance=jax.tree.map(jnp.zeros_like, params),
-            mask=build_reg_weights(params, regularize_critic, regularize_heads)
-        )
-
-    def update_state(self,
-                     cl_state: CLState,
-                     new_params: FrozenDict,
-                     new_importance: FrozenDict,
-                     **_) -> CLState:
+    def update_state(self, cl_state: CLState, new_params: FrozenDict, new_importance: FrozenDict) -> CLState:
         return CLState(old_params=new_params, importance=new_importance, mask=cl_state.mask)
 
     def penalty(self,
