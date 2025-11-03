@@ -17,11 +17,11 @@ class MAS(RegCLMethod):
     """
     name = "mas"
 
-    def __init__(self, mode: str = "online", decay: float = 0.9, normalize_each_task: bool = True):
+    def __init__(self, mode: str = "online", decay: float = 0.9, normalize_task: bool = True):
         assert mode in {"online", "multi", "last"}
         self.mode = mode
         self.decay = decay
-        self.normalize_each_task = normalize_each_task
+        self.normalize_task = normalize_task
 
     def init_state(self, params: FrozenDict, regularize_critic: bool, regularize_heads: bool) -> CLState:
         mask = build_reg_weights(params, regularize_critic, regularize_heads)
@@ -32,7 +32,7 @@ class MAS(RegCLMethod):
     def update_state(self, cl_state: CLState, new_params: FrozenDict, new_importance: FrozenDict) -> CLState:
         ω_old = cl_state.importance
         ω_new = new_importance
-        if self.normalize_each_task:
+        if self.normalize_task:
             m = _tree_mean_abs(ω_new)
             ω_new = jax.tree_util.tree_map(lambda x: x / (m + 1e-8), ω_new)
 
@@ -54,8 +54,8 @@ class MAS(RegCLMethod):
 
     def make_importance_fn(self, reset_switch, step_switch, network, agents, use_cnn: bool,
                            max_episodes: int, max_steps: int, norm_importance: bool, stride: int):
-        # keep your fast jitted importance (unchanged)
         num_agents = len(agents)
+
         @jax.jit
         def mas_importance(params, env_idx: jnp.int32, rng):
             importance0 = jax.tree_util.tree_map(jnp.zeros_like, params)

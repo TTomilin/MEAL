@@ -81,10 +81,8 @@ class Config:
     importance_episodes: int = 5
     importance_stride: int = 5  # compute and accumulate importance once every N steps
     importance_steps: int = 500
-
-    # EWC specific parameters
-    ewc_mode: str = "multi"  # "online", "last" or "multi"
-    ewc_decay: float = 0.9  # Only for online EWC
+    importance_mode: str = "online"  # "online", "last" or "multi", only for EWC & MAS
+    importance_decay: float = 0.9  # Only for online EWC & MAS
 
     # AGEM specific parameters
     agem_memory_size: int = 100000
@@ -182,8 +180,8 @@ def main():
         elif cfg.cl_method.lower() == "l2":
             cfg.reg_coef = 1e7
 
-    method_map = dict(ewc=EWC(mode=cfg.ewc_mode, decay=cfg.ewc_decay),
-                      mas=MAS(),
+    method_map = dict(ewc=EWC(mode=cfg.importance_mode, decay=cfg.importance_decay),
+                      mas=MAS(mode=cfg.importance_mode, decay=cfg.importance_decay),
                       l2=L2(),
                       ft=FT(),
                       agem=AGEM(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size))

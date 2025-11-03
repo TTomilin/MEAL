@@ -1,7 +1,10 @@
 import jax
 import jax.numpy as jnp
 from flax import struct
+from flax.core import FrozenDict
 from jax._src.flatten_util import ravel_pytree
+
+from experiments.continual.base import RegCLMethod
 
 
 @struct.dataclass
@@ -18,7 +21,7 @@ class AGEMMemory:
     max_size_per_task: int
 
 
-class AGEM:
+class AGEM(RegCLMethod):
     """
     AGEM (Averaged Gradient Episodic Memory) continual learning method.
 
@@ -36,81 +39,23 @@ class AGEM:
         self.memory_size = memory_size
         self.sample_size = sample_size
 
-    def init_state(self, params, regularize_critic=True, regularize_heads=True):
-        """
-        Initialize the AGEM state.
-
-        Args:
-            params: Initial parameters
-            regularize_critic: Whether to regularize the critic (not used in AGEM)
-            regularize_heads: Whether to regularize the heads (not used in AGEM)
-
-        Returns:
-            AGEM state (memory buffer)
-        """
-        # For AGEM, we'll initialize an empty memory buffer
-        # The actual initialization will happen in the first call to update_state
-        # We return None for now, and handle it in update_state
-        return None
-
-    def compute_importance(self, params, env, network, env_idx, rng, use_cnn=False,
-                           num_episodes=5, max_steps=100, normalize=False):
-        """
-        Compute the importance of parameters for a task.
-
-        For AGEM, this is not used, but we need to implement it for compatibility.
-
-        Args:
-            params: Parameters to compute importance for
-            env: Environment
-            network: Network
-            env_idx: Environment index
-            rng: Random number generator
-            use_cnn: Whether to use CNN
-            num_episodes: Number of episodes to run
-            max_steps: Maximum number of steps per episode
-            normalize: Whether to normalize importance
-
-        Returns:
-            Importance (not used in AGEM, so we return None)
-        """
-        # AGEM doesn't use importance, so we return None
-        return None
-
     def update_state(self, state, params, importance):
-        """
-        Update the AGEM state with new parameters and importance.
-
-        For AGEM, this would update the memory buffer, but we'll handle that
-        separately in the training loop.
-
-        Args:
-            state: Current AGEM state
-            params: New parameters
-            importance: Importance (not used in AGEM)
-
-        Returns:
-            Updated AGEM state
-        """
         # AGEM doesn't update state based on importance, so we just return the current state
         return state
 
     def penalty(self, params, state, reg_coef):
-        """
-        Calculate the regularization penalty.
-
-        For AGEM, there is no regularization penalty, so we return 0.
-
-        Args:
-            params: Parameters to calculate penalty for
-            state: AGEM state
-            reg_coef: Regularization coefficient
-
-        Returns:
-            Regularization penalty (0 for AGEM)
-        """
         # AGEM doesn't use a regularization penalty, so we return 0
         return 0.0
+
+    # ── importance function factory (to satisfy unified interface) ───────────
+    def make_importance_fn(self, reset_switch, step_switch, network, agents, use_cnn: bool, max_episodes: int,
+                           max_steps: int, norm_importance: bool, stride: int) -> callable:
+        # Returns a jitted function with the same call signature but producing zeros.
+        @jax.jit
+        def importance_fn(params: FrozenDict, env_idx: jnp.int32, rng):
+            return jax.tree.map(jnp.zeros_like, params)
+
+        return importance_fn
 
 
 def init_agem_memory(max_size: int, obs_shape: tuple, max_tasks: int = 20):
