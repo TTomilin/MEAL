@@ -1,6 +1,6 @@
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Sequence, Optional, List, Literal
 
@@ -120,7 +120,7 @@ class Config:
     # LOGGING PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
     use_wandb: bool = True
-    wandb_mode: str = "online"
+    wandb_mode: Literal["online", "offline", "disabled"] = "online"
     entity: Optional[str] = ""
     project: str = "MEAL"
     tags: List[str] = field(default_factory=list)
@@ -214,7 +214,7 @@ def main():
         wandb.login(key=os.environ.get("WANDB_API_KEY"))
         wandb.init(
             project=cfg.project,
-            config=cfg,
+            config=asdict(cfg),
             sync_tensorboard=True,
             mode=cfg.wandb_mode,
             tags=wandb_tags,
