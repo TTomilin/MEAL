@@ -1,12 +1,9 @@
-import functools
-
 import jax
 import jax.numpy as jnp
-import distrax
 from flax.core.frozen_dict import FrozenDict
 
-from experiments.utils import build_reg_weights, _prep_obs, batchify, unbatchify
 from experiments.continual.base import RegCLMethod, CLState
+from experiments.utils import build_reg_weights, batchify, unbatchify
 
 
 class EWC(RegCLMethod):
@@ -49,10 +46,7 @@ class EWC(RegCLMethod):
 
         return CLState(old_params=new_params, importance=fish, mask=cl_state.mask)
 
-    def penalty(self,
-                params: FrozenDict,
-                cl_state: CLState,
-                coef: float) -> jnp.ndarray:
+    def penalty(self, params: FrozenDict, cl_state: CLState, coef: float) -> jnp.ndarray:
 
         def _term(p, o, f, m):
             return m * f * (p - o) ** 2
@@ -76,7 +70,6 @@ class EWC(RegCLMethod):
 
         @jax.jit
         def fisher(params: FrozenDict, env_idx: jnp.int32, rng: jax.random.PRNGKey) -> FrozenDict:
-
             fisher0 = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), params)
 
             def one_episode(carry, _):
