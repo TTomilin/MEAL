@@ -225,9 +225,7 @@ def compute_memory_gradient(network, params,
     return grads, stats
 
 
-def update_agem_memory(mem: AGEMMemory, task_idx: int,
-                       new_obs, new_actions, new_log_probs,
-                       new_adv, new_tgt, new_val):
+def update_agem_memory(agem_sample_size, env_idx, advantages, mem, rng, targets, traj_batch):
     """
     Update AGEM memory using simple circular buffer per task.
 
@@ -236,10 +234,21 @@ def update_agem_memory(mem: AGEMMemory, task_idx: int,
         task_idx: Index of the current task (0-indexed)
         new_obs, new_actions, etc.: New data to add to the task's buffer
     """
+
+    rng, mem_rng = jax.random.split(rng)
+    perm = jax.random.permutation(mem_rng, advantages.shape[0])  # length = traj_len
+    idx = perm[: agem_sample_size]
+    new_obs = traj_batch.obs[idx].reshape(-1, traj_batch.obs.shape[-1])
+    new_actions = traj_batch.action[idx].reshape(-1)
+    new_log_probs = traj_batch.log_prob[idx].reshape(-1)
+    new_adv = advantages[idx].reshape(-1)
+    new_tgt = targets[idx].reshape(-1)
+    new_val = traj_batch.value[idx].reshape(-1)
+
     b = new_obs.shape[0]  # batch size to insert
 
     # Ensure task_idx is within bounds
-    task_idx = jnp.clip(task_idx, 0, mem.max_tasks - 1)
+    task_idx = jnp.clip(env_idx, 0, mem.max_tasks - 1)
 
     # Get current pointer and size for this task
     current_ptr = mem.ptrs[task_idx]
@@ -263,7 +272,7 @@ def update_agem_memory(mem: AGEMMemory, task_idx: int,
     updated_ptrs = mem.ptrs.at[task_idx].set(new_ptr)
     updated_sizes = mem.sizes.at[task_idx].set(new_size)
 
-    return mem.replace(
+    mem = mem.replace(
         obs=updated_obs,
         actions=updated_actions,
         log_probs=updated_log_probs,
@@ -273,3 +282,4 @@ def update_agem_memory(mem: AGEMMemory, task_idx: int,
         ptrs=updated_ptrs,
         sizes=updated_sizes
     )
+    return mem, rng

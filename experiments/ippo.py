@@ -626,7 +626,7 @@ def main():
                         }
                         return grads, empty_stats
 
-                    # Use JAX-compatible conditional logic
+                    # Gradient projection for AGEM
                     if cfg.cl_method.lower() == "agem" and cl_state is not None:
                         grads, agem_stats = jax.lax.cond(
                             jnp.sum(cl_state.sizes) > 0,
@@ -706,22 +706,8 @@ def main():
             metrics = jax.tree_util.tree_map(lambda x: x.mean(), info)
 
             if cfg.cl_method.lower() == "agem" and cl_state is not None:
-                rng, mem_rng = jax.random.split(rng)
-                perm = jax.random.permutation(mem_rng, advantages.shape[0])  # length = traj_len
-                idx = perm[: cfg.agem_sample_size]
-
-                obs_for_mem = traj_batch.obs[idx].reshape(-1, traj_batch.obs.shape[-1])
-                acts_for_mem = traj_batch.action[idx].reshape(-1)
-                logp_for_mem = traj_batch.log_prob[idx].reshape(-1)
-                adv_for_mem = advantages[idx].reshape(-1)
-                tgt_for_mem = targets[idx].reshape(-1)
-                val_for_mem = traj_batch.value[idx].reshape(-1)
-
-                cl_state = update_agem_memory(
-                    cl_state, env_idx,
-                    obs_for_mem, acts_for_mem, logp_for_mem,
-                    adv_for_mem, tgt_for_mem, val_for_mem
-                )
+                cl_state, rng = update_agem_memory(cfg.agem_sample_size, env_idx, advantages, cl_state, rng, targets,
+                                                   traj_batch)
 
             # General section
             # Update the step counter
