@@ -132,6 +132,7 @@ def _collect_and_plot(
         steps_per_task: int,
         sigma: float,
         confidence: float,
+        agents: int,
         compare_by: str = "method",
 ):
     data = collect_cumulative_runs(
@@ -143,6 +144,7 @@ def _collect_and_plot(
         metric,
         seq_len,
         seeds,
+        agents,
     )
     if len(data) == 0:
         print(f"[warn] no data for {method}")
@@ -194,6 +196,7 @@ def plot():
             sigma=args.sigma,
             confidence=args.confidence,
             compare_by=args.compare_by,
+            agents=args.agents,
         )
 
     # Add task boundaries and nice axes.

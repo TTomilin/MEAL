@@ -114,7 +114,9 @@ def save_plot(fig: plt.Figure, output_dir: Path, filename: str, formats: List[st
     """
     output_dir.mkdir(exist_ok=True)
     for fmt in formats:
-        fig.savefig(output_dir / f"{filename}.{fmt}")
+        out_path = output_dir / f"{filename}.{fmt}"
+        fig.savefig(out_path)
+        print(f"Saved plot to {out_path}")
 
 
 def finalize_plot(ax: plt.Axes, title: Optional[str] = None,
