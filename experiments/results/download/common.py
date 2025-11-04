@@ -5,8 +5,6 @@ import json
 
 from wandb.apis.public import Run
 
-FORBIDDEN_TAGS = {"TEST", "LOCAL"}
-
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -93,8 +91,6 @@ def want(run: Run, args: argparse.Namespace) -> bool:
     if 'tags' in cfg:
         tags = set(cfg['tags'])
         if args.wandb_tags and not tags.intersection(args.wandb_tags):
-            return False
-        if tags.intersection(FORBIDDEN_TAGS) and not tags.intersection(args.wandb_tags):
             return False
     return True
 

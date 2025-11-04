@@ -66,7 +66,7 @@ def collect_runs(base: Path, algo: str, method: str, strat: str, seq_len: int, s
 
 
 def collect_env_curves(base: Path, algo: str, method: str, strat: str, seq_len: int, seeds: List[int],
-                       metric: str = "reward", level: int = 1, partners: bool = False) -> Tuple[List[str], List[np.ndarray]]:
+                       metric: str = "reward", level: int = 1, agents: int = 2) -> Tuple[List[str], List[np.ndarray]]:
     """
     Collect per-environment curves for per-task evaluation plots.
 
@@ -83,7 +83,7 @@ def collect_env_curves(base: Path, algo: str, method: str, strat: str, seq_len: 
     Returns:
         Tuple of (environment_names, curves_per_environment)
     """
-    folder = base / algo / method / f"level_{level}" / f"{strat}_{seq_len}"
+    folder = base / algo / method / f"level_{level}" / f"agents_{agents}" / f"{strat}_{seq_len}"
     env_names, per_env_seed = [], []
 
     # discover envs

@@ -44,6 +44,7 @@ viz = [
     "ipython",
     "ipywidgets",
     "imageio[ffmpeg]",
+    "jinja2",
 ]
 utils = [
     "optax",

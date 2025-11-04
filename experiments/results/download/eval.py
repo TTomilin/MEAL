@@ -40,7 +40,7 @@ from experiments.results.download.common import cli, want, experiment_suffix, un
 # CONSTANTS
 # ---------------------------------------------------------------------------
 EVAL_PREFIX = "Evaluation/Soup_Scaled/"
-KEY_PATTERN = re.compile(rf"^{re.escape(EVAL_PREFIX)}(\d+)__(.+)_(\d+)$")
+KEY_PATTERN = re.compile(rf"^{re.escape(EVAL_PREFIX)}(\d+)_(.+)_(\d+)$")
 TRAINING_KEY = "Soup/scaled"
 DORMANT_RATIO_KEY = "Neural_Activity/dormant_ratio"
 PARTNER_EVAL_PATTERN = re.compile(r"^Eval/EgoReturn_Partner(\d+)$")

@@ -115,6 +115,7 @@ def compute_metrics(
         seeds: List[int],
         end_window_evals: int = 10,
         level: int = 1,
+        agents: int = 2,
 ) -> pd.DataFrame:
     rows: list[dict[str, float]] = []
 
@@ -164,6 +165,7 @@ def compute_metrics(
                 / algo
                 / method
                 / f"level_{level}"
+                / f"agents_{agents}"
                 / f"{strategy}_{seq_len}"
         )
 
@@ -193,15 +195,21 @@ def compute_metrics(
                 if expected_file.exists():
                     env_series.append(load_series(expected_file))
                 else:
-                    # Try alternative naming patterns
+                    # Try an alternative naming pattern
                     alt_file = sd / f"{i}_soup.json"
                     if alt_file.exists():
                         env_series.append(load_series(alt_file))
                     else:
-                        print(f"[warn] missing env file for task {i}, seed {seed}, method {method}, using zeros")
-                        missing_files.append(i)
-                        # Create a default array of zeros with reasonable length
-                        env_series.append(np.zeros(100))
+                        # Try yet another alternative naming pattern
+                        difficulty = "easy" if level == 1 else "medium" if level == 2 else "hard"
+                        alt_file = sd / f"{i}_{difficulty}_gen_soup.json"
+                        if alt_file.exists():
+                            env_series.append(load_series(alt_file))
+                        else:
+                            print(f"[warn] missing env file for task {i}, seed {seed}, method {method}, using zeros")
+                            missing_files.append(i)
+                            # Create a default array of zeros with reasonable length
+                            env_series.append(np.zeros(100))
 
             # Replace NaN and inf/-inf values with zeros in env_series
             processed_env_series = []
@@ -391,6 +399,7 @@ if __name__ == "__main__":
     p.add_argument("--seq_len", type=int, default=10)
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--level", type=int, default=None, help="Difficulty level of the environment (if not provided, generates table for all levels 1, 2, 3)")
+    p.add_argument("--agents", type=int, default=2, help="Number of agents in the environment")
     p.add_argument(
         "--end_window_evals",
         type=int,
@@ -423,6 +432,7 @@ if __name__ == "__main__":
             seeds=args.seeds,
             end_window_evals=args.end_window_evals,
             level=args.level,
+            agents=args.agents,
         )
         # Pretty‑print method names
         df["Method"] = df["Method"].replace({"Online_EWC": "Online EWC"})
