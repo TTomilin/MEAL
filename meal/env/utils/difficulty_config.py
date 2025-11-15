@@ -38,6 +38,16 @@ DIFFICULTY_PARAMS = {
         "view_ahead": 3,
         "view_sides": 1,
         "view_behind": 1,
+    },
+    "extreme": {
+        "height": 13,
+        "width": 13,
+        "wall_density": 0.45,
+        "num_stations": 2,
+        "num_pots": 5,
+        "view_ahead": 4,
+        "view_sides": 2,
+        "view_behind": 1,
     }
 }
 
