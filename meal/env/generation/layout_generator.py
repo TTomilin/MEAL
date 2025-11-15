@@ -285,11 +285,11 @@ def mpl_show(grid_str: str, title: str | None = None):
 # ─── Overcooked viewer ──────────────────────────────────────────────────────
 ###############################################################################
 
-def oc_show(layout: FrozenDict, num_agents: int = 2):
+def oc_show(layout: FrozenDict, num_agents: int = 2, difficulty: str = None):
     from meal.env import Overcooked
     from meal.visualization.visualizer import OvercookedVisualizer
 
-    env = Overcooked(layout=layout, layout_name="random_gen", random_reset=False, num_agents=num_agents)
+    env = Overcooked(layout=layout, layout_name="random_gen", num_agents=num_agents, difficulty=difficulty)
     _, state = env.reset(jax.random.PRNGKey(0))
     vis = OvercookedVisualizer(num_agents)
     vis.render(state, show=True)
@@ -306,7 +306,7 @@ def main(argv=None):
     parser.add_argument("--height", type=int, default=10, help="layout height")
     parser.add_argument("--width", type=int, default=10, help="layout width")
     parser.add_argument("--wall-density", type=float, default=0.35, help="fraction of unpassable internal cells")
-    parser.add_argument("--difficulty", type=str, choices=["easy", "med", "medium", "hard"],
+    parser.add_argument("--difficulty", type=str, choices=["easy", "med", "medium", "hard", "extreme"],
                         help="difficulty level (overrides height, width, and wall density)")
     parser.add_argument("--num-envs", type=int, default=1, help="number of environments to generate")
     parser.add_argument("--show", action="store_true", help="preview with matplotlib")
@@ -317,29 +317,17 @@ def main(argv=None):
     from meal.env import Overcooked
     from meal.visualization.visualizer import OvercookedVisualizer
 
-    # Override parameters based on difficulty
-    if args.difficulty:
-        if args.difficulty == "easy":
-            args.height_min = args.width_min = 6
-            args.height_max = args.width_max = 7
-            args.wall_density = 0.15
-        elif args.difficulty == "med" or args.difficulty == "medium":
-            args.height_min = args.width_min = 8
-            args.height_max = args.width_max = 9
-            args.wall_density = 0.25
-        elif args.difficulty == "hard":
-            args.height_min = args.width_min = 10
-            args.height_max = args.width_max = 11
-            args.wall_density = 0.35
-
     # Generate environments
     layouts = []
+    num_agents = args.num_agents
+    difficulty = args.difficulty
     for i in range(args.num_envs):
         # Use a different seed for each environment if seed is provided
         env_seed = None if args.seed is None else args.seed + i
 
         grid_str, layout = generate_layout(
-            num_agents=args.num_agents,
+            difficulty=difficulty,
+            num_agents=num_agents,
             height=args.height,
             width=args.width,
             wall_density=args.wall_density,
@@ -353,15 +341,15 @@ def main(argv=None):
         mpl_show(layouts[0][0], "Random kitchen")
 
     if args.oc and layouts:
-        oc_show(layouts[0][1], args.num_agents)
+        oc_show(layouts[0][1], num_agents, difficulty)
 
     if args.save and layouts:
         # Determine the base output directory
         base_dir = Path(__file__).parent.parent.parent.parent / "assets" / "screenshots"
 
         # Create difficulty-specific directory if difficulty is specified
-        if args.difficulty:
-            out_dir = base_dir / args.difficulty
+        if difficulty:
+            out_dir = base_dir / difficulty
         else:
             out_dir = base_dir / "generated"
 
@@ -385,14 +373,14 @@ def main(argv=None):
 
         # Save each generated environment
         for i, (_, layout, env_seed) in enumerate(layouts):
-            env = Overcooked(layout=layout, layout_name="generated", random_reset=False, num_agents=args.num_agents)
+            env = Overcooked(layout=layout, layout_name="generated", num_agents=num_agents, difficulty=difficulty)
             _, state = env.reset(jax.random.PRNGKey(env_seed or 0))
-            vis = OvercookedVisualizer(args.num_agents)
+            vis = OvercookedVisualizer(num_agents)
             img = vis.render(state)
 
             # Create filename with auto-incrementing index
             file_index = highest_index + i + 1
-            file_name = f"{args.num_agents}_agents_gen_{file_index}.png"
+            file_name = f"{num_agents}_agents_gen_{file_index}.png"
 
             Image.fromarray(img).save(out_dir / file_name)
             print(f"Saved generated layout {i + 1}/{len(layouts)} to {out_dir / file_name}")

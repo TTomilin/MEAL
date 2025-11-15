@@ -82,7 +82,7 @@ class Overcooked(MultiAgentEnv):
             task_id: int = 0,
             num_agents: int = 2,
             agent_restrictions: dict = None,
-            max_pots: int = 4,
+            max_pots: int = 5,
             max_goals: int = 2,
             **env_kwargs
     ):
@@ -503,10 +503,6 @@ class Overcooked(MultiAgentEnv):
         num_agents = self.num_agents
         all_pos = np.arange(height * width, dtype=jnp.uint32)
 
-        # Build "valid" mask for cells that belong to the original layout region (top-left aligned)
-        valid_mask = jnp.zeros((height, width), dtype=jnp.bool_)
-        valid_mask = valid_mask.at[:real_height, :real_width].set(True)
-
         wall_idx = layout.get("wall_idx")
         occupied = jnp.zeros_like(all_pos).at[wall_idx].set(1)
 
@@ -539,7 +535,6 @@ class Overcooked(MultiAgentEnv):
                     unused_agent_positions = layout_agent_idx[num_agents:]
                     # Add unused agent spawn positions to the wall map so they appear as counters
                     wall_map = wall_map.at[unused_agent_positions // width, unused_agent_positions % width].set(True)
-                    occupied = occupied.at[unused_agent_positions].set(1)
             else:
                 # Layout has fewer agent positions than requested
                 # Use all available layout positions and generate random positions for the rest
@@ -560,7 +555,6 @@ class Overcooked(MultiAgentEnv):
                 agent_idx = jnp.concatenate([available_positions, additional_positions])
 
         agent_pos = jnp.array([agent_idx % width, agent_idx // width], dtype=jnp.uint32).transpose()  # dim = n_agents x 2
-        occupied = occupied.at[agent_idx].set(1)
 
         key, subkey = jax.random.split(key)
         agent_dir_idx = jax.random.choice(subkey, jnp.arange(len(DIR_TO_VEC), dtype=jnp.int32), shape=(num_agents,))
@@ -581,11 +575,9 @@ class Overcooked(MultiAgentEnv):
 
         onion_pile_idx = layout.get("onion_pile_idx")
         onion_pile_pos = jnp.array([onion_pile_idx % width, onion_pile_idx // width], dtype=jnp.uint32).transpose()
-        empty_table_mask = empty_table_mask.at[onion_pile_idx].set(0)
 
         plate_pile_idx = layout.get("plate_pile_idx")
         plate_pile_pos = jnp.array([plate_pile_idx % width, plate_pile_idx // width], dtype=jnp.uint32).transpose()
-        empty_table_mask = empty_table_mask.at[plate_pile_idx].set(0)
 
         pot_idx = layout.get("pot_idx")
         raw_pot_pos = jnp.stack([pot_idx % width, pot_idx // width], axis=1).astype(jnp.uint32)
@@ -669,8 +661,6 @@ class Overcooked(MultiAgentEnv):
         inventory = inventory_all[player_idx]
 
         shaped_reward = 0.
-
-        height = self.obs_shape[1]
 
         # Get object in front of agent (on the "table")
         maze_object_on_table = maze_map.at[fwd_pos[1], fwd_pos[0]].get()
