@@ -5,6 +5,7 @@ from meal import Overcooked, OvercookedPO
 from meal.env.layouts.presets import hard_layouts, medium_layouts, easy_layouts, overcooked_layouts, \
     get_layouts_by_difficulty
 from meal.wrappers.observation import PadObsToMax
+from meal.wrappers.sticky_actions import StickyActions
 
 
 def _resolve_pool(names: Sequence[str] | None) -> List[str]:
@@ -60,6 +61,7 @@ def create_sequence(
         complementary_restrictions: bool = False,
         repeat_sequence: int = 1,
         layout_names: Sequence[str] | None = None,
+        sticky_actions: bool = False,
         **env_kwargs,
 ) -> list:
     """
@@ -143,5 +145,8 @@ def create_sequence(
         max_w = max(int(env.layout["width"]) for env in envs)
         max_h = max(int(env.layout["height"]) for env in envs)
         envs = [PadObsToMax(env, max_h, max_w) for env in envs]
+
+    if sticky_actions:
+        envs = [StickyActions(env) for env in envs]
 
     return envs
