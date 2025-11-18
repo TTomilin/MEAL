@@ -57,6 +57,8 @@ class StickyActions(JaxMARLWrapper):
             key, state.env_state, effective_action
         )
 
+        info = {**info, "applied_action": effective_action}
+
         new_state = StickyActionsState(
             env_state=env_state,
             last_action=effective_action,
