@@ -31,6 +31,7 @@ class MultiAgentEnv(object):
         num_agents (int): maximum number of agents within the environment, used to set array dimensions
         """
         self.num_agents = num_agents
+        self.agents = [f"agent_{i}" for i in range(num_agents)]
         self.observation_spaces = dict()
         self.action_spaces = dict()
 
