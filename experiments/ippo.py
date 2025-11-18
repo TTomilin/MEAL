@@ -103,6 +103,7 @@ class Config:
     single_task_idx: Optional[int] = None
     random_reset: bool = False
     random_agent_start: bool = True
+    separated_agents: bool = False  # only accept layouts where agents occupy different connected regions of the grid
 
     # Agent restriction parameters
     complementary_restrictions: bool = False  # One agent can't pick up onions, other can't pick up plates
@@ -200,7 +201,8 @@ def main():
         layout_names=cfg.layouts,
         difficulty=cfg.difficulty,
         repeat_sequence=cfg.repeat_sequence,
-        random_agent_start=cfg.random_agent_start
+        random_agent_start=cfg.random_agent_start,
+        separated_agents=cfg.separated_agents,
     )
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]

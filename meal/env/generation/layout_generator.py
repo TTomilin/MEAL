@@ -138,6 +138,58 @@ def remove_unreachable_items(grid: List[List[str]]) -> bool:
     return items_removed
 
 
+def agents_are_separated(grid_str: str, num_agents: int) -> bool:
+    """Return True if all agents occupy different connected components of the traversable graph.
+
+    Traversable tiles are FLOOR and AGENT. If two agents can reach each other
+    via these tiles, they are considered *not* separated.
+    """
+    rows = grid_str.strip().split("\n")
+    height, width = len(rows), len(rows[0])
+    grid = [list(r) for r in rows]
+
+    # Find all traversable tiles
+    TRAVERSABLE = {FLOOR, AGENT}
+    comp_id = [[-1 for _ in range(width)] for _ in range(height)]
+    curr_comp = 0
+
+    from collections import deque
+
+    for i in range(height):
+        for j in range(width):
+            if grid[i][j] in TRAVERSABLE and comp_id[i][j] == -1:
+                # BFS to mark this component
+                q = deque([(i, j)])
+                comp_id[i][j] = curr_comp
+                while q:
+                    ci, cj = q.popleft()
+                    for di, dj in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+                        ni, nj = ci + di, cj + dj
+                        if (
+                                0 <= ni < height
+                                and 0 <= nj < width
+                                and grid[ni][nj] in TRAVERSABLE
+                                and comp_id[ni][nj] == -1
+                        ):
+                            comp_id[ni][nj] = curr_comp
+                            q.append((ni, nj))
+                curr_comp += 1
+
+    # Map each agent to its component
+    agent_components = []
+    for i in range(height):
+        for j in range(width):
+            if grid[i][j] == AGENT:
+                agent_components.append(comp_id[i][j])
+
+    if len(agent_components) != num_agents:
+        # Let the usual validator scream about this instead
+        return False
+
+    # Agents are separated iff they all live in different components
+    return len(set(agent_components)) == len(agent_components)
+
+
 def generate_layout(
         num_agents: int = 2,
         difficulty: str | None = None,
@@ -149,6 +201,7 @@ def generate_layout(
         seed: Optional[int] = None,
         max_attempts: int = 2000,
         allow_invalid: bool = False,
+        separated_agents: bool = False,
 ):
     """Generate and return a random solvable Overcooked layout.
 
@@ -234,9 +287,14 @@ def generate_layout(
             grid_str = "\n".join("".join(row) for row in grid)
             is_valid, reason = evaluate_grid(grid_str, num_agents=num_agents)
             if is_valid or allow_invalid:
+                if separated_agents:
+                    if not agents_are_separated(grid_str, num_agents=num_agents):
+                        print(f"[Attempt {attempt}] Agents share a connected region. Retrying…")
+                        continue
                 return grid_str, layout_grid_to_dict(grid_str)
 
             print(f"[Attempt {attempt}] Generated layout not solvable: {reason}. Retrying…")
+
 
     raise RuntimeError(
         f"Failed to generate a solvable layout in {max_attempts} attempts."
@@ -312,6 +370,11 @@ def main(argv=None):
     parser.add_argument("--show", action="store_true", help="preview with matplotlib")
     parser.add_argument("--oc", action="store_true", help="open JAX‑MARL Overcooked viewer")
     parser.add_argument("--save", action="store_true", help="save PNG to assets/screenshots/generated/")
+    parser.add_argument(
+        "--separated-agents",
+        action="store_true",
+        help="only accept layouts where agents occupy different connected regions of the grid",
+    )
     args = parser.parse_args(argv)
 
     from meal.env import Overcooked
@@ -332,6 +395,7 @@ def main(argv=None):
             width=args.width,
             wall_density=args.wall_density,
             seed=env_seed,
+            separated_agents=args.separated_agents,
         )
         layouts.append((grid_str, layout, env_seed))
         print(f"Environment {i + 1}/{args.num_envs}:")
@@ -346,12 +410,10 @@ def main(argv=None):
     if args.save and layouts:
         # Determine the base output directory
         base_dir = Path(__file__).parent.parent.parent.parent / "assets" / "screenshots"
+        separate_agents_str = "separated" if args.separate_agents else ""
 
         # Create difficulty-specific directory if difficulty is specified
-        if difficulty:
-            out_dir = base_dir / difficulty
-        else:
-            out_dir = base_dir / "generated"
+        out_dir = base_dir / (difficulty if difficulty else "generated") / separate_agents_str
 
         out_dir.mkdir(parents=True, exist_ok=True)
 
