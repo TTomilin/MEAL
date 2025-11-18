@@ -67,5 +67,7 @@ class RandomizedActions(JaxMARLWrapper):
             key, state.env_state, effective_action
         )
 
+        info = {**info, "applied_action": effective_action}
+
         new_state = RandomizedActionsState(env_state=env_state)
         return obs, new_state, reward, done, info
