@@ -191,8 +191,8 @@ def collect_partner_curves(base: Path, algo: str, method: str, seq_len: int, see
     return env_names, curves
 
 
-def collect_cumulative_runs(base: Path, algo: str, method: str, experiment: str, strat: str,
-                            metric: str, seq_len: int, seeds: List[int], agents: int) -> np.ndarray:
+def collect_cumulative_runs(base: Path, algo: str, method: str, strat: str, metric: str, seq_len: int, seeds: List[int],
+                            level: int,  agents: int, experiment: str = "") -> np.ndarray:
     """
     Collect run data for cumulative evaluation plots.
 
@@ -208,7 +208,7 @@ def collect_cumulative_runs(base: Path, algo: str, method: str, experiment: str,
     Returns:
         Array of shape (n_seeds, L) containing the cumulative-average-so-far curve for every seed
     """
-    folder = base / algo / method / experiment / f"agents_{agents}" / f"{strat}_{seq_len}"
+    folder = base / algo / method / f"level_{level}" / f"agents_{agents}" / f"{strat}_{seq_len}" / experiment
     per_seed = []
 
     for seed in seeds:
