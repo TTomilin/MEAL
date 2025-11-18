@@ -29,7 +29,7 @@ class StickyActions(JaxMARLWrapper):
         obs, env_state = self._env.reset(key)
         state = StickyActionsState(
             env_state,
-            {agent: jnp.array(0) for agent in self._env.agents}
+            {agent: jnp.zeros((1,), dtype=jnp.int32) for agent in self._env.agents}
         )
         return obs, state
 
