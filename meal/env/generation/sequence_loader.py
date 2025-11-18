@@ -1,9 +1,10 @@
 import random
-from typing import List, Dict, Any, Sequence, Tuple
+from typing import List, Sequence
 
 from meal import Overcooked, OvercookedPO
 from meal.env.layouts.presets import hard_layouts, medium_layouts, easy_layouts, overcooked_layouts, \
     get_layouts_by_difficulty
+from meal.env.utils.difficulty_config import get_difficulty_params
 from meal.wrappers.observation import PadObsToMax
 from meal.wrappers.sticky_actions import StickyActions
 
@@ -112,7 +113,7 @@ def create_sequence(
         counts = [
             tasks_per_difficulty + (1 if remaining > 0 else 0),  # easy
             tasks_per_difficulty + (1 if remaining > 1 else 0),  # medium
-            tasks_per_difficulty,                                 # hard
+            tasks_per_difficulty,  # hard
         ]
         for diff, cnt in zip(["easy", "medium", "hard"], counts):
             for _ in range(cnt):
@@ -147,6 +148,7 @@ def create_sequence(
         envs = [PadObsToMax(env, max_h, max_w) for env in envs]
 
     if sticky_actions:
-        envs = [StickyActions(env) for env in envs]
+        difficulty_params = get_difficulty_params(difficulty)
+        envs = [StickyActions(env, difficulty_params["sticky_actions_prob"]) for env in envs]
 
     return envs

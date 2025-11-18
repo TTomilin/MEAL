@@ -104,7 +104,7 @@ class Config:
     random_reset: bool = False
     random_agent_start: bool = True
     complementary_restrictions: bool = False  # One agent can't pick up onions, other can't pick up plates
-    sticky_actions: bool = False  # Stick actions have a probability of repeating the last action
+    sticky_actions: bool = False  # Actions have a probability of being forcefully repeated
 
     # ═══════════════════════════════════════════════════════════════════════════
     # EVALUATION PARAMETERS
