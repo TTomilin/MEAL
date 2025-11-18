@@ -115,10 +115,12 @@ def compute_metrics(
         agents: int = 2,
         variant: str | None = None,
 ) -> pd.DataFrame:
-    rows: list[dict[str, float]] = []
 
     AP_seeds = []
-    base_folder = data_root / algo / method / f"level_{level}" / f"agents_{agents}" / f"{strategy}_{seq_len}" / variant
+    rows: list[dict[str, float]] = []
+
+    variant_folder = '' if variant == 'default' else variant
+    base_folder = data_root / algo / method / f"level_{level}" / f"agents_{agents}" / f"{strategy}_{seq_len}" / variant_folder
 
     for seed in seeds:
         sd = base_folder / f"seed_{seed}"
@@ -231,20 +233,14 @@ if __name__ == "__main__":
     p.add_argument(
         "--variants",
         nargs="+",
-        default=["orig_network", "big_network"],
-        help="Network variants (subdirectories) to compare, e.g. orig_network big_network",
+        default=["default"],
+        help="Experiment variants to compare",
     )
     p.add_argument(
         "--confidence-intervals",
         action="store_true",
         default=True,
         help="Show confidence intervals in table (default: True).",
-    )
-    p.add_argument(
-        "--no-confidence-intervals",
-        dest="confidence_intervals",
-        action="store_false",
-        help="Hide confidence intervals in table.",
     )
     args = p.parse_args()
 
@@ -278,14 +274,11 @@ if __name__ == "__main__":
             level_cis[level] = method_row["AveragePerformance_CI"]
 
         # nicer label for row name
-        pretty_variant = {
-            "orig_network": "Original network",
-            "big_network": "Big network",
-        }.get(variant, variant)
+        variant = variant.replace('_', ' ').title()
 
         rows.append(
             {
-                "Variant": pretty_variant,
+                "Variant": variant,
                 "A_L1": level_means[1],
                 "A_CI_L1": level_cis[1],
                 "A_L2": level_means[2],
@@ -297,14 +290,14 @@ if __name__ == "__main__":
 
     df = pd.DataFrame(rows)
 
-    # All levels case - format table: rows = network variants, columns = AveragePerformance per level.
+    # All levels case - format table: rows = variants, columns = AveragePerformance per level.
     # Identify best AveragePerformance for each level (ignoring CI)
     best_L1 = df["A_L1"].max()
     best_L2 = df["A_L2"].max()
     best_L3 = df["A_L3"].max()
 
     df_out = pd.DataFrame()
-    df_out["Network"] = df["Variant"]
+    df_out["Variant"] = df["Variant"]
 
     df_out["Level 1"] = df.apply(
         lambda r: _fmt(
@@ -344,8 +337,8 @@ if __name__ == "__main__":
         index=False,
         escape=False,
         column_format=column_format,
-        label="tab:network_sizes_levels",
-        caption="Average normalized performance across difficulty levels for different network sizes.",
+        label="tab:variants_comparison",
+        caption="Average normalized performance across difficulty levels for different variants.",
     )
 
     print(latex_table)
