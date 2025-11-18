@@ -24,7 +24,7 @@ def test_sticky_actions_p0_is_transparent():
     We check that env sees exactly the action we pass in.
     """
     base_env = Overcooked(layout=FrozenDict(
-        cramped_room), num_agents=2, random_reset=False, max_steps=400, soup_cook_time=5)
+        cramped_room), num_agents=2, random_reset=False, max_steps=400)
     wrapper = StickyActions(base_env, p=0.0)
 
     rng = jax.random.PRNGKey(0)
@@ -58,7 +58,7 @@ def test_sticky_actions_p1_always_repeats_last():
     (starting from zeros after reset).
     """
     base_env = Overcooked(layout=FrozenDict(
-        cramped_room), num_agents=2, random_reset=False, max_steps=400, soup_cook_time=5)
+        cramped_room), num_agents=2, random_reset=False, max_steps=400)
     wrapper = StickyActions(base_env, p=1.0)
 
     rng = jax.random.PRNGKey(0)
@@ -96,7 +96,7 @@ def test_sticky_actions_updates_last_action_to_effective_action():
     We check this by comparing with info["applied_action"].
     """
     base_env = Overcooked(layout=FrozenDict(
-        cramped_room), num_agents=2, random_reset=False, max_steps=400, soup_cook_time=5)
+        cramped_room), num_agents=2, random_reset=False, max_steps=400)
     wrapper = StickyActions(base_env, p=0.7)
 
     rng = jax.random.PRNGKey(123)
@@ -123,7 +123,7 @@ def test_randomized_actions_p0_is_transparent():
     For p = 0.0, RandomizedActions should never replace the action.
     """
     base_env = Overcooked(layout=FrozenDict(
-        cramped_room), num_agents=2, random_reset=False, max_steps=400, soup_cook_time=5)
+        cramped_room), num_agents=2, random_reset=False, max_steps=400)
     wrapper = RandomizedActions(base_env, p_replace=0.0)
 
     rng = jax.random.PRNGKey(0)
@@ -157,7 +157,7 @@ def test_randomized_actions_p1_matches_rng_logic():
     and checking that env sees exactly this random_action.
     """
     base_env = Overcooked(layout=FrozenDict(
-        cramped_room), num_agents=2, random_reset=False, max_steps=400, soup_cook_time=5)
+        cramped_room), num_agents=2, random_reset=False, max_steps=400)
     wrapper = RandomizedActions(base_env, p_replace=1.0)
 
     rng = jax.random.PRNGKey(42)
@@ -194,7 +194,7 @@ def test_randomized_actions_mixture_of_user_and_random():
     values are always within [0, n_actions).
     """
     base_env = Overcooked(layout=FrozenDict(
-        cramped_room), num_agents=2, random_reset=False, max_steps=400, soup_cook_time=5)
+        cramped_room), num_agents=2, random_reset=False, max_steps=400)
     wrapper = RandomizedActions(base_env, p_replace=0.5)
 
     rng = jax.random.PRNGKey(7)
