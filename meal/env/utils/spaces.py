@@ -41,33 +41,6 @@ class Discrete(Space):
 		return range_cond
 
 
-# class MultiDiscrete(Space):
-#     """
-#     Minimal jittable class for multi-discrete gymnax spaces.
-#     """
-
-#     def __init__(self, num_categories: Sequence[int]):
-#         """Num categories is the number of cat actions for each dim, [2,2,2]=2 actions x 3 dim"""
-#         self.num_categories = jnp.array(num_categories)
-#         self.shape = (len(num_categories),)
-#         self.dtype = jnp.int_
-
-#     def sample(self, rng: chex.PRNGKey) -> chex.Array:
-#         """Sample random action uniformly from set of categorical choices."""
-#         return jax.random.randint(
-#             rng, 
-#             shape=self.shape, 
-#             minval=0, 
-#             maxval=self.num_categories,
-#             dtype=self.dtype
-#         )
-
-#     def contains(self, x: jnp.int_) -> bool:
-#         """Check whether specific object is within space."""
-#         range_cond = jnp.logical_and(x >= 0, x < self.num_categories)
-#         return jnp.all(range_cond)
-
-
 class Box(Space):
 	"""
 	Minimal jittable class for array-shaped gymnax spaces.
@@ -126,30 +99,3 @@ class Dict(Space):
 		for k, space in self.spaces.items():
 			out_of_space += 1 - space.contains(getattr(x, k))
 		return out_of_space == 0
-
-
-# class Tuple(Space):
-# 	"""Minimal jittable class for tuple (product) of jittable spaces."""
-# 	def __init__(self, spaces: Union[tuple, list]):
-# 		self.spaces = spaces
-# 		self.num_spaces = len(spaces)
-
-# 	def sample(self, rng: chex.PRNGKey) -> Tuple[chex.Array]:
-# 		"""Sample random action from all subspaces."""
-# 		key_split = jax.random.split(rng, self.num_spaces)
-# 		return tuple(
-# 			[
-# 				space.sample(key_split[i])
-# 				for i, space in enumerate(self.spaces)
-# 			]
-# 		)
-
-# 	def contains(self, x: jnp.int_) -> bool:
-# 		"""Check whether dimensions of object are within subspace."""
-# 		# type_cond = isinstance(x, tuple)
-# 		# num_space_cond = len(x) != len(self.spaces)
-# 		# Check for each space individually
-# 		out_of_space = 0
-# 		for space in self.spaces:
-# 			out_of_space += 1 - space.contains(x)
-# 		return out_of_space == 0
