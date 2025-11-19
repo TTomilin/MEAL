@@ -145,25 +145,32 @@ def make_jaxnav_sequence(
         num_agents: int,
         max_steps: int,
 ) -> List[JaxNav]:
-    """Very simple JaxNav CL sequence: same obs/act space, different random maps."""
-    envs = []
+    """JaxNav CL sequence: same dynamics, random Grid-Rand-Poly maps per task."""
+    key = jax.random.PRNGKey(seed)
+    envs: List[JaxNav] = []
+
     for t in range(sequence_length):
-        # different RNG per task so maps differ
-        key = jax.random.PRNGKey(seed + t)
+        # split rng for this task
+        key, k_fill = jax.random.split(key, 2)
+
+        # obstacle density per task
+        fill = float(jax.random.uniform(k_fill, (), minval=0.2, maxval=0.6))
 
         env = JaxNav(
             num_agents=num_agents,
-            act_type="Discrete",  # stick to Discrete so PPO stays sane
+            act_type="Discrete",
             max_steps=max_steps,
-            map_id="Grid-Rand-Poly",  # or "Grid-Rand", or "Grid-Rand-Barn" if you go single-agent
-            map_params={  # you can tune difficulty here later
-                "map_size": (7, 7),
-                "fill": 0.3,
+            map_id="Grid-Rand-Poly",
+            map_params={
+                "map_size": (12, 12),
+                "fill": fill,
+                "cell_size": 1.0,
             },
             fixed_lambda=True,
-            rew_lambda=1.0,  # purely individual rewards; no social mixing here
+            rew_lambda=1.0,
         )
         envs.append(env)
+
     return envs
 
 
@@ -259,9 +266,8 @@ def main():
     # Wrap environments with LogWrapper
     env_names = []
     for i, env in enumerate(envs):
-        env = LogWrapper(env, replace_info=False)
-        env_name = env.map_id
-        env_names.append(env_name)
+        envs[i] = LogWrapper(env, replace_info=False)
+        env_names.append(envs[i].map_id)
 
     # set extra config parameters based on the environment
     temp_env = envs[0]
