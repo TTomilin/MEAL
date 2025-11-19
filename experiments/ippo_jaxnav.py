@@ -23,7 +23,7 @@ from experiments.evaluation_jaxnav import evaluate_all_envs, make_eval_fn
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.model.mlp import ActorCritic as MLPActorCritic
 from experiments.utils import *
-from meal.env.jaxnav import JaxNav
+from meal.env.jaxnav import JaxNav, JaxNavVisualizer
 from meal.wrappers.logging import LogWrapper
 
 
@@ -162,7 +162,7 @@ def make_jaxnav_sequence(
             max_steps=max_steps,
             map_id="Grid-Rand-Poly",
             map_params={
-                "map_size": (12, 12),
+                "map_size": (7, 7),
                 "fill": fill,
                 "cell_size": 1.0,
             },
@@ -172,6 +172,79 @@ def make_jaxnav_sequence(
         envs.append(env)
 
     return envs
+
+
+def rollout_jaxnav_random(env: JaxNav, num_steps: int, seed: int = 0):
+    """
+    Simple random-policy rollout to debug JaxNav maps.
+
+    Returns:
+        obs_seq:     list of observations
+        state_seq:   list of State objects
+        reward_seq:  list of per-step total reward (sum over agents)
+        done_frames: jnp.array[num_agents] with first-done frame index per agent
+    """
+    key = jax.random.PRNGKey(seed)
+    key, reset_key = jax.random.split(key)
+
+    obs, state = env.reset(reset_key)
+    obs_seq = [obs]
+    state_seq = [state]
+    reward_seq = []
+
+    num_agents = env.num_agents
+    done_frames = jnp.full((num_agents,), num_steps - 1, dtype=jnp.int32)
+
+    # assume symmetric discrete action space like in your training code
+    action_dim = env.action_space().n
+    agents = env.agents  # e.g. ["agent_0", "agent_1", ...]
+
+    for t in range(num_steps):
+        key, act_key, step_key = jax.random.split(key, 3)
+
+        # sample one action per agent
+        acts_vec = jax.random.randint(act_key, (num_agents,), minval=0, maxval=action_dim)
+        actions = {a: acts_vec[i] for i, a in enumerate(agents)}
+
+        obs, state, reward, done, info = env.step(step_key, state, actions)
+
+        obs_seq.append(obs)
+        state_seq.append(state)
+
+        # reward can be a dict (per-agent) or an array; convert to scalar
+        if isinstance(reward, dict):
+            # sum over agents
+            r = 0.0
+            for v in reward.values():
+                r += float(v)
+        else:
+            r = float(jnp.sum(jnp.asarray(reward)))
+        reward_seq.append(r)
+
+        # normalize done into per-agent boolean vector
+        if isinstance(done, dict):
+            # Multi-agent dict from JaxNav: use "__all__" if present, otherwise per-agent flags
+            if "__all__" in done:
+                ep_done_scalar = bool(done["__all__"])
+                done_arr = jnp.full((env.num_agents,), ep_done_scalar)
+            else:
+                # assume per-agent dict keyed by agent ids
+                done_arr = jnp.array([bool(done[a]) for a in env.agents], dtype=jnp.bool_)
+        else:
+            done_arr = jnp.asarray(done, jnp.bool_)
+            if done_arr.ndim == 0:
+                done_arr = jnp.full((env.num_agents,), done_arr)
+
+        # update first-step-of-done per agent for visualization
+        for i in range(env.num_agents):
+            if done_arr[i] and done_frames[i] is None:
+                done_frames[i] = t
+
+        # mark first done frame per agent
+        mask_new = (done_arr & (done_frames == (num_steps - 1)))
+        done_frames = jnp.where(mask_new, jnp.full_like(done_frames, t), done_frames)
+
+    return obs_seq, state_seq, reward_seq, done_frames
 
 
 ############################
@@ -821,16 +894,36 @@ def main():
 
             # Video Recording
             if cfg.record_video:
-                if visualizer is None:
-                    visualizer = create_visualizer(num_agents, cfg.env_name)
-                # Record a video after finishing training on a task
-                env_name = env.map_id
+                if isinstance(env, LogWrapper):
+                    env = env._env
+
                 start_time = time.time()
-                states = rollout_for_video(cfg, train_state, env, network, task_idx, cfg.video_length)
+
+                obs_seq, state_seq, reward_seq, done_frames = rollout_jaxnav_random(
+                    env,
+                    num_steps=cfg.video_length,
+                    seed=cfg.seed,
+                )
+                task_name = f"task_{task_idx}_{env.map_id}"
                 print(f"Rollout for video took {time.time() - start_time:.2f} seconds.")
+                if visualizer is None:
+                    visualizer = JaxNavVisualizer(
+                        env=env,
+                        obs_seq=obs_seq,
+                        state_seq=state_seq,
+                        reward_seq=reward_seq,
+                        done_frames=done_frames,
+                        title_text=task_name,
+                        plot_lidar=True,
+                        plot_path=True,
+                        plot_agent=True,
+                        plot_reward=True,
+                    )
+
+                # Record the video
                 start_time = time.time()
-                file_path = f"{exp_dir}/task_{task_idx}_{env_name}.mp4"
-                visualizer.animate(states, out_path=file_path, task_idx=task_idx, env=env)
+                file_path = f"{exp_dir}/{task_name}.mp4"
+                visualizer.animate(save_fname=file_path, view=False)
                 print(f"Animating video took {time.time() - start_time:.2f} seconds.")
 
             # save the model

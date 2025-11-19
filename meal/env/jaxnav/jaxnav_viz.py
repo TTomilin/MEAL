@@ -90,8 +90,10 @@ class JaxNavVisualizer(object):
         txt_to_plot = []
         txt_to_plot.append(f"Time: {frame * self.env.dt:.2f} s")
         # self.ax.text(0.05, 0.95, f"Time: {frame*self.env.dt:.2f} s", transform=self.ax.transAxes, fontsize=12, verticalalignment='top', c='w')
-        if self.plot_reward:
-            self.reward += self.reward_seq[frame]
+        if self.plot_reward and self.reward_seq is not None:
+            if frame < len(self.reward_seq):
+                self.reward += self.reward_seq[frame]
+            # else: no more rewards, just keep cumulative value as is
             txt_to_plot.append(f"R: {self.reward:.2f}")
         if self.title_text is not None:
             title_text = self.title_text + ' ' + ' '.join(txt_to_plot)
