@@ -30,6 +30,10 @@ BASE_REW_SHAPING_PARAMS = {
     "SOUP_DISTANCE_REW": 0,
 }
 
+# Pot status indicated by an integer, which ranges from 23 to 0
+_POT_EMPTY_STATUS = 23  # 22 = 1 onion in pot; 21 = 2 onions in pot; 20 = 3 onions in pot
+_POT_FULL_STATUS = 20  # 3 onions. Below this status, pot is cooking, and status acts like a countdown timer.
+_MAX_ONIONS_IN_POT = 3  # A pot has at most 3 onions. A soup contains exactly 3 onions.
 
 class Actions(IntEnum):
     # Turn left, turn right, move forward
@@ -56,13 +60,12 @@ class State:
     time: int
     terminal: bool
     task_id: int
+    pot_empty_status: int
+    pot_full_status: int
+    max_onions_in_pot: int
 
 
-# Pot status indicated by an integer, which ranges from 23 to 0
-POT_EMPTY_STATUS = 23  # 22 = 1 onion in pot; 21 = 2 onions in pot; 20 = 3 onions in pot
-POT_FULL_STATUS = 20  # 3 onions. Below this status, pot is cooking, and status acts like a countdown timer.
 POT_READY_STATUS = 0
-MAX_ONIONS_IN_POT = 3  # A pot has at most 3 onions. A soup contains exactly 3 onions.
 
 URGENCY_CUTOFF = 40  # When this many time steps remain, the urgency layer is flipped on
 DELIVERY_REWARD = 20
@@ -84,6 +87,7 @@ class Overcooked(MultiAgentEnv):
             agent_restrictions: dict = None,
             max_pots: int = 5,
             max_goals: int = 2,
+            sample_pot_cooking_dynamics: bool = False,
             **env_kwargs
     ):
         super().__init__(num_agents=num_agents)
@@ -135,6 +139,7 @@ class Overcooked(MultiAgentEnv):
         self.max_steps = max_steps
         self.task_id = task_id
         self.agent_restrictions = agent_restrictions or {}
+        self.sample_pot_cooking_dynamics = sample_pot_cooking_dynamics
 
     # ─────────────────────────  observation  ──────────────────────
 
@@ -200,14 +205,14 @@ class Overcooked(MultiAgentEnv):
 
         pot_status = maze[:, :, 2] * pot_mask  # 0–23   at pot tiles
 
-        onions_in_pot = jnp.minimum(POT_EMPTY_STATUS - pot_status,
-                                    MAX_ONIONS_IN_POT) * (pot_status >= POT_FULL_STATUS)
+        onions_in_pot = jnp.minimum(state.pot_empty_status - pot_status,
+                                    state.max_onions_in_pot) * (pot_status >= state.pot_full_status)
 
-        onions_in_soup = (jnp.minimum(POT_EMPTY_STATUS - pot_status,
-                                      MAX_ONIONS_IN_POT) * (pot_status < POT_FULL_STATUS)
-                          * pot_mask + MAX_ONIONS_IN_POT * dish_mask)
+        onions_in_soup = (jnp.minimum(state.pot_empty_status - pot_status,
+                                      state.max_onions_in_pot) * (pot_status < state.pot_full_status)
+                          * pot_mask + state.max_onions_in_pot * dish_mask)
 
-        pot_cook_time = pot_status * (pot_status < POT_FULL_STATUS)
+        pot_cook_time = pot_status * (pot_status < state.pot_full_status)
         soup_ready = pot_mask * (pot_status == POT_READY_STATUS) + dish_mask
         urgency = jnp.ones_like(obj, jnp.uint8) * ((self.max_steps - state.time) < URGENCY_CUTOFF)
 
@@ -227,7 +232,7 @@ class Overcooked(MultiAgentEnv):
         soup_ready_with_inv = soup_ready + (jnp.sum(agent_inv_items, 0) == OBJECT_TO_INDEX["dish"]) * jnp.sum(
             pos_layers, 0)
         onions_in_soup_with_inv = onions_in_soup + (
-                jnp.sum(agent_inv_items, 0) == OBJECT_TO_INDEX["dish"]) * 3 * jnp.sum(pos_layers, 0)
+                jnp.sum(agent_inv_items, 0) == OBJECT_TO_INDEX["dish"]) * state.max_onions_in_pot * jnp.sum(pos_layers, 0)
 
         # Rebuild env_layers with agent inventory
         env_layers_with_inv = jnp.stack([
@@ -373,7 +378,8 @@ class Overcooked(MultiAgentEnv):
                 lambda _: self.process_interact(
                     maze, state.wall_map, fwd_pos_all,
                     inv, idx, state.agent_pos, agent_pos,
-                    agent_dir_idx, state.pot_pos),
+                    agent_dir_idx, state.pot_pos, 
+                    state.pot_empty_status, state.pot_full_status),
                 # no-op branch
                 lambda _: (maze, inv[idx], 0., 0.),
                 operand=None,
@@ -402,7 +408,7 @@ class Overcooked(MultiAgentEnv):
             y, x = pos[1], pos[0]
 
             status = maze.at[y, x, -1].get()
-            cooking = (status <= POT_FULL_STATUS) & (status > POT_READY_STATUS)
+            cooking = (status <= state.pot_full_status) & (status > POT_READY_STATUS)
             new_status = jnp.where(cooking, status - 1, status)
 
             # only write back if this is a real pot
@@ -554,6 +560,18 @@ class Overcooked(MultiAgentEnv):
                 # Combine layout and random positions
                 agent_idx = jnp.concatenate([available_positions, additional_positions])
 
+        if self.sample_pot_cooking_dynamics:
+            key, k1, k2 = jax.random.split(key, 3)
+            # global for this episode, shared by all pots
+            max_onions_in_pot = jax.random.randint(k1, (), 1, 6)   # [1,5]
+            cook_time         = jax.random.randint(k2, (), 10, 31) # [10,30]
+            pot_full_status   = cook_time
+            pot_empty_status  = cook_time + max_onions_in_pot
+        else:
+            pot_empty_status = _POT_EMPTY_STATUS
+            max_onions_in_pot = _MAX_ONIONS_IN_POT
+            pot_full_status = _POT_FULL_STATUS
+
         agent_pos = jnp.array([agent_idx % width, agent_idx // width], dtype=jnp.uint32).transpose()  # dim = n_agents x 2
 
         key, subkey = jax.random.split(key)
@@ -591,8 +609,8 @@ class Overcooked(MultiAgentEnv):
         key, subkey = jax.random.split(key)
         # Pot status is determined by a number between 0 (inclusive) and pot_empty_status+1 (exclusive)
         # pot_empty_status corresponds to an empty pot (default 23, or 8 for tests with soup_cook_time=5)
-        pot_status = jax.random.randint(subkey, (pot_idx.shape[0],), 0, POT_EMPTY_STATUS + 1)
-        pot_status = pot_status * random_reset + (1 - random_reset) * jnp.ones((pot_idx.shape[0])) * POT_EMPTY_STATUS
+        pot_status = jax.random.randint(subkey, (pot_idx.shape[0],), 0, pot_empty_status + 1)
+        pot_status = pot_status * random_reset + (1 - random_reset) * jnp.ones((pot_idx.shape[0])) * pot_empty_status
 
         onion_pos = jnp.array([])
         plate_pos = jnp.array([])
@@ -636,7 +654,10 @@ class Overcooked(MultiAgentEnv):
             maze_map=maze_map,
             time=0,
             terminal=False,
-            task_id=self.task_id
+            task_id=self.task_id,
+            pot_empty_status=pot_empty_status,
+            max_onions_in_pot=max_onions_in_pot,
+            pot_full_status=pot_full_status,
         )
 
         obs = self.get_obs(state)
@@ -654,6 +675,8 @@ class Overcooked(MultiAgentEnv):
             agent_pos_curr: chex.Array,
             agent_dir_idx_all: chex.Array,
             pot_pos: chex.Array,
+            pot_empty_status: chex.Array,
+            pot_full_status: chex.Array,
     ) -> Tuple[chex.Array, int, float, float]:
         """Assume agent took interact actions. Result depends on what agent is facing and what it is holding."""
 
@@ -693,9 +716,9 @@ class Overcooked(MultiAgentEnv):
         holding_dish = jnp.array(object_in_inv == OBJECT_TO_INDEX["dish"])
 
         # Interactions with pot. 3 cases: add onion if missing, collect soup if ready, do nothing otherwise
-        case_1 = (pot_status > POT_FULL_STATUS) * holding_onion * object_is_pot
+        case_1 = (pot_status > pot_full_status) * holding_onion * object_is_pot
         case_2 = (pot_status == POT_READY_STATUS) * holding_plate * object_is_pot
-        case_3 = (pot_status > POT_READY_STATUS) * (pot_status <= POT_FULL_STATUS) * object_is_pot
+        case_3 = (pot_status > POT_READY_STATUS) * (pot_status <= pot_full_status) * object_is_pot
         else_case = ~case_1 * ~case_2 * ~case_3
 
         # give reward for placing onion in pot, and for picking up soup
@@ -705,7 +728,7 @@ class Overcooked(MultiAgentEnv):
         # Update pot status and object in inventory
         new_pot_status = \
             case_1 * (pot_status - 1) \
-            + case_2 * POT_EMPTY_STATUS \
+            + case_2 * pot_empty_status \
             + case_3 * pot_status \
             + else_case * pot_status
         new_object_in_inv = \
@@ -782,7 +805,7 @@ class Overcooked(MultiAgentEnv):
         num_plates_in_inv = jnp.sum(inventory == OBJECT_TO_INDEX["plate"])
         pot_loc_layer = jnp.array(maze_map[..., 0] == OBJECT_TO_INDEX["pot"], dtype=jnp.uint8)
         padded_map = maze_map[..., 2]
-        num_notempty_pots = jnp.sum((padded_map != POT_EMPTY_STATUS) * pot_loc_layer)
+        num_notempty_pots = jnp.sum((padded_map != pot_empty_status) * pot_loc_layer)
         is_dish_pickup_useful = num_plates_in_inv < num_notempty_pots
 
         plate_loc_layer = (maze_map == OBJECT_TO_INDEX["plate"]).astype(jnp.uint8)
