@@ -34,7 +34,8 @@ import numpy as np
 import wandb
 from wandb.apis.public import Run
 
-from experiments.results.download.common import cli, want, experiment_suffix, unwrap_wandb_config
+from experiments.results.download.common import cli, want, experiment_suffix, unwrap_wandb_config, build_filters, \
+    difficulty_string
 
 # ---------------------------------------------------------------------------
 # CONSTANTS
@@ -213,10 +214,10 @@ def main() -> None:
     base_workspace = Path(__file__).resolve().parent.parent
     ext = 'json' if args.format == 'json' else 'npz'
 
-    for run in api.runs(args.project):
-        if not want(run, args):
-            continue
+    filters = build_filters(args)
+    runs = api.runs(args.project, filters=filters, per_page=200)
 
+    for run in runs:
         cfg = run.config
         if not isinstance(cfg, dict):
             cfg = unwrap_wandb_config(json.loads(cfg))
@@ -229,7 +230,7 @@ def main() -> None:
         elif algo == 'ippo_cbp':
             algo = 'ippo'
             cl_method = 'CBP'
-        if cl_method == 'EWC' and cfg.get("ewc_mode") == "online":
+        if cl_method == 'EWC' and cfg.get("importance_mode") == "online":
             cl_method = "Online_EWC"
 
         # Handle partial observability experiments
@@ -240,6 +241,7 @@ def main() -> None:
         seq_len = cfg.get("seq_length")
         seed = max(cfg.get("seed", 1), 1)
         num_agents = cfg.get("num_agents", 1)  # Default to 1 agent if not specified
+        level_string = difficulty_string(cfg)
         experiment = experiment_suffix(cfg)
 
         # Get reward setting info for logging
@@ -308,20 +310,20 @@ def main() -> None:
             print(f"[warn] {run.name} has no Scaled_returns/ keys and no partner keys")
             continue
 
-        exp_path = f"{strategy}_{seq_len}"
+        sequence = f"{strategy}_{seq_len}"
 
         # Handle repeat_sequence parameter
         if args.repeat_sequence is not None:
             repeat_sequence = cfg.get("repeat_sequence")
             if repeat_sequence is not None:
-                exp_path += f"_rep_{repeat_sequence}"
+                sequence += f"_rep_{repeat_sequence}"
                 # effective_seq_len = seq_len * args.repeat_sequence
                 print(f"[info] {run.name} using repeat_sequence={args.repeat_sequence}, seq_len={seq_len}")
 
         agents_string = f"agents_{num_agents}" if args.num_agents else ""
 
-        out_base = (
-                    base_workspace / args.output / algo / cl_method / experiment / agents_string / exp_path / f"seed_{seed}")
+        out_base = (base_workspace / args.output / algo / cl_method / level_string / agents_string / sequence /
+                    experiment / f"seed_{seed}")
 
         print(f"[info] Processing {run.name} with setting: {experiment}")
         print(f"[info] Output path: {out_base}")

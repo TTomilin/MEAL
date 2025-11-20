@@ -36,6 +36,7 @@ def make_sequence(
         strategy: str = "generate",
         num_agents: int = 2,
         difficulty: str = None,
+        sticky_actions: bool = False,
         **env_kwargs
 ):
     """
@@ -68,6 +69,7 @@ def make_sequence(
         strategy=strategy,
         num_agents=num_agents,
         difficulty=difficulty,
+        sticky_actions=sticky_actions,
         **env_kwargs
     )
 

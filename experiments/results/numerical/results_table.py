@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-"""Build a LaTeX table with mean ±95% CI (smaller font) for CL metrics."""
 from __future__ import annotations
 
 import argparse

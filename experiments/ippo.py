@@ -103,9 +103,8 @@ class Config:
     single_task_idx: Optional[int] = None
     random_reset: bool = False
     random_agent_start: bool = True
-
-    # Agent restriction parameters
     complementary_restrictions: bool = False  # One agent can't pick up onions, other can't pick up plates
+    sticky_actions: bool = False  # Actions have a probability of being forcefully repeated
 
     # ═══════════════════════════════════════════════════════════════════════════
     # EVALUATION PARAMETERS
@@ -200,7 +199,8 @@ def main():
         layout_names=cfg.layouts,
         difficulty=cfg.difficulty,
         repeat_sequence=cfg.repeat_sequence,
-        random_agent_start=cfg.random_agent_start
+        random_agent_start=cfg.random_agent_start,
+        sticky_actions=cfg.sticky_actions,
     )
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]

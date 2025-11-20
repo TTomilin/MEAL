@@ -49,6 +49,81 @@ def cli() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 # FILTER
 # ---------------------------------------------------------------------------
+def build_filters(args: argparse.Namespace) -> dict:
+    """Server-side filters for wandb.Api().runs()."""
+    # base: only finished runs
+    f: dict = {"state": "finished"}
+
+    # config.* filters mirroring the old `want` logic
+
+    if args.seeds:
+        f["config.seed"] = {"$in": args.seeds}
+
+    if args.algos:
+        # in this project it's `alg_name`
+        f["config.alg_name"] = {"$in": args.algos}
+
+    if args.cl_methods:
+        f["config.cl_method"] = {"$in": args.cl_methods}
+
+    if args.seq_length:
+        # you used it as a single int in `want`, so same here
+        f["config.seq_length"] = args.seq_length
+
+    if args.strategy:
+        f["config.strategy"] = args.strategy
+
+    if args.difficulty:
+        f["config.difficulty"] = {"$in": args.difficulty}
+
+    if args.wall_density is not None:
+        f["config.wall_density"] = args.wall_density
+
+    if args.num_agents is not None:
+        f["config.num_agents"] = args.num_agents
+
+    # reward_settings logic: default / sparse / individual
+    if args.reward_settings:
+        ors = []
+
+        # "default": neither sparse_rewards nor individual_rewards
+        if "default" in args.reward_settings:
+            ors.append({
+                "config.sparse_rewards": {"$in": [False, None]},
+                "config.individual_rewards": {"$in": [False, None]},
+            })
+
+        if "sparse" in args.reward_settings:
+            ors.append({"config.sparse_rewards": True})
+
+        if "individual" in args.reward_settings:
+            ors.append({"config.individual_rewards": True})
+
+        if len(ors) == 1:
+            # just merge a single case into f
+            f.update(ors[0])
+        else:
+            # combine base filter with OR over reward settings
+            f = {"$and": [f, {"$or": ors}]}
+
+    # complementary_restrictions flag
+    if args.complementary_restrictions:
+        f["config.complementary_restrictions"] = True
+
+    # wandb tags: these are run-level tags, not config tags
+    if args.wandb_tags:
+        f["tags"] = {"$in": args.wandb_tags}
+
+    # include specific runs by (partial) name: keep old semantics using regex
+    # old `want` did: any(tok in run.name for tok in args.include_runs)
+    if args.include_runs:
+        ors = [{"display_name": {"$regex": tok}} for tok in args.include_runs]
+        # $or coexists with the ANDed topline filters
+        f = {"$or": [f, *ors]}
+
+    return f
+
+
 def want(run: Run, args: argparse.Namespace) -> bool:
     cfg = run.config
     if not isinstance(cfg, dict):
@@ -110,7 +185,10 @@ def unwrap_wandb_config(cfg_like):
 
 def experiment_suffix(cfg: dict) -> str:
     """Return folder name encoding ablation settings. Returns a single suffix."""
-
+    if cfg.get("big_network", False):
+        return "big_network"
+    if cfg.get("sticky_actions", False):
+        return "sticky_actions"
     if cfg.get("complementary_restrictions", False):
         return "complementary_restrictions"
     if cfg.get("sparse_rewards", False):
@@ -127,10 +205,15 @@ def experiment_suffix(cfg: dict) -> str:
         return "no_layer_norm"
     if cfg.get("use_cnn"):
         return "cnn"
+    return ""
+
+def difficulty_string(cfg: dict) -> str:
     if cfg.get("difficulty") == 'easy':
         return "level_1"
     if cfg.get("difficulty") == 'medium':
         return "level_2"
     if cfg.get("difficulty") == 'hard':
         return "level_3"
-    return "main"
+    if cfg.get("difficulty") == 'extreme':
+        return "level_4"
+    return "UNDEFINED"

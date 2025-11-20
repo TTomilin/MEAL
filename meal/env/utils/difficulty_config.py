@@ -18,6 +18,7 @@ DIFFICULTY_PARAMS = {
         "view_ahead": 1,
         "view_sides": 1,
         "view_behind": 0,
+        "sticky_actions_prob": 0.1,
     },
     "medium": {
         "height": 9,
@@ -28,6 +29,7 @@ DIFFICULTY_PARAMS = {
         "view_ahead": 2,
         "view_sides": 1,
         "view_behind": 0,
+        "sticky_actions_prob": 0.2,
     },
     "hard": {
         "height": 11,
@@ -38,6 +40,7 @@ DIFFICULTY_PARAMS = {
         "view_ahead": 3,
         "view_sides": 1,
         "view_behind": 1,
+        "sticky_actions_prob": 0.3,
     },
     "extreme": {
         "height": 13,
@@ -48,6 +51,7 @@ DIFFICULTY_PARAMS = {
         "view_ahead": 4,
         "view_sides": 2,
         "view_behind": 1,
+        "sticky_actions_prob": 0.4,
     }
 }
 
