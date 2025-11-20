@@ -19,9 +19,11 @@ def make_eval_fn(reset_switch, step_switch, network, agents, num_envs: int, num_
 
         # Accumulators across the horizon per parallel env
         total_rewards = jnp.zeros((num_envs,), jnp.float32)
+        total_goals_reached = jnp.zeros((num_envs,), jnp.float32)
+        total_episodes = jnp.zeros((num_envs,), jnp.float32)
 
         def one_step(carry, _):
-            env_state, obs, rewards, rng = carry
+            env_state, obs, rewards, goals_reached, episodes, rng = carry
 
             # policy forward (greedy) on batched obs
             obs_batch = batchify(obs, agents, len(agents) * num_envs, not use_cnn)  # (num_actors, obs_dim)
@@ -39,20 +41,27 @@ def make_eval_fn(reset_switch, step_switch, network, agents, num_envs: int, num_
                 lambda k, s, a: step_switch(k, s, a, jnp.int32(env_idx))
             )(step_rng, env_state, env_act)
 
-            # accumulate per-agent rewards and soups
+            # accumulate per-agent rewards
             rewards += sum(reward[a] for a in agents)
 
-            return (env_state2, obs2, rewards, rng), None
+            # accumulate GoalR and NumN (episode stats)
+            goals_reached += info["GoalR"]
+            episodes += info["NumC"]
 
-        (env_state, obs, total_rewards, rng), _ = jax.lax.scan(
+            return (env_state2, obs2, rewards, goals_reached, episodes, rng), None
+
+        (env_state, obs, total_rewards, total_goals_reached, total_episodes, rng), _ = jax.lax.scan(
             one_step,
-            (env_state, obs, total_rewards, rng),
+            (env_state, obs, total_rewards, total_goals_reached, total_episodes, rng),
             xs=None,
             length=num_steps
         )
 
+        # Success per parallel env: GoalR / NumN, averaged over parallel envs
+        success_per_env = jnp.where(total_episodes > 0, total_goals_reached / total_episodes, 0.0)
+        avg_success = success_per_env.mean()
         avg_rewards = total_rewards.mean()
-        return avg_rewards
+        return avg_rewards, avg_success
 
     return evaluate_env
 
@@ -61,5 +70,5 @@ def evaluate_all_envs(rng, params, num_envs, evaluate_env):
     env_indices = jnp.arange(num_envs, dtype=jnp.int32)
     rngs = jax.random.split(rng, num_envs)
     eval_vmapped = jax.vmap(evaluate_env, in_axes=(0, None, 0))
-    avg_rewards = eval_vmapped(rngs, params, env_indices)
-    return avg_rewards
+    avg_rewards, avg_success = eval_vmapped(rngs, params, env_indices)
+    return avg_rewards, avg_success

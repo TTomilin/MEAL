@@ -822,9 +822,10 @@ def main():
 
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
-                        avg_rewards = evaluate_all_envs(eval_rng, train_state.params, seq_length, evaluate_env)
+                        avg_rewards, avg_success = evaluate_all_envs(eval_rng, train_state.params, seq_length, evaluate_env)
                         for i, env_name in enumerate(env_names):
                             metrics[f"Evaluation/Returns/{i}_{env_name}"] = avg_rewards[i]
+                            metrics[f"Evaluation/Success/{i}_{env_name}"] = avg_success[i]
 
                     def callback(args):
                         metrics, update_step, env_counter = args
