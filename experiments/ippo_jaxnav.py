@@ -150,25 +150,18 @@ def make_jaxnav_sequence(
     envs: List[JaxNav] = []
 
     for t in range(sequence_length):
-        # split rng for this task
-        key, k_fill = jax.random.split(key, 2)
-
-        # obstacle density per task
-        fill = float(jax.random.uniform(k_fill, (), minval=0.2, maxval=0.6))
-
         env = JaxNav(
             num_agents=num_agents,
             act_type="Discrete",
             max_steps=max_steps,
             map_id="Grid-Rand-Poly",
             map_params={
-                "map_size": (7, 7),
-                "fill": fill,
-                "cell_size": 1.0,
+                "map_size": (9, 9),
             },
-            fixed_lambda=True,
-            rew_lambda=1.0,
         )
+
+        key, k_layout = jax.random.split(key)
+        env.map_obj._fixed_map = env.map_obj.sample_map(k_layout)
         envs.append(env)
 
     return envs
@@ -906,25 +899,21 @@ def main():
                 )
                 task_name = f"task_{task_idx}_{env.map_id}"
                 print(f"Rollout for video took {time.time() - start_time:.2f} seconds.")
-                if visualizer is None:
-                    visualizer = JaxNavVisualizer(
-                        env=env,
-                        obs_seq=obs_seq,
-                        state_seq=state_seq,
-                        reward_seq=reward_seq,
-                        done_frames=done_frames,
-                        title_text=task_name,
-                        plot_lidar=True,
-                        plot_path=True,
-                        plot_agent=True,
-                        plot_reward=True,
-                    )
+                visualizer = JaxNavVisualizer(
+                    env=env,
+                    obs_seq=obs_seq,
+                    state_seq=state_seq,
+                    reward_seq=reward_seq,
+                    done_frames=done_frames,
+                    title_text=task_name,
+                )
 
                 # Record the video
                 start_time = time.time()
                 file_path = f"{exp_dir}/{task_name}.mp4"
                 visualizer.animate(save_fname=file_path, view=False)
                 print(f"Animating video took {time.time() - start_time:.2f} seconds.")
+                print(f"Video saved to {file_path}")
 
             # save the model
             repo_root = Path(__file__).resolve().parent.parent

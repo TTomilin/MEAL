@@ -31,6 +31,9 @@ class Map(object):
         self.rrt_step_size = 0.25
         self.goal_radius = 0.3
 
+        # If set, this layout is reused for all test cases for this Map instance
+        self._fixed_map = None
+
     @partial(jax.jit, static_argnums=[0])
     def sample_scenario(self, key):
         """ Sample map grid and agent start/goal positions """
@@ -52,7 +55,7 @@ class Map(object):
     def sample_test_case(self, key):
         """ Sample a test case for a given map """
         key, _key = jax.random.split(key)
-        map_data = self.sample_map(_key)
+        map_data = self.sample_map(_key) if self._fixed_map is None else self._fixed_map
         radii = jnp.array([self.rad * self.start_pad, self.goal_radius])
 
         def _sample_pair(key: chex.PRNGKey):
