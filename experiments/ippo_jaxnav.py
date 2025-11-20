@@ -96,6 +96,7 @@ class Config:
     seq_length: int = 10
     repeat_sequence: int = 1
     strategy: str = "generate"
+    map_dim: int = 7
     layouts: Optional[Sequence[str]] = field(default_factory=lambda: [])
     env_kwargs: Optional[Sequence[dict]] = None
     difficulty: Optional[str] = None
@@ -103,8 +104,6 @@ class Config:
     random_reset: bool = False
     random_agent_start: bool = True
     separated_agents: bool = False  # only accept layouts where agents occupy different connected regions of the grid
-
-    # Agent restriction parameters
     complementary_restrictions: bool = False  # One agent can't pick up onions, other can't pick up plates
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -144,6 +143,7 @@ def make_jaxnav_sequence(
         seed: int,
         num_agents: int,
         max_steps: int,
+        map_dim: int,
 ) -> List[JaxNav]:
     """JaxNav CL sequence: same dynamics, random Grid-Rand-Poly maps per task."""
     key = jax.random.PRNGKey(seed)
@@ -156,7 +156,7 @@ def make_jaxnav_sequence(
             max_steps=max_steps,
             map_id="Grid-Rand-Poly",
             map_params={
-                "map_size": (9, 9),
+                "map_size": (map_dim, map_dim),
             },
         )
 
@@ -294,6 +294,7 @@ def main():
         seed=seed,
         num_agents=cfg.num_agents,
         max_steps=cfg.num_steps,
+        map_dim=cfg.map_dim,
     )
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
