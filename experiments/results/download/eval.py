@@ -230,7 +230,7 @@ def main() -> None:
         elif algo == 'ippo_cbp':
             algo = 'ippo'
             cl_method = 'CBP'
-        if cl_method == 'EWC' and cfg.get("ewc_mode") == "online":
+        if cl_method == 'EWC' and cfg.get("importance_mode") == "online":
             cl_method = "Online_EWC"
 
         # Handle partial observability experiments

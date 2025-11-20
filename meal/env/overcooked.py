@@ -590,7 +590,6 @@ class Overcooked(MultiAgentEnv):
 
         key, subkey = jax.random.split(key)
         # Pot status is determined by a number between 0 (inclusive) and pot_empty_status+1 (exclusive)
-        # pot_empty_status corresponds to an empty pot (default 23, or 8 for tests with soup_cook_time=5)
         pot_status = jax.random.randint(subkey, (pot_idx.shape[0],), 0, POT_EMPTY_STATUS + 1)
         pot_status = pot_status * random_reset + (1 - random_reset) * jnp.ones((pot_idx.shape[0])) * POT_EMPTY_STATUS
 

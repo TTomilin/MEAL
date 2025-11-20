@@ -189,6 +189,8 @@ def experiment_suffix(cfg: dict) -> str:
         return "big_network"
     if cfg.get("separated_agents", False):
         return "separated_agents"
+    if cfg.get("sticky_actions", False):
+        return "sticky_actions"
     if cfg.get("complementary_restrictions", False):
         return "complementary_restrictions"
     if cfg.get("sparse_rewards", False):
