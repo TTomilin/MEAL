@@ -41,8 +41,11 @@ from experiments.results.download.common import cli, want, experiment_suffix, un
 # CONSTANTS
 # ---------------------------------------------------------------------------
 EVAL_PREFIX = "Evaluation/Soup_Scaled/"
+EVAL_PREFIX_JAX_NAV = "Evaluation/Success/"
 KEY_PATTERN = re.compile(rf"^{re.escape(EVAL_PREFIX)}(\d+)_(.+)_(\d+)$")
+KEY_PATTERN_JAX_NAV = re.compile(rf"^{re.escape(EVAL_PREFIX_JAX_NAV)}(\d+)_(.+)$")
 TRAINING_KEY = "Soup/scaled"
+TRAINING_KEY_JAX_NAV = "Return"
 DORMANT_RATIO_KEY = "Neural_Activity/dormant_ratio"
 PARTNER_EVAL_PATTERN = re.compile(r"^Eval/EgoReturn_Partner(\d+)$")
 TRAINING_RETURNS_KEY = "Train/Ego_returned_episode_returns"
@@ -51,14 +54,14 @@ TRAINING_RETURNS_KEY = "Train/Ego_returned_episode_returns"
 # ---------------------------------------------------------------------------
 # HELPERS
 # ---------------------------------------------------------------------------
-def discover_eval_keys(run: Run, include_dormant_ratio: bool = False) -> List[str]:
+def discover_eval_keys(run: Run, key_pattern, training_key: str, include_dormant_ratio: bool = False) -> List[str]:
     """Retrieve & sort eval keys, plus the one training key if present."""
     df = run.history(samples=500)
     # only exact eval keys
-    keys = [k for k in df.columns if KEY_PATTERN.match(k)]
+    keys = [k for k in df.columns if key_pattern.match(k)]
     # include training series, if logged
-    if TRAINING_KEY in df.columns:
-        keys.append(TRAINING_KEY)
+    if training_key in df.columns:
+        keys.append(training_key)
 
     # include dormant ratio, if requested and logged
     if include_dormant_ratio and DORMANT_RATIO_KEY in df.columns:
@@ -66,10 +69,10 @@ def discover_eval_keys(run: Run, include_dormant_ratio: bool = False) -> List[st
 
     # sort eval ones by idx, leave training and dormant ratio last
     def idx_of(key: str) -> int:
-        m = KEY_PATTERN.match(key)
+        m = key_pattern.match(key)
         if m:
             return int(m.group(1))
-        elif key == TRAINING_KEY:
+        elif key == training_key:
             return 10 ** 6
         elif key == DORMANT_RATIO_KEY:
             return 10 ** 6 + 1
@@ -224,6 +227,7 @@ def main() -> None:
 
         algo = cfg.get("alg_name")
         cl_method = cfg.get("cl_method", "UNKNOWN_CL")
+        env_name = cfg.get("env_name", "overcooked")
 
         if algo is None:
             algo = 'ppo'  # Default to PPO if not specified
@@ -234,7 +238,7 @@ def main() -> None:
             cl_method = "Online_EWC"
 
         # Handle partial observability experiments
-        if cfg.get("env_name") == "overcooked_po":
+        if env_name == "overcooked_po":
             cl_method = f"{cl_method}_partial"
 
         strategy = cfg.get("strategy")
@@ -244,14 +248,8 @@ def main() -> None:
         level_string = difficulty_string(cfg)
         experiment = experiment_suffix(cfg)
 
-        # Get reward setting info for logging
-        sparse_rewards = cfg.get("sparse_rewards", False)
-        individual_rewards = cfg.get("individual_rewards", False)
-        reward_setting = "default"
-        if sparse_rewards:
-            reward_setting = "sparse_rewards"
-        elif individual_rewards:
-            reward_setting = "individual_rewards"
+        key_pattern = KEY_PATTERN_JAX_NAV if env_name == "jaxnav" else KEY_PATTERN
+        training_key = TRAINING_KEY_JAX_NAV if env_name == "jaxnav" else TRAINING_KEY
 
         # Check if this is a partner generalization run
         partner_keys = discover_partner_keys(run)
@@ -305,9 +303,9 @@ def main() -> None:
             continue  # Skip regular eval key processing for partner runs
 
         # find eval keys as W&B actually logged them
-        eval_keys = discover_eval_keys(run, include_dormant_ratio=args.include_dormant_ratio)
+        eval_keys = discover_eval_keys(run, key_pattern, training_key, include_dormant_ratio=args.include_dormant_ratio)
         if not eval_keys:
-            print(f"[warn] {run.name} has no Scaled_returns/ keys and no partner keys")
+            print(f"[warn] {run.name} has no matched keys and no partner keys")
             continue
 
         sequence = f"{strategy}_{seq_len}"
@@ -329,15 +327,17 @@ def main() -> None:
         print(f"[info] Output path: {out_base}")
 
         # iterate keys, skipping existing files unless overwrite
-        for key in discover_eval_keys(run, include_dormant_ratio=args.include_dormant_ratio):
+        for key in discover_eval_keys(run, key_pattern, training_key, include_dormant_ratio=args.include_dormant_ratio):
             # choose filename
-            if key == TRAINING_KEY:
-                filename = f"training_soup.{ext}"
+            if key == training_key:
+                filename = f"training_soup.{ext}" if env_name != "jaxnav" else f"training_return.{ext}"
             elif key == DORMANT_RATIO_KEY:
                 filename = f"dormant_ratio.{ext}"
             else:
-                idx, name, _ = KEY_PATTERN.match(key).groups()
-                filename = f"{idx}_{name}_soup.{ext}"
+                groups = key_pattern.match(key).groups()
+                idx, name, _ = groups if env_name != "jaxnav" else groups + (None,)
+                eval_metric = "success" if env_name == "jaxnav" else "soup"
+                filename = f"{idx}_{name}_{eval_metric}.{ext}"
 
             out = out_base / filename
             if out.exists() and not args.overwrite:

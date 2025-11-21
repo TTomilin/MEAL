@@ -34,6 +34,7 @@ def compute_metrics(
         data_root: Path,
         algo: str,
         method: str,
+        env: str,
         strategy: str,
         seq_len: int,
         seeds: List[int],
@@ -44,6 +45,10 @@ def compute_metrics(
     """Compute metrics for a single algorithm/method/num_agents combination."""
     AP_seeds, F_seeds, FT_seeds = [], [], []
 
+    eval_suffix = "success" if env == "jaxnav" else "soup"
+    training_metric = "return" if env == "jaxnav" else "soup"
+    level_string = "jaxnav" if env == "jaxnav" else f"level_{level}"
+
     # Load baseline data once for forward transfer calculation
     repo_root = Path(__file__).resolve().parent.parent
     baseline_data = {}
@@ -52,7 +57,7 @@ def compute_metrics(
         / data_root
         / algo
         / "single"
-        / f"level_{level}"
+        / level_string
         / f"{strategy}_{seq_len}"
     )
 
@@ -62,7 +67,7 @@ def compute_metrics(
             # Load baseline training data for each task
             baseline_training_files = []
             for i in range(seq_len):
-                baseline_file = baseline_seed_dir / f"{i}_training_soup.json"
+                baseline_file = baseline_seed_dir / f"{i}_training_{training_metric}.json"
                 if baseline_file.exists():
                     baseline_series = load_series(baseline_file)
                     # Validate the loaded data
@@ -83,13 +88,12 @@ def compute_metrics(
                 else:
                     baseline_training_files.append(None)
             baseline_data[seed] = baseline_training_files
-
     base_folder = (
             repo_root
             / data_root
             / algo
             / method
-            / f"level_{level}"
+            / level_string
             / f"agents_{num_agents}"
             / f"{strategy}_{seq_len}"
     )
@@ -100,17 +104,15 @@ def compute_metrics(
             print(f"[debug] seed directory does not exist: {sd}")
             continue
 
-
-
         # Per‑environment evaluation curves
         env_series: List[List[float]] = []
         present_task_ids: List[int] = []
         for i in range(seq_len):
             # find eval file for task i; ignore training files
-            cand = sorted([p for p in sd.glob(f"{i}_*_soup.json") if "training" not in p.name])
+            cand = sorted([p for p in sd.glob(f"{i}_*_{eval_suffix}.json") if "training" not in p.name])
             if not cand:
                 # try a looser pattern (older dumps)
-                cand = sorted([p for p in sd.glob(f"{i}_*soup.*") if "training" not in p.name])
+                cand = sorted([p for p in sd.glob(f"{i}_*{eval_suffix}.*") if "training" not in p.name])
             if not cand:
                 # no eval file for this task; skip it
                 print(f"[info] missing eval for task {i}, seed {seed} — skipping this task")
@@ -122,11 +124,6 @@ def compute_metrics(
             print(f"[warn] no eval curves found for seed {seed}; skipping seed")
             continue
 
-
-
-
-
-
         L = max(len(s) for s in env_series)
         env_mat = np.vstack([
             np.pad(s, (0, L - len(s)), constant_values=s[-1]) for s in env_series
@@ -136,9 +133,9 @@ def compute_metrics(
         AP_seeds.append(env_mat.mean(axis=0)[-1])
 
         # Load training data for forward transfer calculation
-        training_fp = sd / "training_soup.json"
+        training_fp = sd / f"training_{training_metric}.json"
         if not training_fp.exists():
-            print(f"[warn] missing training_soup.json for {method} {num_agents}agents seed {seed}")
+            print(f"[warn] missing training_{training_metric}.json for {method} {num_agents}agents seed {seed}")
             FT_seeds.append(np.nan)
         else:
             training = load_series(training_fp)
@@ -256,12 +253,14 @@ def compare_agents(
         data_root: Path,
         algorithm: str,
         method: str,
+        env: str,
         strategy: str,
         seq_len: int,
         seeds: List[int],
         num_agents_list: List[int],
         levels: List[int],
         end_window_evals: int = 10,
+
 ) -> pd.DataFrame:
     """Compare results between different numbers of agents."""
     rows = []
@@ -275,6 +274,7 @@ def compare_agents(
                 data_root=data_root,
                 algo=algorithm,
                 method=method,
+                env=env,
                 strategy=strategy,
                 seq_len=seq_len,
                 seeds=seeds,
@@ -311,6 +311,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Compare results between different numbers of agents")
     p.add_argument("--data_root", default="data", help="Root directory containing the data")
     p.add_argument("--algorithm", default="ippo", help="Algorithm to analyze")
+    p.add_argument("--env", default="overcooked", help="Environment name")
     p.add_argument("--method", default="EWC", help="Continual learning method to compare")
     p.add_argument("--strategy", default="generate", help="Strategy name")
     p.add_argument("--seq_len", type=int, default=20, help="Sequence length")
@@ -343,6 +344,7 @@ if __name__ == "__main__":
         data_root=Path(args.data_root),
         algorithm=args.algorithm,
         method=args.method,
+        env=args.env,
         strategy=args.strategy,
         seq_len=args.seq_len,
         seeds=args.seeds,
