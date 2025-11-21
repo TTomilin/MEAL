@@ -1138,7 +1138,7 @@ def main():
 
             # Generate & log a GIF after finishing task i
             env_name = layout_names[i] if i < len(layout_names) else f"env_{i}"
-            states = rollout_for_video(config, current_train_state, env, actor, env_idx=i,
+            states = rollout_for_video(rng, config, current_train_state, env, actor, env_idx=i,
                                        max_steps=config.gif_len)
             visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=env_name, exp_dir=exp_dir)
 

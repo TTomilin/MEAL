@@ -1279,7 +1279,7 @@ def main():
             if config.record_gif:
                 # Generate & log a GIF after finishing task i
                 env_name = f"{task_idx}__{env.layout_name}"
-                states = rollout_for_video(config, train_state, env, network, env_idx=task_idx, max_steps=config.gif_len)
+                states = rollout_for_video(rng, config, train_state, env, network, env_idx=task_idx, max_steps=config.gif_len)
                 file_path = f"{exp_dir}/task_{task_idx}_{env_name}.gif"
                 # Pass environment instance to PO visualizer for view highlighting
                 if env_name == "overcooked_po":

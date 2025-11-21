@@ -880,7 +880,7 @@ def main():
                 # Record a video after finishing training on a task
                 env_name = env.layout_name
                 start_time = time.time()
-                states = rollout_for_video(cfg, train_state, env, network, task_idx, cfg.video_length)
+                states = rollout_for_video(rng, cfg, train_state, env, network, task_idx, cfg.video_length)
                 print(f"Rollout for video took {time.time() - start_time:.2f} seconds.")
                 start_time = time.time()
                 file_path = f"{exp_dir}/task_{task_idx}_{env_name}.mp4"
