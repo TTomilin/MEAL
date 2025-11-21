@@ -92,10 +92,10 @@ WWXWW
 
         # Set up gif recording
         frames = []
-        viz = OvercookedVisualizer(num_agents=2, use_old_rendering=False)
+        viz = OvercookedVisualizer(num_agents=2)
 
         def add_frame(st):
-            surface = viz.render(env.agent_view_size, st)
+            surface = viz.render(st)
             frame = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
             frames.append(frame)
 

@@ -6,11 +6,9 @@ from os import makedirs
 # Add the project root to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-import imageio.v3 as iio
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pygame
 from flax.core import FrozenDict
 
 from meal.env.layouts.presets import cramped_room
@@ -20,7 +18,7 @@ from meal.visualization.visualizer import OvercookedVisualizer
 # ---------------------------------------------------------------------
 # 1. Set up env (deterministic reset -> we know the spawn)
 # ---------------------------------------------------------------------
-env = Overcooked(layout=FrozenDict(cramped_room), num_agents=2, random_reset=False, max_steps=400)
+env = Overcooked(layout=FrozenDict(cramped_room), num_agents=2, random_reset=False, max_steps=400, random_cook_time=True)
 rng = jax.random.PRNGKey(0)
 obs, state = env.reset(rng)
 
@@ -85,7 +83,7 @@ for t, act in enumerate(actions, start=1):
 # ---------------------------------------------------------------------
 gif_path = "gifs/double_agent_cramped_room.gif"
 makedirs("gifs", exist_ok=True)
-viz.animate(states_for_gif, agent_view_size=5, out_path=gif_path)
+viz.animate(states_for_gif, out_path=gif_path)
 print(f"GIF saved to {gif_path}")
 
 # ---------------------------------------------------------------------
