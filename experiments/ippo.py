@@ -104,10 +104,13 @@ class Config:
     random_reset: bool = False
     random_agent_start: bool = True
     complementary_restrictions: bool = False  # One agent can't pick up onions, other can't pick up plates
+
+    # Non-stationarity environment parameters
     sticky_actions: bool = False  # Actions have a probability of being forcefully repeated
     slippery_tiles: bool = False  # Some floor tiles cause agents to slide randomly
     random_pot_size: bool = False  # Pot size is randomized at each reset
     random_cook_time: bool = False  # Soup cook time is randomized at each reset
+    non_stationary: bool = False  # Enable all 4 non-stationarity environment parameters
 
     # ═══════════════════════════════════════════════════════════════════════════
     # EVALUATION PARAMETERS
@@ -154,6 +157,13 @@ def main():
     print("Device: ", jax.devices())
 
     cfg = tyro.cli(Config)
+
+    # If non-stationary mode is enabled, force all 4 env knobs on
+    if cfg.non_stationary:
+        cfg.sticky_actions = True
+        cfg.slippery_tiles = True
+        cfg.random_pot_size = True
+        cfg.random_cook_time = True
 
     # Validate reward settings
     if cfg.sparse_rewards and cfg.individual_rewards:

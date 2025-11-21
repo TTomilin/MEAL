@@ -187,8 +187,16 @@ def experiment_suffix(cfg: dict) -> str:
     """Return folder name encoding ablation settings. Returns a single suffix."""
     if cfg.get("big_network", False):
         return "big_network"
+    if cfg.get("non_stationary", False):
+        return "non_stationary"
     if cfg.get("sticky_actions", False):
         return "sticky_actions"
+    if cfg.get("slippery_tiles", False):
+        return "slippery_tiles"
+    if cfg.get("random_pot_size", False):
+        return "random_pot_size"
+    if cfg.get("random_cook_time", False):
+        return "random_cook_time"
     if cfg.get("complementary_restrictions", False):
         return "complementary_restrictions"
     if cfg.get("sparse_rewards", False):
