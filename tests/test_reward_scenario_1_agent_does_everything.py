@@ -48,7 +48,7 @@ def test_scenario_1_agent_0_does_everything():
 
     # Set up env (deterministic reset -> we know the spawn)
     # Use shorter soup cooking time for faster tests
-    env = Overcooked(layout=FrozenDict(cramped_room), layout_name="Cramped Room", random_pot_size=True, random_cook_time=True)
+    env = Overcooked(layout=FrozenDict(cramped_room), layout_name="Cramped Room")
     states = []
 
     # Action aliases
@@ -95,7 +95,6 @@ def test_scenario_1_agent_0_does_everything():
         # Only record frames for the default setting to avoid redundancy
         if reward_setting == 'default':
             states.append(state)
-            print(f"Pot Size: {state.max_onions_in_pot} onions, Cook Time: {state.pot_full_status} steps")
 
         for t in range(len(actions)):
             rng, step_key = jax.random.split(rng)
