@@ -512,7 +512,6 @@ class Overcooked(MultiAgentEnv):
         # Whether to fully randomize the start state
         random_reset = self.random_reset
         layout = self.layout
-
         height = self.height
         width = self.width
         real_height = self.layout["height"]

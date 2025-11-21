@@ -122,7 +122,7 @@ def test_slippery_tiles_p0_is_transparent():
     regardless of which tiles are slippery or who is armed to slip.
     """
     base_env = Overcooked(layout=FrozenDict(cramped_room), layout_name="Cramped Room")
-    wrapper = SlipperyTiles(base_env, p_replace=0.0)
+    wrapper = SlipperyTiles(base_env, slip_prob=0.0)
 
     rng = jax.random.PRNGKey(0)
     obs, state = wrapper.reset(rng)
@@ -159,7 +159,7 @@ def test_slippery_tiles_p1_slips_when_armed():
     in {0,1,2,3}.
     """
     base_env = Overcooked(layout=FrozenDict(cramped_room), layout_name="Cramped Room")
-    wrapper = SlipperyTiles(base_env, p_replace=1.0)
+    wrapper = SlipperyTiles(base_env, slip_prob=1.0)
 
     rng = jax.random.PRNGKey(1)
     obs, state = wrapper.reset(rng)
@@ -204,7 +204,7 @@ def test_slippery_tiles_partial_prob_behaviour():
       - slipped[i] == False → applied action equals user action
     """
     base_env = Overcooked(layout=FrozenDict(cramped_room), layout_name="Cramped Room")
-    wrapper = SlipperyTiles(base_env, p_replace=0.5)
+    wrapper = SlipperyTiles(base_env, slip_prob=0.5)
 
     rng = jax.random.PRNGKey(7)
     obs, state = wrapper.reset(rng)

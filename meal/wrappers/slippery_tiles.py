@@ -28,34 +28,80 @@ class SlipperyTiles(JaxMARLWrapper):
       with probability p_replace.
     """
 
-    def __init__(self, env: MultiAgentEnv, p_replace: float = 0.1):
+    def __init__(self, env: MultiAgentEnv, slip_prob: float = 0.1):
         super().__init__(env)
-        self.p_replace = p_replace          # slip probability when "armed"
-        self.fraction_slippery = 0.25       # 25% of tiles are slippery
+        self.slip_prob = slip_prob  # slip probability when "armed"
+        self.fraction_slippery = 0.25  # 25% of tiles are slippery
 
         # We assume an Overcooked-style env with height/width & num_agents
         self.height = int(self._env.height)
         self.width = int(self._env.width)
         self.num_agents = int(self._env.num_agents)
 
+    def _update_slip_state(
+            self,
+            prev_state: SlipperyTileState,
+            env_state: State,
+    ) -> SlipperyTileState:
+        """Compute will_slip_next/last_pos for the next step."""
+        cur_pos = env_state.agent_pos  # (num_agents, 2)
+        last_pos = prev_state.last_pos
+
+        moved = jnp.any(cur_pos != last_pos, axis=-1)  # (num_agents,)
+
+        y = cur_pos[:, 1]
+        x = cur_pos[:, 0]
+        on_slippery = prev_state.slippery_mask[y, x].astype(jnp.bool_)
+
+        will_slip_next = moved & on_slippery
+
+        return SlipperyTileState(
+            env_state=env_state,
+            slippery_mask=prev_state.slippery_mask,
+            will_slip_next=will_slip_next,
+            last_pos=cur_pos,
+        )
+
     @partial(jax.jit, static_argnums=(0,))
     def reset(self, key: chex.PRNGKey) -> Tuple[chex.Array, SlipperyTileState]:
         # Reset underlying env
-        key, mask_key = jax.random.split(key)
-        obs, env_state = self._env.reset(mask_key)
+        key, env_key = jax.random.split(key)
+        obs, env_state = self._env.reset(env_key)
 
-        # Sample a fixed slippery mask for this episode
+        # ------------------------------------------------------------------
+        # Sample a fixed slippery mask for this episode, ONLY on walkable tiles
+        # Walkable = not a wall/counter AND not a goal tile.
+        # ------------------------------------------------------------------
         H, W = self.height, self.width
-        num_cells = H * W
-        num_slippery = int(self.fraction_slippery * num_cells)
 
-        # Choose num_slippery cells uniformly without replacement
-        perm = jax.random.permutation(key, num_cells)
-        chosen = perm[:num_slippery]
-        flat = jnp.zeros((num_cells,), dtype=jnp.bool_).at[chosen].set(True)
+        wall_map = env_state.wall_map  # (H, W) bool
+
+        # Build a (H, W) mask of goal tiles
+        goal_mask_layer = jnp.zeros_like(wall_map)
+        goal_y = env_state.goal_pos[:, 1]
+        goal_x = env_state.goal_pos[:, 0]
+        goal_mask_layer = goal_mask_layer.at[goal_y, goal_x].set(env_state.goal_mask)
+
+        # Walkable tiles are those that are not walls/counters and not goals
+        walkable = (~wall_map) & (~goal_mask_layer)  # (H, W) bool
+
+        # Sample approx. fraction_slippery of *walkable* tiles
+        flat_walkable = walkable.reshape(-1)
+
+        key, slip_key = jax.random.split(key)
+        slip_draw = jax.random.bernoulli(
+            slip_key,
+            p=self.fraction_slippery,
+            shape=flat_walkable.shape,
+        )
+
+        # A tile is slippery iff it is walkable and the Bernoulli says "yes"
+        flat = jnp.logical_and(flat_walkable, slip_draw)
         slippery_mask = flat.reshape((H, W))
 
-        # Initially nobody is armed to slip on the next step
+        # ------------------------------------------------------------------
+        # Slippery state bookkeeping
+        # ------------------------------------------------------------------
         will_slip_next = jnp.zeros((self.num_agents,), dtype=jnp.bool_)
         last_pos = env_state.agent_pos  # (num_agents, 2)
 
@@ -75,69 +121,94 @@ class SlipperyTiles(JaxMARLWrapper):
             action,
     ):
         """
-        1) Use state.will_slip_next to decide which agents *may* slip this step.
-        2) For those agents, with prob p_replace override their action
-           by a random move in {up, down, right, left}.
-        3) Step the underlying env with the effective actions.
-        4) From the new positions, mark agents that *just entered* a slippery
-           tile as will_slip_next for the next step.
+        JaxMARL-style step: `action` is a pytree (e.g. dict of scalars).
+        We apply slip to per-agent action indices, then call env.step.
         """
-
         # Split RNG: slip decision, direction choice, and env step
         key, slip_key, dir_key, env_key = jax.random.split(key, 4)
 
-        # Flatten the action pytree to a 1D array: one scalar per agent
+        # Flatten action pytree into (num_agents,)
         leaves, treedef = jax.tree_util.tree_flatten(action)
         actions_arr = jnp.stack([jnp.asarray(x).squeeze() for x in leaves], axis=0)
-        # actions_arr shape: (num_agents,)
-
-        # Sanity: we assume the number of leaves matches num_agents
-        # (this is the usual case for dict{agent: scalar_action})
-        # If it doesn't, JAX will complain anyway when shapes misalign.
         num_agents = actions_arr.shape[0]
 
-        # Bernoulli: which agents actually slip this step?
-        # Only those that were "armed" in will_slip_next can slip.
-        slip_draw = jax.random.bernoulli(slip_key, p=self.p_replace, shape=(num_agents,))
+        # Bernoulli: which agents *could* slip
+        slip_draw = jax.random.bernoulli(
+            slip_key, p=self.slip_prob, shape=(num_agents,)
+        )
         should_slip = slip_draw & state.will_slip_next
 
-        # For slipping agents: pick a random move action in {0,1,2,3}
-        # These are the indices for up/down/right/left in your Actions enum.
-        rand_dirs = jax.random.randint(dir_key, shape=(num_agents,), minval=0, maxval=4)
-        slip_actions = rand_dirs
+        # Random move in {0,1,2,3} = up/down/right/left
+        rand_dirs = jax.random.randint(
+            dir_key, shape=(num_agents,), minval=0, maxval=4
+        )
+        effective_arr = jnp.where(should_slip, rand_dirs, actions_arr)
 
-        effective_arr = jnp.where(should_slip, slip_actions, actions_arr)
-
-        # Rebuild the action pytree with the modified actions
+        # Rebuild pytree with modified actions
         effective_leaves = [effective_arr[i] for i in range(len(leaves))]
         effective_action = jax.tree_util.tree_unflatten(treedef, effective_leaves)
 
-        # Step underlying env with the modified actions
+        # Step underlying env
         obs, env_state, reward, done, info = self._env.step(
             env_key, state.env_state, effective_action
         )
 
-        # --- Update slip state for NEXT step ---------------------------------
-        # Current positions after env step
-        cur_pos = env_state.agent_pos  # (num_agents, 2)
-        last_pos = state.last_pos
-
-        # Did the agent actually move?
-        moved = jnp.any(cur_pos != last_pos, axis=-1)  # (num_agents,)
-
-        # Are the new positions on a slippery tile?
-        y = cur_pos[:, 1]
-        x = cur_pos[:, 0]
-        on_slippery = state.slippery_mask[y, x].astype(jnp.bool_)  # (num_agents,)
-
-        # "Armed" to slip on the next timestep iff they *just stepped onto* a slippery tile
-        will_slip_next = moved & on_slippery
-
-        new_state = SlipperyTileState(
-            env_state=env_state,
-            slippery_mask=state.slippery_mask,
-            will_slip_next=will_slip_next,
-            last_pos=cur_pos,
-        )
+        # Update slip state from new positions
+        new_state = self._update_slip_state(state, env_state)
 
         return obs, new_state, reward, done, info
+
+    @partial(jax.jit, static_argnums=(0,))
+    def step_env(
+            self,
+            key: chex.PRNGKey,
+            state: SlipperyTileState,
+            actions,
+    ):
+        """
+        MultiAgentEnv-style step with dict-of-actions, mirroring Overcooked.step_env.
+        """
+        # Convert dict -> (num_agents,) array of indices
+        if isinstance(actions, dict):
+            # Keep the env's agent ordering
+            agent_ids = list(self._env.agents)
+            action_indices = jnp.array(
+                [actions[a].flatten()[0] for a in agent_ids],
+                dtype=jnp.int32,
+            )
+        else:
+            # Already an array
+            action_indices = actions
+
+        key, slip_key, dir_key, env_key = jax.random.split(key, 4)
+        num_agents = action_indices.shape[0]
+
+        # Which armed agents actually slip?
+        slip_draw = jax.random.bernoulli(
+            slip_key, p=self.slip_prob, shape=(num_agents,)
+        )
+        should_slip = slip_draw & state.will_slip_next
+
+        # Random move in {0,1,2,3}
+        rand_dirs = jax.random.randint(
+            dir_key, shape=(num_agents,), minval=0, maxval=4
+        )
+        effective_indices = jnp.where(should_slip, rand_dirs, action_indices)
+
+        # Rebuild actions in original format
+        if isinstance(actions, dict):
+            effective_actions = {
+                a: effective_indices[i] for i, a in enumerate(agent_ids)
+            }
+        else:
+            effective_actions = effective_indices
+
+        # Step underlying env in its native API
+        obs, env_state, rew, done, info = self._env.step_env(
+            env_key, state.env_state, effective_actions
+        )
+
+        # Update slip state
+        new_state = self._update_slip_state(state, env_state)
+
+        return obs, new_state, rew, done, info

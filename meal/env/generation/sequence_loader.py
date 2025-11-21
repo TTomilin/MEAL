@@ -155,6 +155,6 @@ def create_sequence(
 
     if slippery_tiles:
         difficulty_params = get_difficulty_params(difficulty)
-        envs = [SlipperyTiles(env, difficulty_params["slippery_tiles_prob"]) for env in envs]
+        envs = [SlipperyTiles(env, difficulty_params["slipping_prob"]) for env in envs]
 
     return envs

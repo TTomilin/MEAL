@@ -136,7 +136,7 @@ def test_scenario_1_agent_0_does_everything():
     # Save GIF (slower fps for easier viewing)
     gif_path = "gifs/test_reward_scenario_1_agent_does_everything.gif"
     makedirs("gifs", exist_ok=True)
-    viz = OvercookedVisualizer(pot_full=state.pot_full_status, pot_empty=state.pot_empty_status)
+    viz = OvercookedVisualizer()
     viz.animate(states, gif_path)
     print(f"\nGIF saved to {gif_path}")
 
