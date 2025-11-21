@@ -1,22 +1,22 @@
 from functools import partial
-from typing import Tuple, Union
+from typing import Tuple
 
 import chex
 import jax
 from flax import struct
-from jax import Array, numpy as jnp
+from jax import numpy as jnp
 
 from meal.env import State, MultiAgentEnv
 from meal.wrappers.jaxmarl import JaxMARLWrapper
 
 
 @struct.dataclass
-class RandomizedActionsState:
+class SlipperyTileState:
     env_state: State
 
 
-class RandomizedActions(JaxMARLWrapper):
-    """With probability p_replace, replace chosen action by a random action.
+class SlipperyTiles(JaxMARLWrapper):
+    """With probability p_replace, replace chosen action by a random move action.
 
     Intended for discrete action spaces, where actions are integers.
     `n_actions` can be:
@@ -30,17 +30,17 @@ class RandomizedActions(JaxMARLWrapper):
         self.n_actions = len(self._env.action_set)
 
     @partial(jax.jit, static_argnums=(0,))
-    def reset(self, key: chex.PRNGKey) -> Tuple[chex.Array, RandomizedActionsState]:
+    def reset(self, key: chex.PRNGKey) -> Tuple[chex.Array, SlipperyTileState]:
         obs, env_state = self._env.reset(key)
-        state = RandomizedActionsState(env_state=env_state)
+        state = SlipperyTileState(env_state=env_state)
         return obs, state
 
     @partial(jax.jit, static_argnums=(0,))
     def step(
-        self,
-        key: chex.PRNGKey,
-        state: RandomizedActionsState,
-        action,
+            self,
+            key: chex.PRNGKey,
+            state: SlipperyTileState,
+            action,
     ):
         key, subkey = jax.random.split(key)
 
@@ -69,5 +69,5 @@ class RandomizedActions(JaxMARLWrapper):
 
         info = {**info, "applied_action": effective_action}
 
-        new_state = RandomizedActionsState(env_state=env_state)
+        new_state = SlipperyTileState(env_state=env_state)
         return obs, new_state, reward, done, info

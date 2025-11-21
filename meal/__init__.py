@@ -37,6 +37,7 @@ def make_sequence(
         num_agents: int = 2,
         difficulty: str = None,
         sticky_actions: bool = False,
+        slippery_tiles: bool = False,
         **env_kwargs
 ):
     """
@@ -48,6 +49,8 @@ def make_sequence(
         strategy: Generation strategy ('random', 'ordered', 'generate', 'curriculum')
         num_agents: Number of agents in each environment
         difficulty: Difficulty level ('easy', 'medium', 'hard') - determines layout and view parameters
+        sticky_actions: Whether the agents' actions have a probability of being repeated
+        slippery_tiles: Whether some tiles in the grid randomly cause agents to move in unintended directions
         **env_kwargs: Additional environment arguments
 
     Returns:
@@ -70,6 +73,7 @@ def make_sequence(
         num_agents=num_agents,
         difficulty=difficulty,
         sticky_actions=sticky_actions,
+        slippery_tiles=slippery_tiles,
         **env_kwargs
     )
 

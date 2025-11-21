@@ -6,6 +6,7 @@ from meal.env.layouts.presets import hard_layouts, medium_layouts, easy_layouts,
     get_layouts_by_difficulty
 from meal.env.utils.difficulty_config import get_difficulty_params
 from meal.wrappers.observation import PadObsToMax
+from meal.wrappers.slippery_tiles import SlipperyTiles
 from meal.wrappers.sticky_actions import StickyActions
 
 
@@ -63,6 +64,7 @@ def create_sequence(
         repeat_sequence: int = 1,
         layout_names: Sequence[str] | None = None,
         sticky_actions: bool = False,
+        slippery_tiles: bool = False,
         **env_kwargs,
 ) -> list:
     """
@@ -149,6 +151,10 @@ def create_sequence(
 
     if sticky_actions:
         difficulty_params = get_difficulty_params(difficulty)
-        envs = [StickyActions(env, difficulty_params["sticky_actions_prob"]) for env in envs]
+        envs = [StickyActions(env, difficulty_params["repeat_action_prob"]) for env in envs]
+
+    if slippery_tiles:
+        difficulty_params = get_difficulty_params(difficulty)
+        envs = [SlipperyTiles(env, difficulty_params["slippery_tiles_prob"]) for env in envs]
 
     return envs

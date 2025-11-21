@@ -575,10 +575,10 @@ class Overcooked(MultiAgentEnv):
         max_onions_in_pot = MAX_ONIONS_IN_POT
 
         if self.random_cook_time:
-            key, key_cook = jax.random.split(key, 2)
+            key, key_cook = jax.random.split(key)
             cook_time = jax.random.randint(key_cook, (), 10, 31)  # [10,30]
         if self.random_pot_size:
-            key, key_pot = jax.random.split(key, 2)
+            key, key_pot = jax.random.split(key)
             max_onions_in_pot = jax.random.randint(key_pot, (), 1, 6)  # [1,5]
 
         pot_full_status = cook_time

@@ -1,7 +1,6 @@
-#!/usr/bin/env python
 from meal.env.overcooked import Overcooked
 from meal.env.layouts.presets import cramped_room
-from meal.wrappers.randomized_actions import RandomizedActions
+from meal.wrappers.slippery_tiles import SlipperyTiles
 from meal.wrappers.sticky_actions import StickyActions
 from flax.core import FrozenDict
 import jax.numpy as jnp
@@ -124,7 +123,7 @@ def test_randomized_actions_p0_is_transparent():
     """
     base_env = Overcooked(layout=FrozenDict(
         cramped_room), num_agents=2, random_reset=False, max_steps=400)
-    wrapper = RandomizedActions(base_env, p_replace=0.0)
+    wrapper = SlipperyTiles(base_env, p_replace=0.0)
 
     rng = jax.random.PRNGKey(0)
     obs, state = wrapper.reset(rng)
@@ -158,7 +157,7 @@ def test_randomized_actions_p1_matches_rng_logic():
     """
     base_env = Overcooked(layout=FrozenDict(
         cramped_room), num_agents=2, random_reset=False, max_steps=400)
-    wrapper = RandomizedActions(base_env, p_replace=1.0)
+    wrapper = SlipperyTiles(base_env, p_replace=1.0)
 
     rng = jax.random.PRNGKey(42)
     obs, state = wrapper.reset(rng)
@@ -195,7 +194,7 @@ def test_randomized_actions_mixture_of_user_and_random():
     """
     base_env = Overcooked(layout=FrozenDict(
         cramped_room), num_agents=2, random_reset=False, max_steps=400)
-    wrapper = RandomizedActions(base_env, p_replace=0.5)
+    wrapper = SlipperyTiles(base_env, p_replace=0.5)
 
     rng = jax.random.PRNGKey(7)
     obs, state = wrapper.reset(rng)

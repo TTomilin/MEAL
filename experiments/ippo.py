@@ -105,6 +105,7 @@ class Config:
     random_agent_start: bool = True
     complementary_restrictions: bool = False  # One agent can't pick up onions, other can't pick up plates
     sticky_actions: bool = False  # Actions have a probability of being forcefully repeated
+    slippery_tiles: bool = False  # Some floor tiles cause agents to slide randomly
     random_pot_size: bool = False  # Pot size is randomized at each reset
     random_cook_time: bool = False  # Soup cook time is randomized at each reset
 
@@ -203,6 +204,7 @@ def main():
         repeat_sequence=cfg.repeat_sequence,
         random_agent_start=cfg.random_agent_start,
         sticky_actions=cfg.sticky_actions,
+        slippery_tiles=cfg.slippery_tiles,
         random_pot_size=cfg.random_pot_size,
         random_cook_time=cfg.random_cook_time,
     )

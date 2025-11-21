@@ -18,7 +18,8 @@ DIFFICULTY_PARAMS = {
         "view_ahead": 1,
         "view_sides": 1,
         "view_behind": 0,
-        "sticky_actions_prob": 0.1,
+        "repeat_action_prob": 0.1,
+        "slipping_prob": 0.35,
     },
     "medium": {
         "height": 9,
@@ -29,7 +30,8 @@ DIFFICULTY_PARAMS = {
         "view_ahead": 2,
         "view_sides": 1,
         "view_behind": 0,
-        "sticky_actions_prob": 0.2,
+        "repeat_action_prob": 0.2,
+        "slipping_prob": 0.5,
     },
     "hard": {
         "height": 11,
@@ -40,7 +42,8 @@ DIFFICULTY_PARAMS = {
         "view_ahead": 3,
         "view_sides": 1,
         "view_behind": 1,
-        "sticky_actions_prob": 0.3,
+        "repeat_action_prob": 0.3,
+        "slipping_prob": 0.65,
     },
     "extreme": {
         "height": 13,
@@ -51,7 +54,8 @@ DIFFICULTY_PARAMS = {
         "view_ahead": 4,
         "view_sides": 2,
         "view_behind": 1,
-        "sticky_actions_prob": 0.4,
+        "repeat_action_prob": 0.4,
+        "slipping_prob": 0.8,
     }
 }
 
