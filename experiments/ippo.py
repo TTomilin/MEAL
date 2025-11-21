@@ -393,10 +393,33 @@ def main():
                 rng, _rng = jax.random.split(rng)
                 rng_step = jax.random.split(_rng, cfg.num_envs)
 
-                # simultaniously step all environments with the selected actions (parallelized over the number of environments with vmap)
+                # step all parallel envs
                 obsv, env_state, reward, done, info = jax.vmap(
                     lambda k, s, a: step_switch(k, s, a, jnp.int32(env_idx))
                 )(rng_step, env_state, env_act)
+
+                # ------------------------------------------------------------------
+                # Auto-reset envs that finished an episode (per-env)
+                # ------------------------------------------------------------------
+                done_all = done["__all__"]  # shape (num_envs,)
+
+                # New keys for potential resets
+                rng, reset_rng = jax.random.split(rng)
+                reset_keys = jax.random.split(reset_rng, cfg.num_envs)
+
+                # For each env: if done_all[i], call reset_switch(key, env_idx),
+                # otherwise keep (obsv[i], env_state[i]) as-is.
+                reset_obs, reset_state = jax.vmap(
+                    lambda k, d, s, o: jax.lax.cond(
+                        d,
+                        lambda _: reset_switch(k, jnp.int32(env_idx)),
+                        lambda _: (o, s),
+                        operand=None,
+                    )
+                )(reset_keys, done_all, env_state, obsv)
+
+                obsv = reset_obs
+                env_state = reset_state
 
                 current_timestep = update_step * cfg.num_steps * cfg.num_envs
 

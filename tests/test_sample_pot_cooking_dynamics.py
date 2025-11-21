@@ -19,14 +19,15 @@ sys.path.insert(0, os.path.abspath(
 # Pot cooking dynamics tests
 # ======================================================================
 
-def make_env(sample_pot_cooking_dynamics: bool) -> Overcooked:
+def make_env() -> Overcooked:
     """Helper to build a standard Overcooked env on cramped_room."""
     return Overcooked(
         layout=FrozenDict(cramped_room),
         num_agents=2,
         random_reset=False,
         max_steps=400,
-        sample_pot_cooking_dynamics=sample_pot_cooking_dynamics,
+        random_cook_time=True,
+        random_pot_size=True,
     )
 
 
@@ -40,7 +41,7 @@ def test_pot_encoding_consistency_with_sampled_dynamics():
     and the values should match the legacy constants implicitly.
     """
     # sampled case
-    env = make_env(sample_pot_cooking_dynamics=True)
+    env = make_env()
     key = jax.random.PRNGKey(0)
 
     for i in range(5):
@@ -58,7 +59,7 @@ def test_pot_encoding_consistency_with_sampled_dynamics():
             f"empty={empty}, full={full}, max_onions={max_onions}"
         )
 
-    env = make_env(sample_pot_cooking_dynamics=False)
+    env = make_env()
     key = jax.random.PRNGKey(123)
     _, state = env.reset(key)
 
@@ -79,7 +80,7 @@ def test_pot_cook_time_countdown_matches_sampled_cook_time():
     then stepping the env for exactly pot_full_status timesteps with no
     interactions should drive that status down to POT_READY_STATUS (0).
     """
-    env = make_env(sample_pot_cooking_dynamics=True)
+    env = make_env()
     key = jax.random.PRNGKey(1)
 
     # Reset and grab state + encoding params
@@ -124,7 +125,7 @@ def test_observation_soup_channel_matches_max_onions_in_pot():
     The onions-in-soup observation channel (18) should equal
     state.max_onions_in_pot for tiles containing a 'dish'.
     """
-    env = make_env(sample_pot_cooking_dynamics=True)
+    env = make_env()
     key = jax.random.PRNGKey(3)
     _, state = env.reset(key)
 

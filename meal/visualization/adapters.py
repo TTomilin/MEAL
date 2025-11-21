@@ -228,6 +228,10 @@ def to_drawable_state(env_state_raw, pot_full: int = 20, pot_empty: int = 23, nu
     env_state = getattr(env_state_raw, "env_state", env_state_raw)
     maze = _np(env_state.maze_map)
 
+    # If the state carries dynamic pot parameters, use those instead of the defaults
+    pot_full = getattr(env_state, "pot_full_status", pot_full)
+    pot_empty = getattr(env_state, "pot_empty_status", pot_empty)
+
     # grid tiles
     grid_tokens = _grid_tokens(maze, ids)  # List[List[Tile]]
 
