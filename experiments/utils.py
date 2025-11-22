@@ -217,7 +217,7 @@ def rollout_for_video(rng, config, train_state, env, network, env_idx=0, max_ste
     obs, state = env.reset(env_rng)
     done = False
     step_count = 0
-    states = [state]
+    states = [env.unwrap_env_state(state)]
 
     while not done and step_count < max_steps:
         obs_dict = {}
@@ -246,7 +246,7 @@ def rollout_for_video(rng, config, train_state, env, network, env_idx=0, max_ste
 
         obs, state = next_obs, next_state
         step_count += 1
-        states.append(state)
+        states.append(env.unwrap_env_state(state))
 
     return states
 

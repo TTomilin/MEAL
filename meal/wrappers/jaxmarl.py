@@ -16,7 +16,7 @@ class JaxMARLWrapper(object):
     def __getattr__(self, name: str):
         return getattr(self._env, name)
 
-    def _unwrap_env_state(self, state):
+    def unwrap_env_state(self, state):
         """Walk down nested wrapper states until reaching the underlying env.State."""
         while hasattr(state, "env_state"):
             state = state.env_state

@@ -44,7 +44,7 @@ class SlipperyTiles(JaxMARLWrapper):
             env_state: State,
     ) -> SlipperyTileState:
         """Compute will_slip_next/last_pos for the next step."""
-        base_state = self._unwrap_env_state(env_state)
+        base_state = self.unwrap_env_state(env_state)
         cur_pos = base_state.agent_pos  # (num_agents, 2)
         last_pos = prev_state.last_pos
 
@@ -70,7 +70,7 @@ class SlipperyTiles(JaxMARLWrapper):
         obs, env_state = self._env.reset(env_key)
 
         # Peek through nested wrapper states to get the base Overcooked.State
-        base_state = self._unwrap_env_state(env_state)
+        base_state = self.unwrap_env_state(env_state)
 
         # ------------------------------------------------------------------
         # Sample a fixed slippery mask for this episode, ONLY on walkable tiles
