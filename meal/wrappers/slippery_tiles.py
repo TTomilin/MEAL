@@ -44,7 +44,8 @@ class SlipperyTiles(JaxMARLWrapper):
             env_state: State,
     ) -> SlipperyTileState:
         """Compute will_slip_next/last_pos for the next step."""
-        cur_pos = env_state.agent_pos  # (num_agents, 2)
+        base_state = self._unwrap_env_state(env_state)
+        cur_pos = base_state.agent_pos  # (num_agents, 2)
         last_pos = prev_state.last_pos
 
         moved = jnp.any(cur_pos != last_pos, axis=-1)  # (num_agents,)
@@ -68,19 +69,22 @@ class SlipperyTiles(JaxMARLWrapper):
         key, env_key = jax.random.split(key)
         obs, env_state = self._env.reset(env_key)
 
+        # Peek through nested wrapper states to get the base Overcooked.State
+        base_state = self._unwrap_env_state(env_state)
+
         # ------------------------------------------------------------------
         # Sample a fixed slippery mask for this episode, ONLY on walkable tiles
         # Walkable = not a wall/counter AND not a goal tile.
         # ------------------------------------------------------------------
         H, W = self.height, self.width
 
-        wall_map = env_state.wall_map  # (H, W) bool
+        wall_map = base_state.wall_map  # (H, W) bool
 
         # Build a (H, W) mask of goal tiles
         goal_mask_layer = jnp.zeros_like(wall_map)
-        goal_y = env_state.goal_pos[:, 1]
-        goal_x = env_state.goal_pos[:, 0]
-        goal_mask_layer = goal_mask_layer.at[goal_y, goal_x].set(env_state.goal_mask)
+        goal_y = base_state.goal_pos[:, 1]
+        goal_x = base_state.goal_pos[:, 0]
+        goal_mask_layer = goal_mask_layer.at[goal_y, goal_x].set(base_state.goal_mask)
 
         # Walkable tiles are those that are not walls/counters and not goals
         walkable = (~wall_map) & (~goal_mask_layer)  # (H, W) bool
@@ -103,7 +107,7 @@ class SlipperyTiles(JaxMARLWrapper):
         # Slippery state bookkeeping
         # ------------------------------------------------------------------
         will_slip_next = jnp.zeros((self.num_agents,), dtype=jnp.bool_)
-        last_pos = env_state.agent_pos  # (num_agents, 2)
+        last_pos = base_state.agent_pos  # (num_agents, 2)
 
         state = SlipperyTileState(
             env_state=env_state,
