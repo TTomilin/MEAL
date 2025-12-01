@@ -1,4 +1,3 @@
-import os
 import pickle
 from enum import IntEnum
 from functools import partial
@@ -8,9 +7,10 @@ import chex
 import jax
 import jax.numpy as jnp
 import matplotlib.axes._axes as axes
+import numpy as np
 
 import meal.env.jaxnav.jaxnav_graph_utils as _graph_utils
-from .map import Map
+from meal.env.jaxnav.maps import Map
 
 
 def rotation_matrix(theta: float) -> jnp.ndarray:
@@ -602,7 +602,7 @@ class GridMapPolygonAgents(GridMapCircleAgents):
 
         collisions = cut | inside
         valid_idx = (idx_pairs[:, 0] >= 0) & (idx_pairs[:, 0] < self.height) & (idx_pairs[:, 1] >= 0) & (
-                    idx_pairs[:, 1] < self.width) & collisions
+                idx_pairs[:, 1] < self.width) & collisions
         idx_pairs = jnp.where(jnp.repeat(valid_idx[:, None], 1, 1), idx_pairs, jnp.zeros(idx_pairs.shape)).astype(int)
         map_mask = jnp.zeros(map_grid.shape, dtype=jnp.int32)
 
@@ -697,7 +697,7 @@ class GridMapPolygonAgents(GridMapCircleAgents):
 
         def _calc_overlaps(agent_idx, agent_axis_ranges):
             overlaps = (agent_axis_ranges[:, agent_idx, 0][:, None] <= agent_axis_ranges[:, :, 1]) & (
-                        agent_axis_ranges[:, :, 0] <= agent_axis_ranges[:, agent_idx, 1][:, None])
+                    agent_axis_ranges[:, :, 0] <= agent_axis_ranges[:, agent_idx, 1][:, None])
             overlaps = overlaps.at[:, agent_idx].set(False)
             return jnp.all(overlaps, axis=0)
 
@@ -924,12 +924,12 @@ class GridMapBarn(GridMapPolygonAgents):
     def _smooth(self, idx, map_data):
         idx_offsets = SMOOTHING_IDX_OFFSETS + idx
         valid = (idx_offsets[:, 0] > 0) & (idx_offsets[:, 0] < self.height - 1) & (idx_offsets[:, 1] > 0) & (
-                    idx_offsets[:, 1] < self.width - 1)
+                idx_offsets[:, 1] < self.width - 1)
         n_full = map_data.at[idx_offsets[:, 0], idx_offsets[:, 1]].get() * valid
         n_full = jnp.sum(n_full)
 
         fill = ((n_full > self.smoothing_upper_count) | map_data.at[idx[0], idx[1]].get()) & (
-                    n_full > self.smoothing_lower_count)
+                n_full > self.smoothing_lower_count)
         return jax.lax.select(fill, 1, 0)
 
 
@@ -1040,103 +1040,3 @@ def rrt_reward(new_pos, pos, goal):
     rga = weight_g * (jnp.linalg.norm(pos - goal) - jnp.linalg.norm(new_pos - goal))
     rg = jnp.where(goal_reached, goal_rew, rga)
     return rg
-
-
-if __name__ == "__main__":
-    import matplotlib.pyplot as plt
-    import numpy as np
-
-    key = jax.random.PRNGKey(3)  # 3, 7, 9
-
-    file_path = "/home/alex/repos/jax-multirobsim/failure_maps/cosmic-waterfall-17"
-    map_gen = GridMapFromBuffer(1, 0.3, (7, 7), dir_path=file_path)
-
-    s = map_gen.sample_scenario(key)
-    key, key_rrt = jax.random.split(key)
-
-    map_gen = GridMapCircleAgents(1, 0.3, (10, 10), 0.5)
-    map_data, case = map_gen.sample_scenario(key)
-
-    start = case[:, 0, :2].flatten()
-    goal = case[:, 1, :2].flatten()
-    print('case', case, 'start', start, 'goal', goal)
-
-    '''gr, parent = map_gen.a_star(map_data, start, goal)
-    print('parent', parent)
-    
-    fig, ax = plt.subplots()
-    
-    ax.imshow(map_data, extent=(0, map_data.shape[1], 0, map_data.shape[0]), origin="lower", cmap='binary', alpha=0.8)
-    
-    zero_grid = np.zeros((10, 10))
-    x, y = jnp.meshgrid(jnp.arange(map_data.shape[0]), jnp.arange(map_data.shape[1]))#.reshape(-1, 2)
-    coords = jnp.dstack((y.flatten(), x.flatten())).squeeze()
-    for i in range(parent.shape[0]):
-        if parent[i] == -1: continue
-        node = coords[parent[i]]
-        print('node', node)
-        zero_grid[node[0], node[1]] = 1
-    
-    ax.imshow(zero_grid, extent=(0, 10, 0, 10), origin="lower", cmap='binary', alpha=0.2)
-    
-    map_gen.plot_pose(ax, case)
-    plt.show()
-    
-    raise'''
-    # print('map_data', map_data)
-    tree, goalr = map_gen.rrt_star(key_rrt, map_data, start, goal)
-    print('tree', tree, 'goalr', goalr)
-    print('case', case)
-
-    fig, ax = plt.subplots()
-
-    map_gen.plot(ax, map_data)
-
-    # ax.scatter(case[:, 0, 0], case[:, 0, 1], c='r')
-    for n in range(tree.shape[0]):
-        if tree[n, 0] == 0.0: break
-        ax.scatter(tree[n, 0], tree[n, 1], c='gray')
-        pi = tree[n, 2]
-        if pi == -1: continue
-        pi = int(pi)
-        ax.plot([tree[n, 0], tree[pi, 0]], [tree[n, 1], tree[pi, 1]], c='gray', marker='+', alpha=0.75)
-
-    if goalr:
-        goal_idx = jnp.argwhere(tree[:, -1] == 1)
-        print('goal_idx', goal_idx)
-
-        for g_idx in goal_idx:
-            c_idx = g_idx[0]
-            path_length = 0.0
-            rew = 0.0
-            while c_idx != 0:
-                print('cidx', c_idx, 'tree row', tree[c_idx])
-                c_pos = tree[c_idx, :2]
-                p_idx = int(tree[c_idx, 2])
-                p_pos = tree[p_idx, :2]
-                path_length += jnp.linalg.norm(c_pos - p_pos)
-                rew += rrt_reward(c_pos, p_pos, goal)
-                ax.plot([c_pos[0], p_pos[0]], [c_pos[1], p_pos[1]], c='r', alpha=0.25)
-                print('p_pos', p_pos, 'c_pos', c_pos, 'rew', rew)
-                c_idx = p_idx
-            print('path_length', path_length, 'rew', rew)
-
-    map_gen.plot_pose(ax, case)
-    plt.show()
-    '''raise
-    p_idx = parent[goal_idx]
-    print('p_idx', p_idx)
-    while p_idx != -1:
-        print('corrds', coords[p_idx])
-        ax.plot( [coords[p_idx, 1]+0.5, coords[goal_idx, 1]+0.5], [coords[p_idx, 0]+0.5, coords[goal_idx, 0]+0.5], c='r')
-        goal_idx = p_idx
-        p_idx = parent[goal_idx]
-
-    
-    plt.show()
-    
-    raise
-    pos = jnp.array([1.5, 1.5])
-    x = map_gen.check_agent_collision(pos, map_data)
-    print(x)
-    print(map_data)'''
