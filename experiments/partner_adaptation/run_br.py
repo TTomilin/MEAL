@@ -374,7 +374,7 @@ def run_training():
                     params=ego_params,
                     tx=optax.adam(1e-4)  # dummy optimizer
                 )
-                states = rollout_for_video(config, temp_train_state, env, ego_policy.network, env_idx=i,
+                states = rollout_for_video(rng, config, temp_train_state, env, ego_policy.network, env_idx=i,
                                            max_steps=config.gif_len)
                 partner_name = f"BRDiv_Partner_{i}"
                 visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=partner_name,
@@ -397,7 +397,7 @@ def run_training():
             if hasattr(config, 'record_gif') and config.record_gif:
                 temp_train_state = TrainState.create(
                     apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
-                states = rollout_for_video(config, temp_train_state, env, ego_policy.network, env_idx=env_id_idx,
+                states = rollout_for_video(rng, config, temp_train_state, env, ego_policy.network, env_idx=env_id_idx,
                                            max_steps=config.gif_len)
                 visualizer.animate(states, agent_view_size=5, task_idx=env_id_idx, task_name=partner_name,
                                    exp_dir=f"gifs/{run.name}")

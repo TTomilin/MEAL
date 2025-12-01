@@ -50,23 +50,8 @@ def test_scenario_2_shared_onion_contribution():
 
     # Set up env (deterministic reset -> we know the spawn)
     # Use shorter soup cooking time for faster tests
-    env = Overcooked(layout=FrozenDict(cramped_room), num_agents=2, random_reset=False, max_steps=400, soup_cook_time=5)
-    rng = jax.random.PRNGKey(0)
-    obs, state = env.reset(rng)
-
-    # Set up GIF recording
-    frames = []
-    viz = OvercookedVisualizer(pot_full_status=5, pot_empty_status=8)
-
-    def add_frame(st):
-        # Use the visualizer's render method to get the frame
-        surface = viz.render(env.agent_view_size, st)
-        # Convert pygame surface to numpy array
-        frame = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
-        frames.append(frame)
-
-    # Add initial frame
-    add_frame(state)
+    env = Overcooked(layout=FrozenDict(cramped_room), layout_name="Cramped Room")
+    states = []
 
     # Action aliases
     A = {
@@ -122,8 +107,7 @@ def test_scenario_2_shared_onion_contribution():
 
         # Only record frames for the default setting to avoid redundancy
         if reward_setting == 'default':
-            frames.clear()
-            add_frame(state)
+            states.append(state)
 
         for t in range(len(actions_agent_0)):
             rng, step_key = jax.random.split(rng)
@@ -151,7 +135,7 @@ def test_scenario_2_shared_onion_contribution():
 
             # Record frame for default setting
             if reward_setting == 'default':
-                add_frame(state)
+                states.append(state)
 
         results[reward_setting] = {
             'total_reward': total_reward,
@@ -167,7 +151,8 @@ def test_scenario_2_shared_onion_contribution():
     # Save GIF (slower fps for easier viewing)
     gif_path = "gifs/test_reward_scenario_2_shared_onion_contribution.gif"
     makedirs("gifs", exist_ok=True)
-    iio.imwrite(gif_path, frames, loop=0, fps=6)
+    viz = OvercookedVisualizer(pot_full=state.pot_full_status, pot_empty=state.pot_empty_status)
+    viz.animate(states, gif_path)
     print(f"\nGIF saved to {gif_path}")
 
     # Validate results with assertions
@@ -181,9 +166,7 @@ def test_scenario_2_shared_onion_contribution():
     def_r0, def_r1 = default_results['total_reward']['agent_0'], default_results['total_reward']['agent_1']
     def_s0, def_s1 = default_results['total_shaped']['agent_0'], default_results['total_shaped']['agent_1']
     def_soups0, def_soups1 = default_results['total_soups']['agent_0'], default_results['total_soups']['agent_1']
-
     sparse_r0, sparse_r1 = sparse_results['total_reward']['agent_0'], sparse_results['total_reward']['agent_1']
-
     ind_r0, ind_r1 = individual_results['total_reward']['agent_0'], individual_results['total_reward']['agent_1']
 
     total_soups_delivered = def_soups0 + def_soups1

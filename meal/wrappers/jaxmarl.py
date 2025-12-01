@@ -16,6 +16,12 @@ class JaxMARLWrapper(object):
     def __getattr__(self, name: str):
         return getattr(self._env, name)
 
+    def unwrap_env_state(self, state):
+        """Walk down nested wrapper states until reaching the underlying env.State."""
+        while hasattr(state, "env_state"):
+            state = state.env_state
+        return state
+
     def _batchify_floats(self, x):
         # reward can be dict, array (A,), or scalar
         if isinstance(x, dict):

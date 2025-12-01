@@ -197,11 +197,12 @@ def initialize_logging_setup(config, run_name, exp_dir):
     return writer
 
 
-def rollout_for_video(config, train_state, env, network, env_idx=0, max_steps=300):
+def rollout_for_video(rng, config, train_state, env, network, env_idx=0, max_steps=300):
     """
     Records a rollout of an episode by running the trained network on the environment.
 
     Args:
+        rng: JAX random key
         config: Configuration object containing use_cnn flag
         train_state: Training state containing network parameters
         env: Environment to run the episode on
@@ -212,12 +213,11 @@ def rollout_for_video(config, train_state, env, network, env_idx=0, max_steps=30
     Returns:
         List of environment states for visualization
     """
-    rng = jax.random.PRNGKey(0)
     rng, env_rng = jax.random.split(rng)
     obs, state = env.reset(env_rng)
     done = False
     step_count = 0
-    states = [state]
+    states = [env.unwrap_env_state(state)]
 
     while not done and step_count < max_steps:
         obs_dict = {}
@@ -246,7 +246,7 @@ def rollout_for_video(config, train_state, env, network, env_idx=0, max_steps=30
 
         obs, state = next_obs, next_state
         step_count += 1
-        states.append(state)
+        states.append(env.unwrap_env_state(state))
 
     return states
 
