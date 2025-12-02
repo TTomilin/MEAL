@@ -27,9 +27,9 @@ METHOD_COLORS = {
 }
 
 LEVEL_COLORS = {
-    'Level 1': '#2ECC71',  # green
-    'Level 2': '#F1C40F',  # yellow
-    'Level 3': '#E74C3C',  # red
+    1: '#2ECC71',  # green
+    2: '#F1C40F',  # yellow
+    3: '#E74C3C',  # red
 }
 
 

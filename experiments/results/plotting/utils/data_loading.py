@@ -214,6 +214,7 @@ def collect_cumulative_runs(base: Path, algo: str, method: str, strat: str, metr
     for seed in seeds:
         sd = folder / f"seed_{seed}"
         if not sd.exists():
+            print(f"[warn] missing data {sd}")
             continue
         env_files = sorted(sd.glob(f"*_{metric}.*"))
         if not env_files:

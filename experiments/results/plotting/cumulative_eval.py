@@ -120,11 +120,10 @@ def _plot_curve(
 
 def _collect_and_plot(
         ax: plt.Axes,
-        label: str,
+        level: int,
         data_root: Path,
         algo: str,
         method: str,
-        experiment: str,
         strategy: str,
         metric: str,
         seq_len: int,
@@ -139,11 +138,11 @@ def _collect_and_plot(
         data_root,
         algo,
         method,
-        experiment,
         strategy,
         metric,
         seq_len,
         seeds,
+        level,
         agents,
     )
     if len(data) == 0:
@@ -153,7 +152,8 @@ def _collect_and_plot(
     mu, ci = smooth_and_ci(data, sigma, confidence)
     x = np.linspace(0, seq_len * steps_per_task, len(mu))
     # Use METHOD_COLORS only when comparing methods, not when comparing levels
-    color = METHOD_COLORS.get(label, None) if compare_by == "method" else LEVEL_COLORS.get(label, None)
+    label = method if compare_by == "method" else f"Level {level}"
+    color = METHOD_COLORS.get(method, None) if compare_by == "method" else LEVEL_COLORS.get(level, None)
     _plot_curve(ax, x, mu, ci, label, color)
 
 
@@ -170,24 +170,19 @@ def plot():
     for item in items_to_plot:
         if args.compare_by == "method":
             # Method comparison
-            method_name = item
-            label = method_name
-            experiment = f"level_{args.level}"
+            method = item
+            level = args.level
         else:
             # Level comparison
-            level_num = item
-            level_str = f"level_{level_num}"
-            label = level_str.replace('_', ' ').title()  # e.g., "Level 1"
-            method_name = args.method
-            experiment = level_str
+            method = args.method
+            level = item
 
         _collect_and_plot(
             ax,
-            label=label,
+            level=level,
             data_root=data_root,
             algo=args.algo,
-            method=method_name,
-            experiment=experiment,
+            method=method,
             strategy=args.strategy,
             metric=args.metric,
             seq_len=args.seq_len,

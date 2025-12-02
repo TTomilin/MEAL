@@ -77,6 +77,7 @@ def _load_training_chunks(
     for seed in seeds:
         fp = folder / f"seed_{seed}" / "training_soup.json"
         if not fp.exists():
+            print(f"[warn] missing data {fp}")
             continue
         try:
             import json as _json
@@ -282,7 +283,7 @@ def main():
     if not plotted_any:
         raise SystemExit("No matching data for the requested method/levels.")
 
-    plt.xlabel("Number of tasks learned")
+    plt.xlabel("Number of tasks encountered")
     ylabel = "Average Normalized Score" if args.y == "performance" else "Cumulative Forgetting"
     plt.ylabel(ylabel)
     if args.title:
