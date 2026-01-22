@@ -6,6 +6,7 @@ from typing import Sequence, Optional, List, Literal
 
 import flax
 import numpy as np
+import flax.linen as nn
 import optax
 import tyro
 import wandb
@@ -19,6 +20,7 @@ from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
+from experiments.continual.packnet import Packnet
 from experiments.evaluation import evaluate_all_envs, make_eval_fn
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.model.mlp import ActorCritic as MLPActorCritic
@@ -197,7 +199,10 @@ def main():
                       mas=MAS(mode=cfg.importance_mode, decay=cfg.importance_decay),
                       l2=L2(),
                       ft=FT(),
-                      agem=AGEM(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size))
+                      agem=AGEM(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
+                      packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4, 
+                      train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
+                      prunable_layers=[nn.Dense]))
 
     cl = method_map[cfg.cl_method.lower()]
 
