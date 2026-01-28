@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 
-from experiments.continual.base import RegCLMethod, CLState
+from experiments.continual.base import RegCLMethod, RegCLState
 
 
 class L2(RegCLMethod):
@@ -12,13 +12,13 @@ class L2(RegCLMethod):
     """
     name = "l2"
 
-    def update_state(self, cl_state: CLState, new_params: FrozenDict, new_importance: FrozenDict) -> CLState:
+    def update_state(self, cl_state: RegCLState, new_params: FrozenDict, new_importance: FrozenDict) -> RegCLState:
         # we only need to remember θᵗ
-        return CLState(old_params=new_params, importance=cl_state.importance, mask=cl_state.mask)
+        return RegCLState(old_params=new_params, importance=cl_state.importance, mask=cl_state.mask)
 
     def penalty(self,
                 params: FrozenDict,
-                cl_state: CLState,
+                cl_state: RegCLState,
                 coef: float) -> jnp.ndarray:
         diff2 = jax.tree_util.tree_map(
             lambda p, o, m: m * (p - o) ** 2,

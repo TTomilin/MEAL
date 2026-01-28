@@ -7,21 +7,20 @@ import jax
 import jax.numpy as jnp
 import flax.linen as nn
 from flax.core.frozen_dict import FrozenDict
-from experiments.continual.base import RegCLMethod
+from experiments.continual.base import CLMethod, CLState
 
 
 @flax.struct.dataclass
-class PacknetState:
+class PacknetState(CLState):
     '''
     Class to store the state of the Packnet
     '''
-    masks: FrozenDict
     current_task: int
     train_mode: bool
 
 
 
-class Packnet(RegCLMethod):
+class Packnet(CLMethod):
     '''
     Class that implements the Packnet CL-method
     '''
@@ -539,3 +538,6 @@ class Packnet(RegCLMethod):
             return jax.tree.map(jnp.zeros_like, params)
 
         return importance_fn
+    
+    def penalty(self, params, cl_state, coef) -> jnp.ndarray:
+        return jnp.array(0.0, dtype=jnp.float32)

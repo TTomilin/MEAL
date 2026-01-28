@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 
-from experiments.continual.base import RegCLMethod, CLState
+from experiments.continual.base import RegCLMethod, RegCLState
 
 
 class FT(RegCLMethod):
@@ -11,11 +11,11 @@ class FT(RegCLMethod):
     name = "ft"
 
     # ─── state update: nothing to store ─────────────────────────────────────
-    def update_state(self, cl_state: CLState, new_params: FrozenDict, new_importance: FrozenDict) -> CLState:
+    def update_state(self, cl_state: RegCLState, new_params: FrozenDict, new_importance: FrozenDict) -> RegCLState:
         return cl_state  # no change
 
     # ─── penalty: always zero ───────────────────────────────────────────────
-    def penalty(self, params: FrozenDict, cl_state: CLState, coef: float):
+    def penalty(self, params: FrozenDict, cl_state: RegCLState, coef: float):
         return jnp.array(0.0, dtype=jnp.float32)
 
     # ── importance function factory (to satisfy unified interface) ───────────

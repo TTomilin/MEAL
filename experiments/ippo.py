@@ -91,6 +91,10 @@ class Config:
     agem_sample_size: int = 1024
     agem_gradient_scale: float = 1.0
 
+    # Packnet specific parameters
+    train_epochs: int = 8
+    finetune_epochs: int = 2
+
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
@@ -118,7 +122,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     # EVALUATION PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
-    evaluation: bool = True
+    evaluation: bool = False
     eval_num_episodes: int = 5
     record_video: bool = False
     video_length: int = 250
@@ -865,6 +869,10 @@ def main():
             length=cfg.num_updates
         )
 
+        if cfg.cl_method.lower() == "packnet":
+            # # Prune the model and update the parameters
+            new_actor_params, packnet_state = cl.on_train_end(train_state.params, packnet_state)
+
         # Return the runner state after the training loop, and the metrics arrays
         return runner_state, metrics
 
@@ -992,7 +1000,7 @@ def main():
 
     # Run the model
     rng, train_rng = jax.random.split(rng)
-    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads)
+    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads, cl)
 
     # Initialize AGEM memory if using AGEM and this is the first environment
     if cfg.cl_method.lower() == "agem":

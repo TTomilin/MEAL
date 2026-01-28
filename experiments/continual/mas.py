@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
-from experiments.continual.base import RegCLMethod, CLState
+from experiments.continual.base import RegCLMethod, RegCLState
 from experiments.utils import build_reg_weights, unbatchify, batchify
 
 
@@ -23,13 +23,13 @@ class MAS(RegCLMethod):
         self.decay = decay
         self.normalize_task = normalize_task
 
-    def init_state(self, params: FrozenDict, regularize_critic: bool, regularize_heads: bool) -> CLState:
+    def init_state(self, params: FrozenDict, regularize_critic: bool, regularize_heads: bool) -> RegCLState:
         mask = build_reg_weights(params, regularize_critic, regularize_heads)
         zeros = jax.tree.map(jnp.zeros_like, params)
-        return CLState(old_params=jax.tree.map(lambda x: x.copy(), params),
+        return RegCLState(old_params=jax.tree.map(lambda x: x.copy(), params),
                        importance=zeros, mask=mask)
 
-    def update_state(self, cl_state: CLState, new_params: FrozenDict, new_importance: FrozenDict) -> CLState:
+    def update_state(self, cl_state: RegCLState, new_params: FrozenDict, new_importance: FrozenDict) -> RegCLState:
         ω_old = cl_state.importance
         ω_new = new_importance
         if self.normalize_task:
@@ -43,9 +43,9 @@ class MAS(RegCLMethod):
         else:  # "last"
             ω = ω_new
 
-        return CLState(old_params=new_params, importance=ω, mask=cl_state.mask)
+        return RegCLState(old_params=new_params, importance=ω, mask=cl_state.mask)
 
-    def penalty(self, params: FrozenDict, cl_state: CLState, coef: float) -> jnp.ndarray:
+    def penalty(self, params: FrozenDict, cl_state: RegCLState, coef: float) -> jnp.ndarray:
         def _term(p, o, w, m): return m * w * (p - o) ** 2
         tot = jax.tree_util.tree_map(_term, params, cl_state.old_params, cl_state.importance, cl_state.mask)
         tot = jax.tree_util.tree_reduce(lambda a, b: a + b.sum(), tot, 0.0)

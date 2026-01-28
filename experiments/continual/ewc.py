@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 
-from experiments.continual.base import RegCLMethod, CLState
+from experiments.continual.base import RegCLMethod, RegCLState
 from experiments.utils import batchify, unbatchify
 
 
@@ -23,7 +23,7 @@ class EWC(RegCLMethod):
         self.mode = mode
         self.decay = decay
 
-    def update_state(self, cl_state: CLState, new_params: FrozenDict, new_fisher: FrozenDict) -> CLState:
+    def update_state(self, cl_state: RegCLState, new_params: FrozenDict, new_fisher: FrozenDict) -> RegCLState:
 
         if self.mode == "last":
             fish = new_fisher
@@ -36,9 +36,9 @@ class EWC(RegCLMethod):
                 lambda old_f, f_new: self.decay * old_f + (1. - self.decay) * f_new,
                 cl_state.importance, new_fisher)
 
-        return CLState(old_params=new_params, importance=fish, mask=cl_state.mask)
+        return RegCLState(old_params=new_params, importance=fish, mask=cl_state.mask)
 
-    def penalty(self, params: FrozenDict, cl_state: CLState, coef: float) -> jnp.ndarray:
+    def penalty(self, params: FrozenDict, cl_state: RegCLState, coef: float) -> jnp.ndarray:
 
         def _term(p, o, f, m):
             return m * f * (p - o) ** 2
