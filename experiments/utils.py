@@ -1,15 +1,23 @@
 import os
 import uuid
+import optax
 from datetime import datetime
-from typing import NamedTuple
+from typing import NamedTuple, Union, Tuple
+import flax.linen as nn
 
 import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
+from flax.typing import FrozenVariableDict
 from tensorboardX import SummaryWriter
+from flax.training.train_state import TrainState
+from optax._src.base import GradientTransformation
 
 from experiments.continual.base import RegCLState, CLMethod, CLState
 from experiments.continual.packnet import PacknetState, Packnet
+from experiments.model.mlp import ActorCritic as MLPActorCritic
+from experiments.model.cnn import ActorCritic as CNNActorCritic
+from experiments.model.decoupled_mlp import Actor, Critic
 
 
 class Transition(NamedTuple):
@@ -104,10 +112,12 @@ def build_reg_weights(params, regularize_critic: bool, regularize_heads: bool) -
     return jax.tree_util.tree_map_with_path(_mark, params)
 
 
-def init_cl_state(params: FrozenDict, regularize_critic: bool, regularize_heads: bool, cl: CLMethod) -> CLState:
+def init_cl_state(params: Union[FrozenVariableDict, Tuple[FrozenVariableDict, FrozenVariableDict]], regularize_critic: bool, 
+                  regularize_heads: bool, cl: CLMethod) -> CLState:
     if isinstance(cl, Packnet):
+        actor_params, _ = params # unpack params
         return PacknetState(
-            masks=cl.init_mask_tree(params),
+            masks=cl.init_mask_tree(actor_params),
             current_task=0,
             train_mode=True
         )
@@ -118,7 +128,127 @@ def init_cl_state(params: FrozenDict, regularize_critic: bool, regularize_heads:
             importance=jax.tree.map(jnp.zeros_like, params),
             mask=mask
         )
+    
+def create_network(env, cfg, cl) -> Union[nn.Module, Tuple[nn.Module, nn.Module]]:
+    # TODO: implement CNN-support for Packnet
+    if isinstance(cl, Packnet):
+        actor = Actor(
+            action_dim=env.action_space().n,
+            activation=cfg.activation,
+            num_tasks=cfg.seq_length,
+            use_multihead=cfg.use_multihead,
+            use_task_id=cfg.use_task_id
+        )
+        critic = Critic(
+            activation=cfg.activation,
+            num_tasks=cfg.seq_length,
+            use_multihead=cfg.use_multihead,
+            use_task_id=cfg.use_task_id
+        )
+        return (actor, critic) # return tuple if using Packnet
+    else:
+        ac_cls = CNNActorCritic if cfg.use_cnn else MLPActorCritic
+        actor_critic = ac_cls(env.action_space().n, cfg.activation, cfg.seq_length, cfg.use_multihead,
+                            cfg.shared_backbone, cfg.big_network, cfg.use_task_id, cfg.regularize_heads,
+                            cfg.use_layer_norm)
+        return actor_critic
+    
+def init_network(env, network, cfg, cl) -> Union[FrozenVariableDict, Tuple[FrozenVariableDict, FrozenVariableDict]]:
+    if isinstance(cl, Packnet):
+        actor, critic = network # unpack actor, critic from network
+        rng, actor_rng, critic_rng = jax.random.split(rng, 3)
+        init_x = jnp.zeros(env.observation_space().shape).flatten()
+        init_x = jnp.expand_dims(init_x, axis=0)  # Add batch dimension
+        actor_params = actor.init(actor_rng, init_x, env_idx=0)
+        critic_params = critic.init(critic_rng, init_x, env_idx=0)
 
+        return (actor_params, critic_params) # return tuple of parameters
+    else:
+        # Get the correct observation dimension by simulating the batchify process
+        # This ensures the network is initialized with the same shape it will receive during training
+        rng = jax.random.PRNGKey(cfg.seed)
+        rng, reset_rng = jax.random.split(rng)
+        reset_rngs = jax.random.split(reset_rng, cfg.num_envs)
+        temp_obs, _ = jax.vmap(env.reset, in_axes=(0,))(reset_rngs)
+        temp_obs_batch = batchify(temp_obs, env.agents, cfg.num_actors, not cfg.use_cnn)
+        obs_dim = temp_obs_batch.shape[1]  # Get the actual dimension after batchify
+        # Initialize the network
+        rng, network_rng = jax.random.split(rng)
+        init_x = jnp.zeros((1, obs_dim))
+        network_params = network.init(network_rng, init_x)
+        
+        return network_params
+
+def init_optimizer(cfg, schedule, cl) -> Union[GradientTransformation, Tuple[GradientTransformation, GradientTransformation]]:
+    if isinstance(cl, Packnet):
+        # Initialize the optimizers
+        actor_tx = optax.chain(
+            optax.clip_by_global_norm(cfg.max_grad_norm),
+            optax.adam(learning_rate=schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
+        )
+        critic_tx = optax.chain(
+            optax.clip_by_global_norm(cfg.max_grad_norm),
+            optax.adam(learning_rate=schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
+        )
+
+        return (actor_tx, critic_tx) # if packnet is used, optimizer constitutes a tuple
+    else:
+        # Initialize the optimizer
+        tx = optax.chain(
+            optax.clip_by_global_norm(cfg.max_grad_norm),
+            optax.adam(learning_rate=schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
+        )
+        return tx
+
+def init_train_state(network, network_params, optimizer, cl) -> Union[TrainState, Tuple[TrainState, TrainState]]:
+    if isinstance(cl, Packnet):
+        actor, critic = network
+        actor_params, critic_params = network_params
+        actor_tx, critic_tx = optimizer
+        # jit the apply function
+        actor.apply = jax.jit(actor.apply)
+        critic.apply = jax.jit(critic.apply)
+        # Initialize the training state      
+        actor_train_state = TrainState.create(
+            apply_fn=actor.apply,
+            params=actor_params,
+            tx=actor_tx
+        )
+        critic_train_state = TrainState.create(
+            apply_fn=critic.apply,
+            params=critic_params,
+            tx=critic_tx
+        )
+        return (actor_train_state, critic_train_state) # if packnet is used, train state constitutes a tuple
+    else:
+        # jit the apply function
+        network.apply = jax.jit(network.apply)
+        # Initialize the training state
+        train_state = TrainState.create(
+            apply_fn=network.apply,
+            params=network_params,
+            tx=optimizer
+        )
+        return train_state
+    
+def reset_optimizer(train_state, tx, cfg, cl):
+    if cfg.reset_optimizer:
+        if isinstance(cl, Packnet):
+            actor_train_state, critic_train_state = train_state
+            actor_tx, critic_tx = tx
+            
+            new_actor_optimizer = actor_train_state.tx.init(actor_train_state.params)
+            actor_train_state.replace(tx=actor_tx, opt_state=new_actor_optimizer)
+            new_critic_optimizer = critic_train_state.tx.init(critic_train_state.params)
+            critic_train_state.replace(tx=critic_tx, opt_state=new_critic_optimizer)
+
+            return (actor_train_state, critic_train_state), (new_actor_optimizer, new_critic_optimizer) # return tuples in case of packnet
+        else:
+            new_optimizer = train_state.tx.init(train_state.params)
+            train_state = train_state.replace(tx=tx, opt_state=new_optimizer)
+            return train_state, new_optimizer
+    else:
+        return train_state, tx
 
 # ---------------------------------------------------------------
 # util: build a (2, …) batch without Python branches
