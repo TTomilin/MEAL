@@ -152,7 +152,7 @@ def create_network(env, cfg, cl) -> Union[nn.Module, Tuple[nn.Module, nn.Module]
                             cfg.shared_backbone, cfg.big_network, cfg.use_task_id, cfg.regularize_heads,
                             cfg.use_layer_norm)
         return actor_critic
-    
+        
 def init_network(env, network, cfg, cl) -> Union[FrozenVariableDict, Tuple[FrozenVariableDict, FrozenVariableDict]]:
     if isinstance(cl, Packnet):
         actor, critic = network # unpack actor, critic from network
@@ -178,6 +178,16 @@ def init_network(env, network, cfg, cl) -> Union[FrozenVariableDict, Tuple[Froze
         network_params = network.init(network_rng, init_x)
         
         return network_params
+    
+def apply_network(network, train_state, obs_batch, env_idx, cl) -> Tuple:
+    if isinstance(cl, Packnet):
+        actor, critic = network # unpack network into actor and critic
+        actor_train_state, critic_train_state = train_state # unpack train state too
+        pi, dormant_ratio_actor = actor.apply(actor_train_state.params, obs_batch, env_idx=env_idx)
+        value, dormant_ratio_critic = critic.apply(critic_train_state.params, obs_batch, env_idx=env_idx)
+        return (pi, value, dormant_ratio_actor, dormant_ratio_critic)
+    else:
+        return network.apply(train_state.params, obs_batch, env_idx=env_idx) # (pi, value, dormant_ratio)
 
 def init_optimizer(cfg, schedule, cl) -> Union[GradientTransformation, Tuple[GradientTransformation, GradientTransformation]]:
     if isinstance(cl, Packnet):

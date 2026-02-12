@@ -17,13 +17,3 @@ class FT(RegCLMethod):
     # ─── penalty: always zero ───────────────────────────────────────────────
     def penalty(self, params: FrozenDict, cl_state: RegCLState, coef: float):
         return jnp.array(0.0, dtype=jnp.float32)
-
-    # ── importance function factory (to satisfy unified interface) ───────────
-    def make_importance_fn(self, reset_switch, step_switch, network, agents, use_cnn: bool, max_episodes: int,
-                           max_steps: int, norm_importance: bool, stride: int) -> callable:
-        # Returns a jitted function with the same call signature but producing zeros.
-        @jax.jit
-        def importance_fn(params: FrozenDict, env_idx: jnp.int32, rng):
-            return jax.tree.map(jnp.zeros_like, params)
-
-        return importance_fn

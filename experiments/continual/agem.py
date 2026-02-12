@@ -1,5 +1,6 @@
 import jax
 import jax.numpy as jnp
+from typing import tuple
 from flax import struct
 from flax.core import FrozenDict
 from jax._src.flatten_util import ravel_pytree
@@ -47,17 +48,6 @@ class AGEM(RegCLMethod):
         # AGEM doesn't use a regularization penalty, so we return 0
         return 0.0
 
-    # ── importance function factory (to satisfy unified interface) ───────────
-    def make_importance_fn(self, reset_switch, step_switch, network, agents, use_cnn: bool, max_episodes: int,
-                           max_steps: int, norm_importance: bool, stride: int) -> callable:
-        # Returns a jitted function with the same call signature but producing zeros.
-        @jax.jit
-        def importance_fn(params: FrozenDict, env_idx: jnp.int32, rng):
-            return jax.tree.map(jnp.zeros_like, params)
-
-        return importance_fn
-
-
 def init_agem_memory(max_size: int, obs_shape: tuple, max_tasks: int = 20):
     """Create an *empty* per-task buffer."""
     max_size_per_task = max_size // max_tasks  # Divide total memory among tasks
@@ -77,7 +67,7 @@ def init_agem_memory(max_size: int, obs_shape: tuple, max_tasks: int = 20):
     )
 
 
-def agem_project(grads_ppo, grads_mem, max_norm=40.):
+def agem_project(grads_ppo, grads_mem, label, max_norm=40.):
     """
     Implements the AGEM projection:
       If g_new^T g_mem < 0:
@@ -118,7 +108,7 @@ def agem_project(grads_ppo, grads_mem, max_norm=40.):
     )
 
     # Prefix all stats with "agem/" for consistent wandb logging
-    stats = {f"agem/{k}": v for k, v in stats.items()}
+    stats = {f"agem/{k}_{label}": v for k, v in stats.items()}
     return unravel(projected), stats
 
 
@@ -174,7 +164,8 @@ def sample_memory(mem: AGEMMemory, sample_size: int, rng):
     )
 
 
-def compute_memory_gradient(network, params,
+def compute_memory_gradient(actor, critic, 
+                            actor_params, critic_params,
                             clip_eps, vf_coef, ent_coef,
                             mem_obs, mem_actions,
                             mem_advs, mem_log_probs,
@@ -190,8 +181,9 @@ def compute_memory_gradient(network, params,
     mem_targets = jax.lax.stop_gradient(mem_targets)
     mem_values = jax.lax.stop_gradient(mem_values)
 
-    def loss_fn(params):
-        pi, value, _ = network.apply(params, mem_obs, env_idx=env_idx)  # shapes: [B]
+    def loss_fn(actor_params, critic_params):
+        pi, _ = actor.apply(actor_params, mem_obs, env_idx=env_idx)  # shapes: [B]
+        value, _ = critic.apply(critic_params, mem_obs, env_idx=env_idx)
         log_prob = pi.log_prob(mem_actions)
 
         ratio = jnp.exp(log_prob - mem_log_probs)
@@ -215,14 +207,15 @@ def compute_memory_gradient(network, params,
         total_loss = actor_loss + vf_coef * critic_loss - ent_coef * entropy
         return total_loss, (critic_loss, actor_loss, entropy)
 
-    (total_loss, (v_loss, a_loss, ent)), grads = jax.value_and_grad(loss_fn, has_aux=True)(params)
+    (total_loss, (v_loss, a_loss, ent)), actor_grads = jax.value_and_grad(loss_fn, has_aux=True, argnums=(0))(actor_params, critic_params)
+    (_, (_, _, _)), critic_grads = jax.value_and_grad(loss_fn, has_aux=True, argnums=(0))(actor_params, critic_params)
     stats = {
         "agem/ppo_total_loss": total_loss,
         "agem/ppo_value_loss": v_loss,
         "agem/ppo_actor_loss": a_loss,
         "agem/ppo_entropy": ent
     }
-    return grads, stats
+    return (actor_grads, critic_grads), stats
 
 
 def update_agem_memory(agem_sample_size, env_idx, advantages, mem, rng, targets, traj_batch):

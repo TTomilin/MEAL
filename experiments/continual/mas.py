@@ -52,13 +52,14 @@ class MAS(RegCLMethod):
         denom = jax.tree_util.tree_reduce(lambda a, b: a + b.sum(), cl_state.mask, 0.0) + 1e-8
         return 0.5 * coef * tot / denom
 
-    def make_importance_fn(self, reset_switch, step_switch, network, agents, use_cnn: bool,
+    def make_importance_fn(self, reset_switch, step_switch, actor, critic, agents, use_cnn: bool,
                            max_episodes: int, max_steps: int, norm_importance: bool, stride: int):
         num_agents = len(agents)
 
         @jax.jit
-        def mas_importance(params, env_idx: jnp.int32, rng):
-            importance0 = jax.tree_util.tree_map(jnp.zeros_like, params)
+        def mas_importance(actor_params, critic_params, env_idx: jnp.int32, rng, param_index: int):
+            params = [actor_params, critic_params]
+            importance0 = jax.tree_util.tree_map(jnp.zeros_like, params[param_index])
             def one_episode(carry, _):
                 imp_acc, total_steps, rng = carry
                 rng, r = jax.random.split(rng)
@@ -70,20 +71,21 @@ class MAS(RegCLMethod):
                     # batchify once
                     obs_b = batchify(obs, agents, num_agents, not use_cnn)
 
-                    def l2_loss(p):
-                        pi, v, _ = network.apply(p, obs_b, env_idx=env_idx)
+                    def l2_loss(actor_params, critic_params):
+                        pi, _ = actor.apply(actor_params, obs_b, env_idx=env_idx)
+                        v, _ = critic.apply(critic_params, obs_b, env_idx=env_idx)
                         v = v.reshape(num_agents, 1)
                         vec = jnp.concatenate([pi.logits, v], axis=-1)
                         return 0.5 * jnp.sum(vec * vec) / vec.shape[0]
 
-                    grads = jax.grad(l2_loss)(params)
+                    grads = jax.grad(l2_loss, argnums=param_index)(actor_params, critic_params)
                     alpha = (t % stride == 0).astype(jnp.float32)
                     factor = (1.0 - done) * alpha
                     grads2 = jax.tree_util.tree_map(lambda g: (g * g) * factor, grads)
                     imp_acc = jax.tree_util.tree_map(jnp.add, imp_acc, grads2)
 
                     rng, s1, s2 = jax.random.split(rng, 3)
-                    pi, _, _ = network.apply(params, obs_b, env_idx=env_idx)
+                    pi, _ = actor.apply(params, obs_b, env_idx=env_idx)
                     action = pi.sample(seed=s1)
                     env_act = unbatchify(action, agents, 1, num_agents)
                     env_act = {k: v.flatten() for k, v in env_act.items()}
@@ -113,4 +115,6 @@ class MAS(RegCLMethod):
                 mean_abs = _tree_mean_abs(ω_acc)
                 ω_acc = jax.tree_util.tree_map(lambda x: x / (mean_abs + 1e-8), ω_acc)
             return ω_acc
-        return mas_importance
+        mas_importance_actor = lambda actor_params, critic_params, env_idx, rng : mas_importance(actor_params, critic_params, env_idx, rng, 0)
+        mas_importance_critic = lambda actor_params, critic_params, env_idx, rng : mas_importance(actor_params, critic_params, env_idx, rng, 1)
+        return mas_importance_actor, mas_importance_critic

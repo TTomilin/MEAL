@@ -232,7 +232,6 @@ def main():
     )
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
-    network = "cnn" if cfg.use_cnn else "mlp"
     run_name = f'{cfg.alg_name}_{cfg.cl_method}_{difficulty}_{cfg.num_agents}agents_{network}_seq{seq_length}_{strategy}_seed_{seed}_{timestamp}'
     exp_dir = os.path.join("runs", run_name)
 
@@ -297,11 +296,20 @@ def main():
         frac = 1.0 - (count // (cfg.num_minibatches * cfg.update_epochs)) / cfg.num_updates
         return cfg.lr * frac
 
-    ac_cls = CNNActorCritic if cfg.use_cnn else MLPActorCritic
-
-    network = ac_cls(temp_env.action_space().n, cfg.activation, seq_length, cfg.use_multihead,
-                     cfg.shared_backbone, cfg.big_network, cfg.use_task_id, cfg.regularize_heads,
-                     cfg.use_layer_norm)
+    # TODO: add CNN support
+    actor = Actor(
+        action_dim=env.action_space().n,
+        activation=cfg.activation,
+        num_tasks=cfg.seq_length,
+        use_multihead=cfg.use_multihead,
+        use_task_id=cfg.use_task_id
+    )
+    critic = Critic(
+        activation=cfg.activation,
+        num_tasks=cfg.seq_length,
+        use_multihead=cfg.use_multihead,
+        use_task_id=cfg.use_task_id
+    )
 
     # Get the correct observation dimension by simulating the batchify process
     # This ensures the network is initialized with the same shape it will receive during training
@@ -313,25 +321,37 @@ def main():
     obs_dim = temp_obs_batch.shape[1]  # Get the actual dimension after batchify
 
     # Initialize the network
-    rng, network_rng = jax.random.split(rng)
-    init_x = jnp.zeros((1, obs_dim))
-    network_params = network.init(network_rng, init_x)
+    rng, actor_rng, critic_rng = jax.random.split(rng, 3)
+    init_x = jnp.zeros(env.observation_space().shape).flatten()
+    init_x = jnp.expand_dims(init_x, axis=0)  # Add batch dimension
+    actor_params = actor.init(actor_rng, init_x, env_idx=0)
+    critic_params = critic.init(critic_rng, init_x, env_idx=0)
 
     # Initialize the optimizer
-    tx = optax.chain(
+    actor_tx = optax.chain(
         optax.clip_by_global_norm(cfg.max_grad_norm),
-        optax.adam(learning_rate=linear_schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
+        optax.adam(learning_rate=schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
+    )
+    critic_tx = optax.chain(
+        optax.clip_by_global_norm(cfg.max_grad_norm),
+        optax.adam(learning_rate=schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
     )
 
     # jit the apply function
-    network.apply = jax.jit(network.apply)
+    critic.apply, actor.apply = jax.jit(critic.apply), jax.jit(actor.apply)
 
     # Initialize the training state
-    train_state = TrainState.create(
-        apply_fn=network.apply,
-        params=network_params,
-        tx=tx
+    actor_train_state = TrainState.create(
+        apply_fn=actor.apply,
+        params=actor_params,
+        tx=actor_tx
     )
+    critic_train_state = TrainState.create(
+        apply_fn=critic.apply,
+        params=critic_params,
+        tx=critic_tx
+    )
+    train_states = (actor_train_state, critic_train_state)
 
     reset_fns = tuple(env.reset for env in envs)
     step_fns = tuple(env.step for env in envs)
@@ -342,14 +362,14 @@ def main():
     def step_switch(key, state, actions, task_idx):
         return jax.lax.switch(task_idx, step_fns, key, state, actions)
 
-    evaluate_env = make_eval_fn(reset_switch, step_switch, network, agents, seq_length, cfg.num_steps, cfg.use_cnn)
+    evaluate_env = make_eval_fn(reset_switch, step_switch, actor, agents, seq_length, cfg.num_steps, cfg.use_cnn)
 
-    importance_fn = cl.make_importance_fn(reset_switch, step_switch, network, agents, cfg.use_cnn,
+    importance_fn = cl.make_importance_fn(reset_switch, step_switch, actor, critic, agents, cfg.use_cnn,
                                           cfg.importance_episodes, cfg.importance_steps, cfg.normalize_importance,
                                           cfg.importance_stride)
 
     @jax.jit
-    def train_on_environment(rng, train_state, cl_state, env_idx):
+    def train_on_environment(rng, actor_train_state, critic_train_state, cl_state, env_idx):
         '''
         Trains the network using IPPO
         @param rng: random number generator
@@ -358,8 +378,10 @@ def main():
 
         # reset the optimizer and learning rate
         if cfg.reset_optimizer:
-            new_optimizer = train_state.tx.init(train_state.params)
-            train_state = train_state.replace(tx=tx, opt_state=new_optimizer)
+            new_actor_optimizer = actor_train_state.tx.init(actor_train_state.params)
+            new_critic_optimizer = critic_train_state.tx.init(critic_train_state.params)
+            actor_train_state = actor_train_state.replace(tx=actor_tx, opt_state=new_actor_optimizer)
+            critic_train_state = critic_train_state.replace(tx=critic_tx, opt_state=new_critic_optimizer)
 
         # Initialize and reset the environment
         rng, env_rng = jax.random.split(rng)
@@ -390,7 +412,8 @@ def main():
                 returns the updated runner state and the transition
                 '''
                 # Unpack the runner state
-                train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+                train_states, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+                actor_train_state, critic_train_state = train_states
 
                 # split the random number generator for action selection
                 rng, _rng = jax.random.split(rng)
@@ -399,11 +422,11 @@ def main():
                 obs_batch = batchify(last_obs, agents, cfg.num_actors, not cfg.use_cnn)  # (num_actors, obs_dim)
 
                 # apply the policy network to the observations to get the suggested actions and their values
-                pi, value, _ = network.apply(train_state.params, obs_batch, env_idx=env_idx)
+                pi, _ = actor.apply(actor_train_state.params, obs_batch, env_idx=env_idx)
+                value, _ = critic.apply(critic_train_state.params, obs_batch, env_idx=env_idx)
 
-                # Sample and action from the policy
+                # Sample the actions from the policy distribution
                 action = pi.sample(seed=_rng)
-
                 log_prob = pi.log_prob(action)
 
                 # format the actions to be compatible with the environment
@@ -455,7 +478,7 @@ def main():
                 # Increment steps_for_env by the number of parallel envs
                 steps_for_env = steps_for_env + cfg.num_envs
 
-                runner_state = (train_state, env_state, obsv, update_step, steps_for_env, rng, cl_state)
+                runner_state = (train_states, env_state, obsv, update_step, steps_for_env, rng, cl_state)
                 return runner_state, (transition, info)
 
             # Apply the _env_step function a series of times, while keeping track of the runner state
@@ -467,13 +490,14 @@ def main():
             )
 
             # unpack the runner state that is returned after the scan function
-            train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+            train_states, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+            actor_train_state, critic_train_state = train_states
 
             # create a batch of the observations that is compatible with the network
             last_obs_batch = batchify(last_obs, agents, cfg.num_actors, not cfg.use_cnn)
 
             # apply the network to the batch of observations to get the value of the last state
-            _, last_val, _ = network.apply(train_state.params, last_obs_batch, env_idx=env_idx)
+            last_val, _ = critic.apply(critic_train_state.params, last_obs_batch, env_idx=env_idx)
 
             def _calculate_gae(traj_batch, last_val):
                 '''
@@ -524,7 +548,7 @@ def main():
                 returns the updated update_state and the total loss
                 '''
 
-                def _update_minbatch(carry, batch_info):
+                def _update_minibatch(carry, batch_info):
                     '''
                     performs a single update minibatch in the training loop
                     @param carry: the current state of the training and cl_state
@@ -535,29 +559,22 @@ def main():
                     # unpack the batch information
                     traj_batch, advantages, targets = batch_info
 
-                    def _loss_fn(params, traj_batch, gae, targets):
+                    def _actor_loss_fn(actor_params, traj_batch, gae):
                         '''
-                        calculates the loss of the network
-                        @param params: the parameters of the network
+                        calculates the loss of the actor network
+                        @param actor_params: the parameters of the actor network
                         @param traj_batch: the trajectory batch
                         @param gae: the generalized advantage estimate
-                        @param targets: the targets
-                        @param network: the network
-                        returns the total loss and the value loss, actor loss, and entropy
+                        returns the actor loss
                         '''
-                        # apply the network to the observations in the trajectory batch
-                        pi, value, _ = network.apply(params, traj_batch.obs, env_idx=env_idx)
+                        # Rerun the network
+                        pi, _ = actor.apply(actor_params, traj_batch.obs, env_idx=packnet_state.current_task)
+
+                        # Calculate the log probability 
                         log_prob = pi.log_prob(traj_batch.action)
+                        logratio = log_prob - traj_batch.log_prob
+                        ratio = jnp.exp(logratio)
 
-                        # calculate critic loss
-                        value_pred_clipped = traj_batch.value + (value - traj_batch.value).clip(-cfg.clip_eps,
-                                                                                                cfg.clip_eps)
-                        value_losses = jnp.square(value - targets)
-                        value_losses_clipped = jnp.square(value_pred_clipped - targets)
-                        value_loss = (0.5 * jnp.maximum(value_losses, value_losses_clipped).mean())
-
-                        # Calculate actor loss
-                        ratio = jnp.exp(log_prob - traj_batch.log_prob)
                         gae = (gae - gae.mean()) / (gae.std() + 1e-8)
                         loss_actor_unclipped = ratio * gae
                         loss_actor_clipped = (
@@ -569,24 +586,54 @@ def main():
                                 * gae
                         )
 
-                        loss_actor = -jnp.minimum(loss_actor_unclipped, loss_actor_clipped)
+                        loss_actor = -jnp.minimum(loss_actor_clipped, loss_actor_unclipped)
                         loss_actor = loss_actor.mean()
                         entropy = pi.entropy().mean()
 
-                        # CL penalty (for regularization-based methods)
-                        cl_penalty = cl.penalty(params, cl_state, cfg.reg_coef)
+                        # debug
+                        approx_kl = ((ratio - 1) - logratio).mean()
+                        clip_frac = jnp.mean(jnp.abs(ratio - 1) > cfg.clip_eps)
 
-                        total_loss = (loss_actor
-                                      + cfg.vf_coef * value_loss
-                                      - cfg.ent_coef * entropy
-                                      + cl_penalty)
-                        return total_loss, (value_loss, loss_actor, entropy, cl_penalty)
+                        actor_loss = (
+                                loss_actor
+                                - cfg.ent_coef * entropy
+                        )
+                        return actor_loss, (loss_actor, entropy, ratio, approx_kl, clip_frac)
+
+                    def _critic_loss_fn(critic_params, traj_batch, targets):
+                        '''
+                        calculates the loss of the critic network
+                        @param critic_params: the parameters of the critic network
+                        @param traj_batch: the trajectory batch
+                        @param targets: the targets
+                        returns the critic loss
+                        '''
+                        # Rerun the network
+                        value, _ = critic.apply(critic_params, traj_batch.obs, env_idx=packnet_state.current_task)
+
+                        # CALCULATE VALUE LOSS
+                        value_pred_clipped = traj_batch.value + (
+                                value - traj_batch.value
+                        ).clip(-cfg.clip_eps, cfg.clip_eps)
+                        value_losses = jnp.square(value - targets)
+                        value_losses_clipped = jnp.square(value_pred_clipped - targets)
+                        value_loss = (
+                                0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
+                        )
+                        critic_loss = cfg.vf_coef * value_loss
+                        return critic_loss, (value_loss)
 
                     # returns a function with the same parameters as loss_fn that calculates the gradient of the loss function
-                    grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
+                    actor_grad_fn = jax.value_and_grad(_actor_loss_fn, has_aux=True)
+                    critic_grad_fn = jax.value_and_grad(_critic_loss_fn, has_aux=True)
 
                     # call the grad_fn function to get the total loss and the gradients
-                    total_loss, grads = grad_fn(train_state.params, traj_batch, advantages, targets)
+                    _, actor_grads = actor_grad_fn(actor_train_state.params, traj_batch, advantages)
+                    _, critic_grads = critic_grad_fn(critic_train_state.params, traj_batch, targets)
+
+                    # For packnet, we need to mask gradients for frozen weights BEFORE the optimizer step
+                    if isinstance(cl_state, PacknetState):
+                        actor_grads = cl.mask_gradients(cl_state, actor_grads)
 
                     # For AGEM, we need to project the gradients
                     agem_stats = {}
@@ -600,8 +647,9 @@ def main():
                         )
 
                         # Compute memory gradient
-                        grads_mem, grads_stats = compute_memory_gradient(
-                            network, train_state.params,
+                        (actor_grads_mem, critic_grads_mem), grads_stats = compute_memory_gradient(
+                            actor, critic, 
+                            actor_train_state.params, critic_train_state.params,
                             cfg.clip_eps, cfg.vf_coef, cfg.ent_coef,
                             mem_obs, mem_actions, mem_advs, mem_log_probs,
                             mem_targets, mem_values,
@@ -611,21 +659,28 @@ def main():
                         # scale memory gradient by batch-size ratio
                         # ppo_bs = config.num_actors * config.num_steps
                         # mem_bs = config.agem_sample_size
-                        g_ppo, _ = ravel_pytree(grads)  # grads  = fresh PPO grads
-                        g_mem, _ = ravel_pytree(grads_mem)  # grads_mem = memory grads
-                        norm_ppo = jnp.linalg.norm(g_ppo) + 1e-12
-                        norm_mem = jnp.linalg.norm(g_mem) + 1e-12
-                        scale = norm_ppo / norm_mem * cfg.agem_gradient_scale
-                        grads_mem_scaled = jax.tree_util.tree_map(lambda g: g * scale, grads_mem)
+                        def scale_mem_grads(grads, grads_mem):
+                            g_ppo, _ = ravel_pytree(grads)  # grads  = fresh PPO grads
+                            g_mem, _ = ravel_pytree(grads_mem)  # grads_mem = memory grads
+                            norm_ppo = jnp.linalg.norm(g_ppo) + 1e-12
+                            norm_mem = jnp.linalg.norm(g_mem) + 1e-12
+                            scale = norm_ppo / norm_mem * cfg.agem_gradient_scale
+                            grads_mem_scaled = jax.tree_util.tree_map(lambda g: g * scale, grads_mem)
+                            return grads_mem_scaled
+                        actor_grads_mem_scaled = scale_mem_grads(actor_grads, actor_grads_mem)
+                        critic_grads_mem_scaled = scale_mem_grads(critic_grads, critic_grads_mem)
 
                         # Project new grads
-                        projected_grads, proj_stats = agem_project(grads, grads_mem_scaled)
+                        projected_actor_grads, proj_actor_stats = agem_project(actor_grads, actor_grads_mem_scaled, "actor")
+                        projected_critic_grads, proj_critic_stats = agem_project(critic_grads, critic_grads_mem_scaled, "critic")
 
                         # Combine stats for logging
-                        combined_stats = {**grads_stats, **proj_stats}
+                        combined_stats = {**grads_stats, **proj_actor_stats, **proj_critic_stats}
 
-                        scaled_norm = jnp.linalg.norm(ravel_pytree(grads_mem_scaled)[0])
-                        combined_stats["agem/mem_grad_norm_scaled"] = scaled_norm
+                        scaled_norm_actor = jnp.linalg.norm(ravel_pytree(actor_grads_mem_scaled)[0])
+                        scaled_norm_critic = jnp.linalg.norm(ravel_pytree(critic_grads_mem_scaled)[0])
+                        combined_stats["agem/mem_grad_norm_scaled_actor"] = scaled_norm_actor
+                        combined_stats["agem/mem_grad_norm_scaled_critic"] = scaled_norm_critic
 
                         # Add memory buffer fullness percentage
                         total_used = jnp.sum(cl_state.sizes)
@@ -633,11 +688,11 @@ def main():
                         memory_fullness_pct = (total_used / total_capacity) * 100.0
                         combined_stats["agem/memory_fullness_pct"] = memory_fullness_pct
 
-                        return projected_grads, combined_stats
+                        return projected_actor_grads, projected_critic_grads, combined_stats
 
                     def no_agem_projection():
                         # Return empty stats with the same structure as apply_agem_projection
-                        empty_stats = {
+                        base_empty_stats = {
                             "agem/agem_alpha": jnp.array(0.0),
                             "agem/agem_dot_g": jnp.array(0.0),
                             "agem/agem_final_grad_norm": jnp.array(0.0),
@@ -652,23 +707,27 @@ def main():
                             "agem/ppo_total_loss": jnp.array(0.0),
                             "agem/ppo_value_loss": jnp.array(0.0)
                         }
-                        return grads, empty_stats
+                        actor_empty_stats = {f"{key}_actor": value for key, value in base_empty_stats.items()}
+                        critic_empty_stats = {f"{key}_critic": value for key, value in base_empty_stats.items()}
+                        empty_stats = actor_empty_stats.update(critic_empty_stats) # merge dicts
+                        return actor_grads, critic_grads, empty_stats
 
                     # Gradient projection for AGEM
                     if cfg.cl_method.lower() == "agem" and cl_state is not None:
-                        grads, agem_stats = jax.lax.cond(
+                        actor_grads, critic_grads, agem_stats = jax.lax.cond(
                             jnp.sum(cl_state.sizes) > 0,
                             lambda: apply_agem_projection(),
                             lambda: no_agem_projection()
                         )
 
-                    loss_information = total_loss, grads, agem_stats
+                    loss_information = total_loss, actor_grads, critic_grads, agem_stats
 
                     # apply the gradients to the network
-                    train_state = train_state.apply_gradients(grads=grads)
+                    actor_train_state = actor_train_state.apply_gradients(grads=actor_grads)
+                    critic_train_state = critic_train_state.apply_gradients(grads=critic_grads)
 
                     # Of course we also need to add the network to the carry here
-                    return (train_state, cl_state), loss_information
+                    return ((actor_train_state, critic_train_state), cl_state), loss_information
 
                 train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state = update_state
 
@@ -700,14 +759,14 @@ def main():
                     f=(lambda x: jnp.reshape(x, [cfg.num_minibatches, -1] + list(x.shape[1:]))), tree=shuffled_batch,
                 )
 
-                (train_state, cl_state), loss_information = jax.lax.scan(
-                    f=_update_minbatch,
+                (train_states, cl_state), loss_information = jax.lax.scan(
+                    f=_update_minibatch,
                     init=(train_state, cl_state),
                     xs=minibatches
                 )
 
                 # Handle different return formats based on CL method
-                total_loss, grads, agem_stats = loss_information
+                total_loss, _, _, agem_stats = loss_information
                 # Create a dictionary to store all loss information
                 loss_dict = {
                     "total_loss": total_loss
@@ -715,13 +774,13 @@ def main():
                 if cfg.cl_method.lower() == "agem":
                     loss_dict["agem_stats"] = agem_stats
 
-                update_state = (train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state)
+                update_state = (train_states, traj_batch, advantages, targets, steps_for_env, rng, cl_state)
                 return update_state, loss_dict
 
             # create a tuple to be passed into the jax.lax.scan function
-            update_state = (train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state)
+            update_state = (train_states, traj_batch, advantages, targets, steps_for_env, rng, cl_state)
 
-            update_state, loss_info = jax.lax.scan(
+            update_states, loss_info = jax.lax.scan(
                 f=_update_epoch,
                 init=update_state,
                 xs=None,
@@ -729,7 +788,7 @@ def main():
             )
 
             # unpack update_state
-            train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state = update_state
+            train_states, traj_batch, advantages, targets, steps_for_env, rng, cl_state = update_state
             current_timestep = update_step * cfg.num_steps * cfg.num_envs
             metrics = jax.tree_util.tree_map(lambda x: x.mean(), info)
 
@@ -822,8 +881,10 @@ def main():
 
             # Dormant neuron ratio - calculate from current batch
             obs_batch = batchify(last_obs, agents, cfg.num_actors, not cfg.use_cnn)
-            _, _, current_dormant_ratio = network.apply(train_state.params, obs_batch, env_idx=env_idx)
-            metrics["Neural_Activity/dormant_ratio"] = current_dormant_ratio
+            _, current_dormant_ratio_actor = actor.apply(actor_train_state.params, obs_batch, env_idx=env_idx)
+            _, current_dormant_ratio_critic = critic.apply(critic_train_state.params, obs_batch, env_idx=env_idx)
+            metrics["Neural_Activity/dormant_ratio_actor"] = current_dormant_ratio_actor
+            metrics["Neural_Activity/dormant_ratio_critic"] = current_dormant_ratio_critic
 
             def evaluate_and_log(rng, update_step):
                 rng, eval_rng = jax.random.split(rng)
@@ -831,7 +892,7 @@ def main():
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
                         avg_rewards, avg_soups = evaluate_all_envs(
-                            eval_rng, train_state.params, seq_length, evaluate_env
+                            eval_rng, actor_train_state.params, seq_length, evaluate_env
                         )
                         metrics = add_eval_metrics(avg_rewards, avg_soups, env_names, max_soup_vals, metrics)
 
@@ -852,14 +913,14 @@ def main():
             # Evaluate the model and log the metrics
             evaluate_and_log(rng=rng, update_step=update_step)
 
-            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state)
+            runner_state = ((actor_train_state, critic_train_state), env_state, last_obs, update_step, steps_for_env, rng, cl_state)
 
             return runner_state, metrics
 
         rng, train_rng = jax.random.split(rng)
 
         # initialize a carrier that keeps track of the states and observations of the agents
-        runner_state = (train_state, env_state, obsv, 0, 0, train_rng, cl_state)
+        runner_state = ((actor_train_state, critic_train_state), env_state, obsv, 0, 0, train_rng, cl_state)
 
         # apply the _update_step function a series of times, while keeping track of the state
         runner_state, metrics = jax.lax.scan(
@@ -871,7 +932,8 @@ def main():
 
         if cfg.cl_method.lower() == "packnet":
             # # Prune the model and update the parameters
-            new_actor_params, packnet_state = cl.on_train_end(train_state.params, packnet_state)
+            new_actor_params, packnet_state = cl.on_train_end(actor_train_state.params, packnet_state)
+            actor_train_state = actor_train_state.replace(params=new_actor_params)
 
         # Return the runner state after the training loop, and the metrics arrays
         return runner_state, metrics
@@ -892,7 +954,8 @@ def main():
             # --- Task Training ---
             print(f"Training on environment: {task_idx} - {env.layout_name}")
             runner_state, metrics = train_on_environment(rng, train_state, cl_state, task_idx)
-            train_state = runner_state[0]
+            train_states = runner_state[0]
+            actor_train_state, critic_train_state = train_states
             cl_state = runner_state[6]
 
             # Continual Learning

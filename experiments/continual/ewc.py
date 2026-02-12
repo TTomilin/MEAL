@@ -51,7 +51,7 @@ class EWC(RegCLMethod):
                                           cl_state.mask, 0.) + 1e-8
         return 0.5 * coef * tot / denom
 
-    def make_importance_fn(self, reset_switch, step_switch, network, agents, use_cnn: bool, max_episodes: int,
+    def make_importance_fn(self, reset_switch, step_switch, actor, critic, agents, use_cnn: bool, max_episodes: int,
                            max_steps: int, norm_importance: bool, stride: int):
         """
         Returns a jitted function:
@@ -61,8 +61,8 @@ class EWC(RegCLMethod):
         num_agents = len(agents)
 
         @jax.jit
-        def fisher(params: FrozenDict, env_idx: jnp.int32, rng: jax.random.PRNGKey) -> FrozenDict:
-            fisher0 = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), params)
+        def fisher(actor_params: FrozenDict, critic_params: FrozenDict, env_idx: jnp.int32, rng: jax.random.PRNGKey) -> FrozenDict:
+            fisher0 = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), actor_params)
 
             def one_episode(carry, _):
                 rng, acc = carry
@@ -77,15 +77,15 @@ class EWC(RegCLMethod):
                     obs_b = batchify(obs, agents, num_agents, not use_cnn)
 
                     # forward once
-                    pi, _, _ = network.apply(params, obs_b, env_idx=env_idx)
+                    pi, _ = actor.apply(actor_params, obs_b, env_idx=env_idx)
                     acts = jax.lax.stop_gradient(pi.sample(seed=s1))  # (A,)
 
                     # grad log π(a|obs) wrt params
                     def logp(p):
-                        pi_p, _, _ = network.apply(p, obs_b, env_idx=env_idx)
+                        pi_p, _ = actor.apply(p, obs_b, env_idx=env_idx)
                         return jnp.sum(pi_p.log_prob(acts))
 
-                    g = jax.grad(logp)(params)
+                    g = jax.grad(logp)(actor_params)
                     g2 = jax.tree_util.tree_map(lambda x: x * x, g)
                     acc = jax.tree_util.tree_map(jnp.add, acc, g2)
 
@@ -117,5 +117,8 @@ class EWC(RegCLMethod):
                 fisher_acc = jax.tree_util.tree_map(lambda x: x / (mean_abs + 1e-8), fisher_acc)
 
             return fisher_acc
-
-        return fisher
+        
+        _, actor_importance_fn = super().make_importance_fn(reset_switch, step_switch, actor, critic, agents, use_cnn,
+                                                            max_episodes, max_steps, norm_importance, stride)
+        
+        return fisher, actor_importance_fn
