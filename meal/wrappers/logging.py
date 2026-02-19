@@ -78,3 +78,7 @@ class LogWrapper(JaxMARLWrapper):
         info["returned_episode_lengths"] = state.returned_episode_lengths
         info["returned_episode"] = ep_done_vec
         return obs, state, reward, done, info
+
+    def unwrap_env_state(self, state: LogEnvState):
+        """Unwrap the LogEnvState to return the raw env state."""
+        return state.env_state

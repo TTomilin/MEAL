@@ -873,6 +873,10 @@ class Overcooked(MultiAgentEnv):
         """Observation space of the environment."""
         return spaces.Box(0, 255, self.obs_shape)
 
+    def unwrap_env_state(self, state):
+        """Return the raw env state (identity for the base env)."""
+        return state
+
     def state_space(self) -> spaces.Dict:
         """State space of the environment."""
         h = self.height
