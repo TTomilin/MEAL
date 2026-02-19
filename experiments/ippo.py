@@ -339,7 +339,8 @@ def main():
     )
 
     # jit the apply function
-    critic.apply, actor.apply = jax.jit(critic.apply), jax.jit(actor.apply)
+    actor.apply = jax.jit(actor.apply)
+    critic.apply = jax.jit(critic.apply)
 
     # Initialize the training state
     actor_train_state = TrainState.create(
@@ -478,7 +479,7 @@ def main():
                 # Increment steps_for_env by the number of parallel envs
                 steps_for_env = steps_for_env + cfg.num_envs
 
-                runner_state = (train_states, env_state, obsv, update_step, steps_for_env, rng, cl_state)
+                runner_state = ((actor_train_state, critic_train_state), env_state, obsv, update_step, steps_for_env, rng, cl_state)
                 return runner_state, (transition, info)
 
             # Apply the _env_step function a series of times, while keeping track of the runner state
@@ -575,6 +576,7 @@ def main():
                         log_prob = pi.log_prob(traj_batch.action)
                         logratio = log_prob - traj_batch.log_prob
                         ratio = jnp.exp(logratio)
+                        jax.debug.breakpoint()
 
                         gae = (gae - gae.mean()) / (gae.std() + 1e-8)
                         loss_actor_unclipped = ratio * gae
@@ -591,10 +593,6 @@ def main():
                         loss_actor = loss_actor.mean()
                         entropy = pi.entropy().mean()
 
-                        # debug
-                        approx_kl = ((ratio - 1) - logratio).mean()
-                        clip_frac = jnp.mean(jnp.abs(ratio - 1) > cfg.clip_eps)
-
                         actor_cl_penalty = 0.0
                         if isinstance(cl_state, tuple):
                             actor_cl_penalty += cl.penalty(actor_params, cl_state[0], cfg.reg_coef) # 0-th state is the actor's CL-state
@@ -604,7 +602,7 @@ def main():
                                 - cfg.ent_coef * entropy
                                 + actor_cl_penalty
                         )
-                        return actor_loss, (loss_actor, entropy, ratio, actor_cl_penalty, approx_kl, clip_frac)
+                        return actor_loss, (loss_actor, entropy, ratio, actor_cl_penalty)
 
                     def _critic_loss_fn(critic_params, traj_batch, targets):
                         '''
