@@ -254,7 +254,7 @@ class StateVisualizer:
 
         return img_path
 
-    def render_state(self, state, grid, hud_data=None, action_probs=None):
+    def render_state(self, state, grid, hud_data=None, action_probs=None, delivery_positions=()):
         """
         returns surface with rendered game state scaled to selected size,
         decoupled from display_rendered_state function to make testing easier
@@ -265,7 +265,7 @@ class StateVisualizer:
         grid_surface = pygame.surface.Surface(
             self._unscaled_grid_pixel_size(grid)
         )
-        self._render_grid(grid_surface, grid)
+        self._render_grid(grid_surface, grid, delivery_positions=delivery_positions)
         self._render_players(grid_surface, state.players)
         self._render_objects(grid_surface, state.objects, grid)
 
@@ -277,6 +277,9 @@ class StateVisualizer:
         # render text after rescaling as text looks bad when is rendered small resolution and then rescalled to bigger one
         if self.is_rendering_cooking_timer:
             self._render_cooking_timers(grid_surface, state.objects, grid)
+
+        if delivery_positions:
+            self._render_delivery_flashes(grid_surface, delivery_positions)
 
         # arrows does not seem good when rendered in very small resolution
         if self.is_rendering_action_probs and action_probs is not None:
@@ -350,7 +353,8 @@ class StateVisualizer:
             y_tiles * self.UNSCALED_TILE_SIZE,
         )
 
-    def _render_grid(self, surface, grid):
+    def _render_grid(self, surface, grid, delivery_positions=()):
+        delivery_set = set(delivery_positions)
         for y_tile, row in enumerate(grid):
             for x_tile, tile in enumerate(row):
                 # Render the base tile
@@ -377,12 +381,12 @@ class StateVisualizer:
 
                 # Make delivery tiles more visible with a darker/more intense color
                 if tile == SERVING_LOC:
-                    # Get the position and size of the tile
                     pos = self._position_in_unscaled_pixels((x_tile, y_tile))
-
-                    # Draw a semi-transparent overlay to make the color more intense
                     overlay = pygame.Surface((self.UNSCALED_TILE_SIZE, self.UNSCALED_TILE_SIZE), pygame.SRCALPHA)
-                    overlay.fill((0, 100, 0, 128))  # Semi-transparent dark green
+                    if (x_tile, y_tile) in delivery_set:
+                        overlay.fill((255, 215, 0, 200))  # Bright gold for delivery flash
+                    else:
+                        overlay.fill((0, 100, 0, 128))  # Semi-transparent dark green
                     surface.blit(overlay, pos)
 
     def _position_in_unscaled_pixels(self, position):
@@ -513,6 +517,25 @@ class StateVisualizer:
                         ),
                     )
                     surface.blit(text_surface, font_position)
+
+    def _render_delivery_flashes(self, surface, delivery_positions):
+        """Draw a white 5-pointed star on each delivery tile (post-scale)."""
+        for (x_tile, y_tile) in delivery_positions:
+            cx = self.tile_size * x_tile + self.tile_size // 2
+            cy = self.tile_size * y_tile + self.tile_size // 2
+            outer_r = self.tile_size * 0.30
+            inner_r = self.tile_size * 0.12
+            pts = self._star_polygon(cx, cy, outer_r, inner_r)
+            pygame.draw.polygon(surface, (255, 255, 255), pts)
+
+    @staticmethod
+    def _star_polygon(cx, cy, outer_r, inner_r, points=5):
+        coords = []
+        for i in range(points * 2):
+            angle = math.pi / points * i - math.pi / 2
+            r = outer_r if i % 2 == 0 else inner_r
+            coords.append((cx + r * math.cos(angle), cy + r * math.sin(angle)))
+        return coords
 
     def _sorted_hud_items(self, hud_data):
         def default_order_then_alphabetic(item):

@@ -6,11 +6,9 @@ from os import makedirs
 # Add the project root to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-import imageio.v3 as iio
 import jax
 import jax.numpy as jnp
 import numpy as np
-import pygame
 from flax.core import FrozenDict
 
 from meal.env.layouts.presets import cramped_room
@@ -50,7 +48,7 @@ def test_scenario_2_shared_onion_contribution():
 
     # Set up env (deterministic reset -> we know the spawn)
     # Use shorter soup cooking time for faster tests
-    env = Overcooked(layout=FrozenDict(cramped_room), layout_name="Cramped Room")
+    env = Overcooked(layout=FrozenDict(cramped_room), layout_name="Cramped Room", cook_time=5)
     states = []
 
     # Action aliases

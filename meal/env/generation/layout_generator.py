@@ -410,10 +410,10 @@ def main(argv=None):
     if args.save and layouts:
         # Determine the base output directory
         base_dir = Path(__file__).parent.parent.parent.parent / "assets" / "screenshots"
-        separate_agents_str = "separated" if args.separate_agents else ""
+        separate_agents_str = "separated" if args.separated_agents else ""
 
         # Create difficulty-specific directory if difficulty is specified
-        out_dir = base_dir / (difficulty if difficulty else "generated") / separate_agents_str
+        out_dir = base_dir / (difficulty if difficulty else "generated") / separate_agents_str / f"{num_agents}_agents"
 
         out_dir.mkdir(parents=True, exist_ok=True)
 

@@ -181,6 +181,7 @@ class DrawableState:
     players: Sequence["Player"]
     pots: Sequence["PotState"]
     items: Sequence[Tuple["Obj", Coord]]
+    delivery_positions: Tuple[Coord, ...] = ()
 
     # ---------- constructors ----------
     @staticmethod
@@ -194,11 +195,13 @@ class DrawableState:
             players: Sequence["Player"],
             pots: Sequence["PotState"],
             items: Sequence[Tuple["Obj", Coord]],
+            delivery_positions: Tuple[Coord, ...] = (),
     ) -> "DrawableState":
         grid_norm: List[List[Tile]] = [
             [cls._normalize_tile(t) for t in row] for row in grid_tokens
         ]
-        inst = cls(grid=grid_norm, players=tuple(players), pots=tuple(pots), items=tuple(items))
+        inst = cls(grid=grid_norm, players=tuple(players), pots=tuple(pots), items=tuple(items),
+                   delivery_positions=tuple(delivery_positions))
         inst._validate()
         return inst
 
@@ -260,8 +263,10 @@ class DrawableState:
         players = tuple(p.with_pose(shift(p.pos), p.dir) for p in self.players)
         pots = tuple(replace(pot, pos=shift(pot.pos)) for pot in self.pots)
         items = tuple((kind, shift(pos)) for kind, pos in self.items)
+        delivery_positions = tuple(shift(pos) for pos in self.delivery_positions)
 
-        out = type(self)(grid=new_grid, players=players, pots=pots, items=items)
+        out = type(self)(grid=new_grid, players=players, pots=pots, items=items,
+                         delivery_positions=delivery_positions)
         out._validate()
         return out
 

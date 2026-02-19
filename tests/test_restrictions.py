@@ -11,10 +11,8 @@ from os import makedirs
 
 sys.path.insert(0, os.path.abspath('..'))
 
-import imageio.v3 as iio
 import jax
 import jax.numpy as jnp
-import pygame
 from flax.core import FrozenDict
 from meal import make_env
 from meal.env.layouts.presets import layout_grid_to_dict
@@ -90,17 +88,9 @@ WWXWW
         print(f"Initial agent inventories: {state.agent_inv}")
         print(f"Restrictions: {scenario['restrictions']}")
 
-        # Set up gif recording
-        frames = []
+        # Set up state collection for gif recording
         viz = OvercookedVisualizer(num_agents=2)
-
-        def add_frame(st):
-            surface = viz.render(st)
-            frame = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
-            frames.append(frame)
-
-        # Add initial frame
-        add_frame(state)
+        states = [state]
 
         # Action aliases for readability
         A = {'U': 0, 'D': 1, 'R': 2, 'L': 3, 'S': 4, 'I': 5}
@@ -126,65 +116,52 @@ WWXWW
             """Check if agent successfully dropped an item"""
             return prev_inv != OBJECT_TO_INDEX["empty"] and curr_inv == OBJECT_TO_INDEX["empty"]
 
-        # Create a specific test sequence:
-        # 1. Each agent tries to pick up onion
-        # 2. If successful, place it on empty counter
-        # 3. Each agent tries to pick up plate  
-        # 4. If successful, place it on empty counter
-        # 5. Retry the restricted item to confirm restriction
         test_actions = []
 
         print("  Phase 1: Agents try to pick up onions")
-        # Agent 0 tries onion (may be restricted)
         test_actions.extend([
-            (A['L'], A['S'], "agent_0_move_to_onion"),  # Move left to onion
-            (A['I'], A['S'], "agent_0_try_pickup_onion"),  # Try to pick up onion
+            (A['L'], A['S'], "agent_0_move_to_onion"),
+            (A['I'], A['S'], "agent_0_try_pickup_onion"),
         ])
 
-        # Agent 1 tries onion (may be restricted)  
         test_actions.extend([
-            (A['S'], A['U'], "agent_1_move_to_onion"),  # Move up to onion
-            (A['S'], A['I'], "agent_1_try_pickup_onion"),  # Try to pick up onion
+            (A['S'], A['U'], "agent_1_move_to_onion"),
+            (A['S'], A['I'], "agent_1_try_pickup_onion"),
         ])
 
         print("  Phase 2: If holding onion, place on empty counter")
-        # If agents picked up onion, place it down
         test_actions.extend([
-            (A['R'], A['D'], "agents_move_to_counter"),  # Move to empty counter space
-            (A['I'], A['I'], "agents_try_place_onion"),  # Try to place onion on counter
+            (A['R'], A['D'], "agents_move_to_counter"),
+            (A['I'], A['I'], "agents_try_place_onion"),
         ])
 
         print("  Phase 3: Agents try to pick up plates")
-        # Agent 0 tries plate (may be restricted)
         test_actions.extend([
-            (A['U'], A['S'], "agent_0_move_to_plate"),  # Move up to plate
-            (A['I'], A['S'], "agent_0_try_pickup_plate"),  # Try to pick up plate
+            (A['U'], A['S'], "agent_0_move_to_plate"),
+            (A['I'], A['S'], "agent_0_try_pickup_plate"),
         ])
 
-        # Agent 1 tries plate (may be restricted)
         test_actions.extend([
-            (A['S'], A['L'], "agent_1_move_to_plate"),  # Move left to plate  
-            (A['S'], A['I'], "agent_1_try_pickup_plate"),  # Try to pick up plate
+            (A['S'], A['L'], "agent_1_move_to_plate"),
+            (A['S'], A['I'], "agent_1_try_pickup_plate"),
         ])
 
         print("  Phase 4: If holding plate, place on empty counter")
-        # If agents picked up plate, place it down
         test_actions.extend([
-            (A['D'], A['D'], "agents_move_to_counter_2"),  # Move to empty counter space
-            (A['I'], A['I'], "agents_try_place_plate"),  # Try to place plate on counter
+            (A['D'], A['D'], "agents_move_to_counter_2"),
+            (A['I'], A['I'], "agents_try_place_plate"),
         ])
 
         print("  Phase 5: Retry restricted items to confirm restrictions")
-        # Try restricted items again to confirm they're still blocked
         test_actions.extend([
-            (A['U'], A['U'], "agents_move_back"),  # Move back
-            (A['L'], A['L'], "agents_move_to_onion_again"),  # Move to onion
-            (A['I'], A['I'], "agents_retry_onion"),  # Retry onion pickup
-            (A['R'], A['R'], "agents_move_to_plate_again"),  # Move to plate
-            (A['I'], A['I'], "agents_retry_plate"),  # Retry plate pickup
+            (A['U'], A['U'], "agents_move_back"),
+            (A['L'], A['L'], "agents_move_to_onion_again"),
+            (A['I'], A['I'], "agents_retry_onion"),
+            (A['R'], A['R'], "agents_move_to_plate_again"),
+            (A['I'], A['I'], "agents_retry_plate"),
         ])
 
-        # Execute test actions and record frames
+        # Execute test actions and collect states
         prev_agent_0_inv = state.agent_inv[0]
         prev_agent_1_inv = state.agent_inv[1]
 
@@ -194,17 +171,14 @@ WWXWW
             actions = {"agent_0": jnp.uint32(action_0), "agent_1": jnp.uint32(action_1)}
             obs, state, rewards, dones, info = env.step_env(step_key, state, actions)
 
-            # Add frame after each step
-            add_frame(state)
+            states.append(state)
 
             curr_agent_0_inv = state.agent_inv[0]
             curr_agent_1_inv = state.agent_inv[1]
 
-            # Check for pickup/drop attempts and violations
             if "try_pickup" in description or "retry" in description:
                 print(f"    Step {step} ({description}): Positions: {state.agent_pos}, Inventories: {state.agent_inv}")
 
-                # Check agent 0 interactions
                 if "onion" in description:
                     if check_pickup_success(prev_agent_0_inv, curr_agent_0_inv, "onion"):
                         test_results["agent_0_onion_successes"] += 1
@@ -223,7 +197,6 @@ WWXWW
                         else:
                             print(f"      ✓ Agent 0 picked up plate (allowed)")
 
-                # Check agent 1 interactions
                 if "onion" in description:
                     if check_pickup_success(prev_agent_1_inv, curr_agent_1_inv, "onion"):
                         test_results["agent_1_onion_successes"] += 1
@@ -245,23 +218,20 @@ WWXWW
             elif "try_place" in description:
                 print(f"    Step {step} ({description}): Positions: {state.agent_pos}, Inventories: {state.agent_inv}")
 
-                # Check if agents successfully placed items
                 if check_drop_success(prev_agent_0_inv, curr_agent_0_inv):
                     print(f"      ✓ Agent 0 placed item on counter")
                 if check_drop_success(prev_agent_1_inv, curr_agent_1_inv):
                     print(f"      ✓ Agent 1 placed item on counter")
 
-            # Update previous inventories
             prev_agent_0_inv = curr_agent_0_inv
             prev_agent_1_inv = curr_agent_1_inv
 
-        # Save gif with slower fps for better visibility
+        # Save gif
         gif_path = f"gifs/test_restrictions_{scenario['name']}.gif"
         makedirs("gifs", exist_ok=True)
-        iio.imwrite(gif_path, frames, loop=0, fps=3)  # Slower fps (3) for better observation
+        viz.animate(states, out_path=gif_path)
         print(f"  📹 GIF saved to {gif_path}")
 
-        # Print summary of what happened
         print(f"  📊 Test Results:")
         print(f"    Agent 0: {test_results['agent_0_onion_successes']} onions, {test_results['agent_0_plate_successes']} plates")
         print(f"    Agent 1: {test_results['agent_1_onion_successes']} onions, {test_results['agent_1_plate_successes']} plates")

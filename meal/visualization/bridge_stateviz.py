@@ -134,4 +134,5 @@ def render_drawable_with_stateviz(ds: DrawableState, sv: StateVisualizer, hud_da
     grid_chars = _grid_chars_from_drawable(ds)
     MockState = namedtuple('MockState', ['players', 'objects'])
     mock_state = MockState(players=_players_from_drawable(ds), objects=_objects_from_drawable(ds))
-    return sv.render_state(mock_state, grid_chars, hud_data=hud_data, action_probs=action_probs)
+    return sv.render_state(mock_state, grid_chars, hud_data=hud_data, action_probs=action_probs,
+                           delivery_positions=ds.delivery_positions)

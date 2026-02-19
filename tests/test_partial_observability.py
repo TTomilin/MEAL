@@ -110,7 +110,7 @@ def example_visualization():
         view_sides=1
     )
 
-    visualizer = OvercookedVisualizerPO(use_old_rendering=False)
+    visualizer = OvercookedVisualizerPO()
 
     # Reset environment
     key = jax.random.PRNGKey(123)
@@ -118,13 +118,7 @@ def example_visualization():
 
     try:
         # Render with view area highlighting
-        img = visualizer.render(
-            agent_view_size=5,  # Not used in PO version
-            state=state,
-            env=env,           # Pass env to get view masks
-            highlight_views=True,
-            tile_size=32
-        )
+        img = visualizer.render(env_state=state, env=env)  # Pass env to get view masks
 
         print(f"Successfully rendered image with shape: {img.shape}")
         print("View areas are highlighted with:")
@@ -300,7 +294,7 @@ def create_episode_gif(num_steps=50, gif_filename="overcooked_po_episode.gif", t
     print(f"Using {difficulty} difficulty view settings:")
     print(f"  view_ahead={params['view_ahead']}, view_behind={params['view_behind']}, view_sides={params['view_sides']}")
 
-    visualizer = OvercookedVisualizerPO(use_old_rendering=False)
+    visualizer = OvercookedVisualizerPO()
 
     # Reset environment
     key = jax.random.PRNGKey(42)  # Fixed seed for reproducible results
@@ -312,13 +306,7 @@ def create_episode_gif(num_steps=50, gif_filename="overcooked_po_episode.gif", t
 
     try:
         # Capture initial frame
-        img = visualizer.render(
-            agent_view_size=5,  # Not used in PO version
-            state=state,
-            env=env,
-            highlight_views=True,
-            tile_size=tile_size
-        )
+        img = visualizer.render(env_state=state, env=env)
         if img is not None:
             frames.append(Image.fromarray(img))
             # Save initial frame as individual image
@@ -373,13 +361,7 @@ def create_episode_gif(num_steps=50, gif_filename="overcooked_po_episode.gif", t
             obs, state, rewards, dones, info = env.step(step_key, state, actions)
 
             # Render frame with view highlighting
-            img = visualizer.render(
-                agent_view_size=5,
-                state=state,
-                env=env,
-                highlight_views=True,
-                tile_size=tile_size
-            )
+            img = visualizer.render(env_state=state, env=env)
             if img is not None:
                 frames.append(Image.fromarray(img))
                 # Save frame as individual image
@@ -547,7 +529,7 @@ if __name__ == "__main__":
     # Show difficulty parameters
     try:
         params = get_difficulty_params(args.difficulty)
-        print(f"Environment size: {params['height_rng'][0]}-{params['height_rng'][1]} x {params['width_rng'][0]}-{params['width_rng'][1]}")
+        print(f"Environment size: {params['height']}x{params['width']}")
         print(f"Wall density: {params['wall_density']}")
         print(f"View settings: ahead={params['view_ahead']}, behind={params['view_behind']}, sides={params['view_sides']}")
     except Exception as e:

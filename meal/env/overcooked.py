@@ -88,6 +88,7 @@ class Overcooked(MultiAgentEnv):
             agent_restrictions: dict = None,
             max_pots: int = 5,
             max_goals: int = 2,
+            cook_time: int = 20,
             random_pot_size: bool = False,
             random_cook_time: bool = False,
             **env_kwargs
@@ -95,6 +96,7 @@ class Overcooked(MultiAgentEnv):
         super().__init__(num_agents=num_agents)
         self.max_pots = max_pots
         self.max_goals = max_goals
+        self.cook_time = cook_time
 
         # 1) explicit layout given
         if layout is not None:
@@ -527,7 +529,7 @@ class Overcooked(MultiAgentEnv):
 
         # Real wall_idx are flat indices in real_height x real_width
         wall_idx = self.layout.get("wall_idx")
-        wall_y = wall_idx // real_height
+        wall_y = wall_idx // real_width
         wall_x = wall_idx % real_width
 
         # Inside the real region, set walls according to layout and free space elsewhere
@@ -570,7 +572,7 @@ class Overcooked(MultiAgentEnv):
                 # Combine layout and random positions
                 agent_idx = jnp.concatenate([available_positions, additional_positions])
 
-        cook_time = POT_FULL_STATUS
+        cook_time = self.cook_time
         max_onions_in_pot = MAX_ONIONS_IN_POT
 
         if self.random_cook_time:

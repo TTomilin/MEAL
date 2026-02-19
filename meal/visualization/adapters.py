@@ -120,7 +120,11 @@ def _pots_from_state(maze_crop: np.ndarray, env_state, pot_full: int, pot_empty:
 
     # Prefer explicit positions
     if hasattr(env_state, "pot_pos"):
-        for p in _np(env_state.pot_pos):
+        pot_pos_arr = _np(env_state.pot_pos)
+        pot_mask_arr = _np(env_state.pot_mask) if hasattr(env_state, "pot_mask") else None
+        for i, p in enumerate(pot_pos_arr):
+            if pot_mask_arr is not None and not bool(pot_mask_arr[i]):
+                continue  # skip padded / inactive pot entries
             x, y = int(p[0]), int(p[1])
             if 0 <= y < H and 0 <= x < W:
                 status = int(maze_crop[y, x, 2])

@@ -1,12 +1,10 @@
 from pathlib import Path
 
-import imageio.v3 as iio
 import jax
 import jax.numpy as jnp
-import numpy as np
 from flax.core.frozen_dict import freeze
 
-from meal.env.overcooked import Actions, Overcooked, POT_FULL_STATUS
+from meal.env.overcooked import Actions, Overcooked
 from meal.visualization.visualizer import OvercookedVisualizer
 
 # Aliases
@@ -59,10 +57,10 @@ def test_make_soup_and_render_gif(tmp_path: Path = None):
         "pot_idx": pot_idx,
     })
 
-    # --- Build env (deterministic reset, 3 agents)
+    # --- Build env (deterministic reset, 3 agents, cook_time=5 for fast tests)
     env = Overcooked(layout=layout, layout_name="test_3_agents_make_soup",
                      random_reset=False, random_agent_start=False,
-                     max_steps=400, num_agents=3, task_id=0)
+                     max_steps=400, num_agents=3, task_id=0, cook_time=5)
 
     key = jax.random.PRNGKey(0)
     obs, state = env.reset(key)
@@ -77,7 +75,7 @@ def test_make_soup_and_render_gif(tmp_path: Path = None):
 
     joint_actions = []
 
-    # Set orientations (blocked by wall → only orientation changes)
+    # Set orientations (blocked by wall -> only orientation changes)
     joint_actions.append([D, D, U])   # face counters
 
     # A0 pick onion, A2 pick plate
@@ -119,17 +117,15 @@ def test_make_soup_and_render_gif(tmp_path: Path = None):
     joint_actions.append([U, U, D])
     joint_actions.append([R, R, L])
 
-    # Wait until pot cooks from FULL→0 (POT_FULL_STATUS steps)
-    # We already spent ~ some steps; to be safe, just wait POT_FULL_STATUS + 2
-    wait_steps = int(POT_FULL_STATUS) + 2
+    # Wait until pot cooks from FULL->0 (cook_time=5 steps + 2 buffer)
+    wait_steps = 7
     joint_actions += [[S, S, S] for _ in range(wait_steps)]
 
     # A2 interact to pick soup (ready)
     joint_actions.append([S, S, I])
 
     # Collect states for GIF
-    states_for_gif = []
-    states_for_gif.append(state)
+    states = [state]
 
     # Step through the plan
     def to_env_dict(act_vec):
@@ -139,59 +135,20 @@ def test_make_soup_and_render_gif(tmp_path: Path = None):
     for acts in joint_actions:
         step_key, use_key = jax.random.split(step_key)
         obs, state, rew, done, info = env.step(use_key, state, to_env_dict(acts))
-        states_for_gif.append(state)
+        states.append(state)
         if done["__all__"]:
             break
 
     # --- Render GIF
     out_dir = Path("gifs")
     out_dir.mkdir(parents=True, exist_ok=True)
-    frames_dir = Path("images")
-    frames_dir.mkdir(parents=True, exist_ok=True)
 
     task_name = "3_agents_render"
     viz = OvercookedVisualizer(num_agents=3)
-    # viz.animate(states_for_gif, agent_view_size=5, task_idx=0, task_name=task_name, exp_dir=str(out_dir))
-    viz.animate(states_for_gif, agent_view_size=5, out_path=str(out_dir / f"{task_name}.gif"))
+    viz.animate(states, out_path=str(out_dir / f"{task_name}.gif"))
 
     gif_path = out_dir / f"{task_name}.gif"
-
     print(f"✓ GIF saved to: {gif_path}")
-
-    padding = 5 - 1  # agent_view_size - 1 (matches what animate() uses)
-
-    num_saved = 0
-    states_for_gif = []
-    for t, st in enumerate(states_for_gif):
-        # unwrap LogEnvState if present
-        env_state = st.env_state if hasattr(st, "env_state") else st
-
-        # crop to the same inner map region used by animate()
-        grid = np.asarray(env_state.maze_map[padding:-padding, padding:-padding, :])
-
-        # pass per-agent headings / inventories so hats & held objects render
-        agent_dir_idx = np.atleast_1d(env_state.agent_dir_idx)
-        agent_inv = np.atleast_1d(env_state.agent_inv)
-
-        print()
-        print(f"Step {t}")
-
-        # render a frame (returns HxWx3 uint8)
-        frame_img = viz.render_grid(
-            grid,
-            tile_size=64,                     # keep consistent with viz
-            agent_dir_idx=agent_dir_idx,
-            agent_inv=agent_inv,
-            title=f"t={t}"
-        )
-
-        # save PNG
-        frame_path = frames_dir / f"frame_{t:04d}.png"
-        iio.imwrite(str(frame_path), frame_img)
-        num_saved += 1
-
-    assert num_saved == len(states_for_gif), "Mismatch: not all frames were saved"
-    print(f"✓ Saved {num_saved} PNG frames to: {frames_dir}")
 
 if __name__ == "__main__":
     test_make_soup_and_render_gif()

@@ -45,7 +45,8 @@ def test_scenario_1_agent_0_does_everything():
     print("=== SCENARIO 1: Agent 0 does everything ===")
 
     # Set up env (deterministic reset -> we know the spawn)
-    env = Overcooked(layout=FrozenDict(cramped_room), num_agents=2, random_reset=False, max_steps=400)
+    env = Overcooked(layout=FrozenDict(cramped_room), num_agents=2, random_reset=False, max_steps=400,
+                     cook_time=5)
     rng = jax.random.PRNGKey(0)
     obs, state = env.reset(rng)
 
@@ -54,10 +55,10 @@ def test_scenario_1_agent_0_does_everything():
         'U': 0, 'D': 1, 'R': 2, 'L': 3, 'S': 4, 'I': 5,
     }
 
-    # "pick onion ➜ pot" pattern (same as original test)
+    # "pick onion -> pot" pattern (same as original test)
     onion_cycle = [A['L'], A['I'], A['R'], A['U'], A['I']]
     actions = onion_cycle * 3  # 3 onions
-    actions += [A['S']] * 20  # wait for cooking (20→0)
+    actions += [A['S']] * 5  # wait for cooking (5->0 with cook_time=5)
     actions += [
         A['D'],  # step down
         A['L'],  # step down
@@ -84,7 +85,8 @@ def test_scenario_2_shared_onion_contribution():
     print("=== SCENARIO 2: Agent 0 puts 2 onions, Agent 1 puts 1 onion ===")
 
     # Set up env (deterministic reset -> we know the spawn)
-    env = Overcooked(layout=FrozenDict(cramped_room), num_agents=2, random_reset=False, max_steps=400)
+    env = Overcooked(layout=FrozenDict(cramped_room), num_agents=2, random_reset=False, max_steps=400,
+                     cook_time=5)
     rng = jax.random.PRNGKey(0)
     obs, state = env.reset(rng)
 
@@ -98,7 +100,7 @@ def test_scenario_2_shared_onion_contribution():
     actions_agent_0 = onion_cycle * 2  # 2 onions from agent 0
     actions_agent_0 += [A['L']]  # move left to [1,1] to get out of Agent 1's way
     actions_agent_0 += [A['S']] * 10  # wait for agent 1 to add onion
-    actions_agent_0 += [A['S']] * 20  # wait for cooking (20→0)
+    actions_agent_0 += [A['S']] * 5  # wait for cooking (5->0 with cook_time=5)
     actions_agent_0 += [
         A['D'],  # step down
         A['L'],  # step left
@@ -130,7 +132,8 @@ def test_scenario_3_one_plates_other_delivers():
     print("=== SCENARIO 3: Agent 0 plates, Agent 1 delivers ===")
 
     # Set up env (deterministic reset -> we know the spawn)
-    env = Overcooked(layout=FrozenDict(cramped_room), num_agents=2, random_reset=False, max_steps=400)
+    env = Overcooked(layout=FrozenDict(cramped_room), num_agents=2, random_reset=False, max_steps=400,
+                     cook_time=5)
     rng = jax.random.PRNGKey(0)
     obs, state = env.reset(rng)
 
@@ -142,7 +145,7 @@ def test_scenario_3_one_plates_other_delivers():
     # Agent 0: puts all onions, plates the soup, drops it on counter for agent 1
     onion_cycle = [A['L'], A['I'], A['R'], A['U'], A['I']]
     actions_agent_0 = onion_cycle * 3  # 3 onions from agent 0
-    actions_agent_0 += [A['S']] * 20  # wait for cooking (20→0)
+    actions_agent_0 += [A['S']] * 5  # wait for cooking (5->0 with cook_time=5)
     actions_agent_0 += [
         A['D'],  # step down
         A['L'],  # step left
@@ -159,7 +162,7 @@ def test_scenario_3_one_plates_other_delivers():
     actions_agent_0 += [A['S']] * 20  # stay while agent 1 delivers
 
     # Agent 1: waits, then picks up dish from counter and delivers
-    wait_time = len(onion_cycle) * 3 + 20 + 10  # wait for agent 0 to plate and drop dish
+    wait_time = len(onion_cycle) * 3 + 5 + 10  # wait for agent 0 to plate and drop dish (cook_time=5)
     actions_agent_1 = [A['S']] * wait_time
     actions_agent_1 += [
         A['L'],  # move left to [2,1] 

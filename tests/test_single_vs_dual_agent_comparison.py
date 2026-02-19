@@ -7,6 +7,7 @@ Generates GIFs for both rollouts using visualization.
 """
 import os
 import sys
+import traceback
 from os import makedirs
 
 # Add the project root to the Python path
@@ -67,18 +68,14 @@ def run_single_vs_dual_test(layout_name, layout, action_sequence, rng_seed=42, m
     frames_1_agent = []
     frames_2_agent = []
 
-    viz_1_agent = OvercookedVisualizer(num_agents=1, use_old_rendering=False)
-    viz_2_agent = OvercookedVisualizer(num_agents=2, use_old_rendering=False)
+    viz_1_agent = OvercookedVisualizer(num_agents=1)
+    viz_2_agent = OvercookedVisualizer(num_agents=2)
 
     def add_frame_1_agent(st):
-        surface = viz_1_agent.render(env_1_agent.agent_view_size, st)
-        frame = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
-        frames_1_agent.append(frame)
+        frames_1_agent.append(viz_1_agent.render(st))
 
     def add_frame_2_agent(st):
-        surface = viz_2_agent.render(env_2_agent.agent_view_size, st)
-        frame = pygame.surfarray.array3d(surface).transpose(1, 0, 2)
-        frames_2_agent.append(frame)
+        frames_2_agent.append(viz_2_agent.render(st))
 
     # Add initial frames
     add_frame_1_agent(state_1)
@@ -98,7 +95,7 @@ def run_single_vs_dual_test(layout_name, layout, action_sequence, rng_seed=42, m
         # Step 1-agent environment
         rng, step_key1 = jax.random.split(rng)
         obs_1, state_1, reward_1, done_1, info_1 = env_1_agent.step(
-            step_key1, state_1, jnp.uint32(action)
+            step_key1, state_1, {"agent_0": jnp.uint32(action)}
         )
 
         # Step 2-agent environment (agent 0 does action, agent 1 stays)
@@ -202,8 +199,8 @@ def run_single_vs_dual_test(layout_name, layout, action_sequence, rng_seed=42, m
         agent_0_ori_1 = obs_1_float[:, :, 2:6]  # single-agent: channels 2-5
         agent_0_ori_2 = obs_2_float[:, :, 2:6]  # 2-agent: channels 2-5 (agent 0 only)
 
-        # Extract environment layers (same channels in both environments)
-        env_layers_1 = obs_1_float[:, :, 10:26]   # single-agent: channels 10-25 (16 layers)
+        # Extract environment layers (offset differs: 1-agent has no others_ori block)
+        env_layers_1 = obs_1_float[:, :, 6:22]    # single-agent: channels 6-21 (16 layers, no others_ori)
         env_layers_2 = obs_2_float[:, :, 10:26]   # 2-agent: channels 10-25 (16 layers)
 
         # Note: We explicitly EXCLUDE the following from comparison:
@@ -548,6 +545,7 @@ def test_single_vs_dual_agent_comparison():
         except Exception as e:
             print(f"❌ {layout_name} test failed with error: {str(e)}")
             all_results[layout_name] = {'error': str(e)}
+            traceback.print_exc()
 
     # Summary of all tests
     print(f"\n{'='*60}")

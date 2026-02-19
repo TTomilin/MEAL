@@ -56,7 +56,7 @@ def vstack_surfaces(surfaces, background_color=None):
 
 
 def scale_surface_by_factor(surface, scale_by_factor):
-    """return scaled input surfacem (with size multiplied by scale_by_factor param)
+    """return scaled input surface (with size multiplied by scale_by_factor param)
     scales also content of the surface
     """
     unscaled_size = surface.get_size()

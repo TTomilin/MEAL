@@ -8,7 +8,6 @@ import random
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 from flax.core import FrozenDict
 
 from meal.env import Overcooked
@@ -28,9 +27,7 @@ def create_invalid_layout(issue_type, seed=None):
     # Start with a valid layout
     grid_str, _ = generate_layout(
         num_agents=2,
-        height_rng=(6, 8),
-        width_rng=(6, 8),
-        wall_density=0.25,
+        difficulty="medium",
         seed=seed,
     )
 
@@ -150,9 +147,7 @@ def test_layouts():
         try:
             grid_str, _ = generate_layout(
                 num_agents=2,
-                height_rng=(5, 6),
-                width_rng=(5, 6),
-                wall_density=0.35,
+                difficulty="medium",
                 seed=seed,
                 allow_invalid=True,
             )
