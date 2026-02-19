@@ -331,11 +331,11 @@ def main():
     # Initialize the optimizer
     actor_tx = optax.chain(
         optax.clip_by_global_norm(cfg.max_grad_norm),
-        optax.adam(learning_rate=schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
+        optax.adam(learning_rate=linear_schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
     )
     critic_tx = optax.chain(
         optax.clip_by_global_norm(cfg.max_grad_norm),
-        optax.adam(learning_rate=schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
+        optax.adam(learning_rate=linear_schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
     )
 
     # jit the apply function
@@ -352,7 +352,6 @@ def main():
         params=critic_params,
         tx=critic_tx
     )
-    train_states = (actor_train_state, critic_train_state)
 
     reset_fns = tuple(env.reset for env in envs)
     step_fns = tuple(env.step for env in envs)
@@ -641,6 +640,7 @@ def main():
 
                     # call the grad_fn function to get the total loss and the gradients
                     (actor_loss, loss_info_act), actor_grads = actor_grad_fn(actor_train_state.params, traj_batch, advantages)
+                    #jax.debug.breakpoint()
                     (critic_loss, loss_info_crit), critic_grads = critic_grad_fn(critic_train_state.params, traj_batch, targets)
 
                     # For packnet, we need to mask gradients for frozen weights BEFORE the optimizer step
@@ -794,7 +794,7 @@ def main():
             # create a tuple to be passed into the jax.lax.scan function
             update_state = (train_states, traj_batch, advantages, targets, steps_for_env, rng, cl_state)
 
-            update_states, loss_info = jax.lax.scan(
+            update_state, loss_info = jax.lax.scan(
                 f=_update_epoch,
                 init=update_state,
                 xs=None,
@@ -803,6 +803,7 @@ def main():
 
             # unpack update_state
             train_states, traj_batch, advantages, targets, steps_for_env, rng, cl_state = update_state
+            actor_train_state, critic_train_state = train_states
             current_timestep = update_step * cfg.num_steps * cfg.num_envs
             metrics = jax.tree_util.tree_map(lambda x: x.mean(), info)
 
@@ -996,7 +997,7 @@ def main():
             # save the model
             repo_root = Path(__file__).resolve().parent.parent
             path = f"{repo_root}/checkpoints/overcooked/{cfg.cl_method}/{run_name}/model_env_{task_idx + 1}"
-            save_params(path, train_state, env_kwargs=env.layout, layout_name=env.layout_name, config=cfg)
+            save_params(path, actor_train_state, critic_train_state, env_kwargs=env.layout, layout_name=env.layout_name, config=cfg)
 
             if cfg.single_task_idx is not None:
                 break  # stop after the first env
