@@ -122,6 +122,21 @@ def agem_project(grads_ppo, grads_mem, max_norm=40.):
     return unravel(projected), stats
 
 
+def sample_task_slot(mem: AGEMMemory, task_idx: int, sample_size: int, rng):
+    """Sample uniformly from a single task's circular buffer slot."""
+    task_size = mem.sizes[task_idx]
+    idx = jax.random.randint(rng, (sample_size,), 0, jnp.maximum(task_size, 1))
+    idx = jnp.minimum(idx, jnp.maximum(task_size - 1, 0))
+    return (
+        mem.obs[task_idx, idx],
+        mem.actions[task_idx, idx],
+        mem.log_probs[task_idx, idx],
+        mem.advantages[task_idx, idx],
+        mem.targets[task_idx, idx],
+        mem.values[task_idx, idx],
+    )
+
+
 def sample_memory(mem: AGEMMemory, sample_size: int, rng):
     """Sample uniformly from data of all past tasks."""
     # Find which tasks have data

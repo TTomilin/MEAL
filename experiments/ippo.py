@@ -13,8 +13,8 @@ from flax.core.frozen_dict import unfreeze
 from flax.training.train_state import TrainState
 from jax._src.flatten_util import ravel_pytree
 
-from experiments.continual.agem import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
-    update_agem_memory
+from experiments.continual.agem import AGEM, init_agem_memory, sample_memory, sample_task_slot, \
+    compute_memory_gradient, agem_project, update_agem_memory
 from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
@@ -522,7 +522,8 @@ def main():
                     @param batch_info: the information of the batch
                     returns the updated train_state, cl_state and the total loss
                     '''
-                    train_state, cl_state = carry
+                    train_state, cl_state, rng = carry  # Bug 3: rng threaded through carry
+                    rng, agem_rng = jax.random.split(rng)  # Bug 3: fresh key per minibatch
                     # unpack the batch information
                     traj_batch, advantages, targets = batch_info
 
@@ -582,52 +583,68 @@ def main():
                     # For AGEM, we need to project the gradients
                     agem_stats = {}
 
-                    def apply_agem_projection():
-                        # Sample from memory
-                        rng_1, sample_rng = jax.random.split(rng)
-                        # Pick a random sample from AGEM memory
-                        mem_obs, mem_actions, mem_log_probs, mem_advs, mem_targets, mem_values = sample_memory(
-                            cl_state, cfg.agem_sample_size, sample_rng
-                        )
+                    def apply_agem_projection(agem_rng, past_sizes):
+                        # Compute per-task gradients with the env_idx for each past task, then sum.
+                        # Masks empty and current-task slots to zero.
+                        max_tasks = cl_state.obs.shape[0]
+                        samples_per_task = max(cfg.agem_sample_size // max_tasks, 1)
 
-                        # Compute memory gradient
-                        grads_mem, grads_stats = compute_memory_gradient(
-                            network, train_state.params,
-                            cfg.clip_eps, cfg.vf_coef, cfg.ent_coef,
-                            mem_obs, mem_actions, mem_advs, mem_log_probs,
-                            mem_targets, mem_values,
-                            env_idx=env_idx
-                        )
+                        grads_mem = None
+                        ppo_stats_sum = {
+                            "agem/ppo_total_loss": jnp.array(0.0),
+                            "agem/ppo_value_loss": jnp.array(0.0),
+                            "agem/ppo_actor_loss": jnp.array(0.0),
+                            "agem/ppo_entropy": jnp.array(0.0),
+                        }
 
-                        # scale memory gradient by batch-size ratio
-                        # ppo_bs = config.num_actors * config.num_steps
-                        # mem_bs = config.agem_sample_size
-                        g_ppo, _ = ravel_pytree(grads)  # grads  = fresh PPO grads
-                        g_mem, _ = ravel_pytree(grads_mem)  # grads_mem = memory grads
+                        for t in range(max_tasks):  # Python loop — unrolled at trace time
+                            agem_rng, task_rng = jax.random.split(agem_rng)
+                            t_obs, t_actions, t_logp, t_advs, t_targets, t_values = sample_task_slot(
+                                cl_state, t, samples_per_task, task_rng
+                            )
+                            t_grads, t_stats = compute_memory_gradient(
+                                network, train_state.params,
+                                cfg.clip_eps, cfg.vf_coef, cfg.ent_coef,
+                                t_obs, t_actions, t_advs, t_logp,
+                                t_targets, t_values,
+                                env_idx=t,
+                            )
+                            # Mask: zero gradient contribution from empty or current task
+                            mask = (past_sizes[t] > 0).astype(jnp.float32)
+                            t_grads = jax.tree_util.tree_map(lambda g: g * mask, t_grads)
+                            grads_mem = t_grads if grads_mem is None else jax.tree_util.tree_map(
+                                lambda a, b: a + b, grads_mem, t_grads
+                            )
+                            for k in ppo_stats_sum:
+                                ppo_stats_sum[k] = ppo_stats_sum[k] + t_stats[k] * mask
+
+                        # Average ppo stats over active past tasks
+                        n_active = jnp.sum((past_sizes > 0).astype(jnp.float32)) + 1e-8
+                        ppo_stats = {k: v / n_active for k, v in ppo_stats_sum.items()}
+
+                        # Scale memory gradient to match current gradient magnitude
+                        g_ppo, _ = ravel_pytree(grads)
+                        g_mem, _ = ravel_pytree(grads_mem)
                         norm_ppo = jnp.linalg.norm(g_ppo) + 1e-12
                         norm_mem = jnp.linalg.norm(g_mem) + 1e-12
                         scale = norm_ppo / norm_mem * cfg.agem_gradient_scale
                         grads_mem_scaled = jax.tree_util.tree_map(lambda g: g * scale, grads_mem)
 
-                        # Project new grads
+                        # Project PPO gradients onto the past-task feasible cone
                         projected_grads, proj_stats = agem_project(grads, grads_mem_scaled)
 
                         # Combine stats for logging
-                        combined_stats = {**grads_stats, **proj_stats}
-
+                        combined_stats = {**ppo_stats, **proj_stats}
                         scaled_norm = jnp.linalg.norm(ravel_pytree(grads_mem_scaled)[0])
                         combined_stats["agem/mem_grad_norm_scaled"] = scaled_norm
-
-                        # Add memory buffer fullness percentage
                         total_used = jnp.sum(cl_state.sizes)
-                        total_capacity = cl_state.max_tasks * cl_state.max_size_per_task
-                        memory_fullness_pct = (total_used / total_capacity) * 100.0
-                        combined_stats["agem/memory_fullness_pct"] = memory_fullness_pct
+                        total_capacity = cl_state.obs.shape[0] * cl_state.max_size_per_task
+                        combined_stats["agem/memory_fullness_pct"] = (total_used / total_capacity) * 100.0
 
                         return projected_grads, combined_stats
 
                     def no_agem_projection():
-                        # Return empty stats with the same structure as apply_agem_projection
+                        # Return zeros with the same structure as apply_agem_projection
                         empty_stats = {
                             "agem/agem_alpha": jnp.array(0.0),
                             "agem/agem_dot_g": jnp.array(0.0),
@@ -647,23 +664,25 @@ def main():
 
                     # Gradient projection for AGEM
                     if cfg.cl_method.lower() == "agem" and cl_state is not None:
+                        # Exclude the current task from the reference set
+                        past_sizes = cl_state.sizes.at[env_idx].set(0)
                         grads, agem_stats = jax.lax.cond(
-                            jnp.sum(cl_state.sizes) > 0,
-                            lambda: apply_agem_projection(),
+                            jnp.sum(past_sizes) > 0,  # only project when past tasks have data
+                            lambda: apply_agem_projection(agem_rng, past_sizes),
                             lambda: no_agem_projection()
                         )
 
                     loss_information = total_loss, grads, agem_stats
 
-                    # apply the gradients to the network
+                    # Apply the gradients to the network
                     train_state = train_state.apply_gradients(grads=grads)
 
-                    # Of course we also need to add the network to the carry here
-                    return (train_state, cl_state), loss_information
+                    # Return updated rng in carry for next minibatch
+                    return (train_state, cl_state, rng), loss_information
 
                 train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state = update_state
 
-                # set the batch size and check if it is correct
+                # Set the batch size and check if it is correct
                 batch_size = cfg.minibatch_size * cfg.num_minibatches
                 assert (
                         batch_size == cfg.num_steps * cfg.num_actors
@@ -691,9 +710,9 @@ def main():
                     f=(lambda x: jnp.reshape(x, [cfg.num_minibatches, -1] + list(x.shape[1:]))), tree=shuffled_batch,
                 )
 
-                (train_state, cl_state), loss_information = jax.lax.scan(
+                (train_state, cl_state, rng), loss_information = jax.lax.scan(
                     f=_update_minbatch,
-                    init=(train_state, cl_state),
+                    init=(train_state, cl_state, rng),
                     xs=minibatches
                 )
 
