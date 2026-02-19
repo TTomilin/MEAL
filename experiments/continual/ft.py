@@ -1,8 +1,9 @@
 import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
+from typing import Tuple
 
-from experiments.continual.base import RegCLMethod, RegCLState
+from experiments.continual.base import RegCLMethod, RegCLState, CLState
 
 
 class FT(RegCLMethod):
@@ -11,7 +12,7 @@ class FT(RegCLMethod):
     name = "ft"
 
     # ─── state update: nothing to store ─────────────────────────────────────
-    def update_state(self, cl_state: RegCLState, new_params: FrozenDict, new_importance: FrozenDict) -> RegCLState:
+    def update_state(self, cl_state: Tuple[CLState, CLState], new_params: FrozenDict, new_importance: FrozenDict) -> RegCLState:
         return cl_state  # no change
 
     # ─── penalty: always zero ───────────────────────────────────────────────

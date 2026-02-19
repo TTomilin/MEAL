@@ -2,8 +2,9 @@ import os
 import uuid
 import optax
 from datetime import datetime
-from typing import NamedTuple, Union, Tuple
+from typing import NamedTuple, Union, Tuple, List
 import flax.linen as nn
+import numpy as np
 
 import jax
 import jax.numpy as jnp
@@ -15,9 +16,11 @@ from optax._src.base import GradientTransformation
 
 from experiments.continual.base import RegCLState, CLMethod, CLState
 from experiments.continual.packnet import PacknetState, Packnet
+from experiments.continual.agem import AGEM, init_agem_memory
 from experiments.model.mlp import ActorCritic as MLPActorCritic
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.model.decoupled_mlp import Actor, Critic
+from meal.env.overcooked import Overcooked
 
 
 class Transition(NamedTuple):
@@ -112,22 +115,37 @@ def build_reg_weights(params, regularize_critic: bool, regularize_heads: bool) -
     return jax.tree_util.tree_map_with_path(_mark, params)
 
 
-def init_cl_state(params: Union[FrozenVariableDict, Tuple[FrozenVariableDict, FrozenVariableDict]], regularize_critic: bool, 
-                  regularize_heads: bool, cl: CLMethod) -> CLState:
+def init_cl_state(actor_params: FrozenVariableDict, critic_params: FrozenVariableDict, regularize_critic: bool, 
+                  regularize_heads: bool, cl: CLMethod, envs: List[Overcooked], seq_length: int, cfg) -> CLState:
     if isinstance(cl, Packnet):
-        actor_params, _ = params # unpack params
         return PacknetState(
             masks=cl.init_mask_tree(actor_params),
             current_task=0,
             train_mode=True
         )
+    elif isinstance(cl, AGEM):
+        # Get observation dimension
+        obs_dim = envs[0].observation_space().shape
+        if not cfg.use_cnn:
+            obs_dim = (np.prod(obs_dim),)
+        # Initialize memory buffer
+        cl_state = init_agem_memory(cfg.agem_memory_size, obs_dim, max_tasks=seq_length)
+        return cl_state
     else:
-        mask = build_reg_weights(params, regularize_critic, regularize_heads)
-        return RegCLState(
-            old_params=jax.tree.map(lambda x: x.copy(), params),
-            importance=jax.tree.map(jnp.zeros_like, params),
-            mask=mask
+        actor_mask = build_reg_weights(actor_params, regularize_critic, regularize_heads)
+        critic_mask = build_reg_weights(critic_params, regularize_critic, regularize_heads)
+        actor_cl_state = RegCLState(
+            old_params=jax.tree.map(lambda x: x.copy(), actor_params),
+            importance=jax.tree.map(jnp.zeros_like, actor_params),
+            mask=actor_mask
         )
+        critic_cl_state = RegCLState(
+            old_params=jax.tree.map(lambda x: x.copy(), critic_params),
+            importance=jax.tree.map(jnp.zeros_like, critic_params),
+            mask=critic_mask
+        )
+        return (actor_cl_state, critic_cl_state)
+        
     
 def create_network(env, cfg, cl) -> Union[nn.Module, Tuple[nn.Module, nn.Module]]:
     # TODO: implement CNN-support for Packnet
@@ -345,7 +363,7 @@ def initialize_logging_setup(config, run_name, exp_dir):
     return writer
 
 
-def rollout_for_video(rng, config, train_state, env, network, env_idx=0, max_steps=300):
+def rollout_for_video(rng, config, actor_train_state, env, actor, env_idx=0, max_steps=300):
     """
     Records a rollout of an episode by running the trained network on the environment.
 
@@ -385,7 +403,7 @@ def rollout_for_video(rng, config, train_state, env, network, env_idx=0, max_ste
         actions = {}
         act_keys = jax.random.split(rng, env.num_agents)
         for i, agent_id in enumerate(env.agents):
-            pi, _, _ = network.apply(train_state.params, obs_dict[agent_id], env_idx=env_idx)
+            pi, _ = actor.apply(actor_train_state.params, obs_dict[agent_id], env_idx=env_idx)
             actions[agent_id] = jnp.squeeze(pi.sample(seed=act_keys[i]), axis=0)
 
         rng, key_step = jax.random.split(rng)

@@ -1,6 +1,5 @@
 import jax
 import jax.numpy as jnp
-from typing import tuple
 from flax import struct
 from flax.core import FrozenDict
 from jax._src.flatten_util import ravel_pytree
@@ -39,14 +38,6 @@ class AGEM(RegCLMethod):
         """
         self.memory_size = memory_size
         self.sample_size = sample_size
-
-    def update_state(self, state, params, importance):
-        # AGEM doesn't update state based on importance, so we just return the current state
-        return state
-
-    def penalty(self, params, state, reg_coef):
-        # AGEM doesn't use a regularization penalty, so we return 0
-        return 0.0
 
 def init_agem_memory(max_size: int, obs_shape: tuple, max_tasks: int = 20):
     """Create an *empty* per-task buffer."""

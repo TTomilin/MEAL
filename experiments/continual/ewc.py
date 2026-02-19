@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 
-from experiments.continual.base import RegCLMethod, RegCLState
+from experiments.continual.base import RegCLMethod, RegCLState, CLState
 from experiments.utils import batchify, unbatchify
 
 
@@ -23,20 +23,22 @@ class EWC(RegCLMethod):
         self.mode = mode
         self.decay = decay
 
-    def update_state(self, cl_state: RegCLState, new_params: FrozenDict, new_fisher: FrozenDict) -> RegCLState:
+    def update_state(self, cl_state: tuple[CLState, CLState], new_actor_params: FrozenDict, new_critic_params: FrozenDict, 
+                     new_actor_fisher: FrozenDict, new_critic_fisher: FrozenDict) -> RegCLState:
+        actor_cl_state, critic_cl_state = cl_state # unpack, only actor cl state is actually important here
 
         if self.mode == "last":
-            fish = new_fisher
+            fish = new_actor_fisher
 
         elif self.mode == "multi":
-            fish = jax.tree_util.tree_map(jnp.add, cl_state.importance, new_fisher)
+            fish = jax.tree_util.tree_map(jnp.add, actor_cl_state.importance, new_actor_fisher)
 
         else:  # "online"
             fish = jax.tree_util.tree_map(
                 lambda old_f, f_new: self.decay * old_f + (1. - self.decay) * f_new,
-                cl_state.importance, new_fisher)
+                actor_cl_state.importance, new_actor_fisher)
 
-        return RegCLState(old_params=new_params, importance=fish, mask=cl_state.mask)
+        return RegCLState(old_params=new_actor_params, importance=fish, mask=actor_cl_state.mask), critic_cl_state
 
     def penalty(self, params: FrozenDict, cl_state: RegCLState, coef: float) -> jnp.ndarray:
 
@@ -118,7 +120,7 @@ class EWC(RegCLMethod):
 
             return fisher_acc
         
-        _, actor_importance_fn = super().make_importance_fn(reset_switch, step_switch, actor, critic, agents, use_cnn,
+        _, critic_importance_fn = super().make_importance_fn(reset_switch, step_switch, actor, critic, agents, use_cnn,
                                                             max_episodes, max_steps, norm_importance, stride)
         
-        return fisher, actor_importance_fn
+        return fisher, critic_importance_fn

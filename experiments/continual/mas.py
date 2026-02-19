@@ -1,7 +1,8 @@
 import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
-from experiments.continual.base import RegCLMethod, RegCLState
+from experiments.continual.base import RegCLMethod, RegCLState, CLState
+from typing import Tuple
 from experiments.utils import build_reg_weights, unbatchify, batchify
 
 
@@ -29,21 +30,27 @@ class MAS(RegCLMethod):
         return RegCLState(old_params=jax.tree.map(lambda x: x.copy(), params),
                        importance=zeros, mask=mask)
 
-    def update_state(self, cl_state: RegCLState, new_params: FrozenDict, new_importance: FrozenDict) -> RegCLState:
-        ω_old = cl_state.importance
-        ω_new = new_importance
-        if self.normalize_task:
-            m = _tree_mean_abs(ω_new)
-            ω_new = jax.tree_util.tree_map(lambda x: x / (m + 1e-8), ω_new)
+    def update_state(self, cl_state: Tuple[CLState, CLState], new_actor_params: FrozenDict, new_critic_params: FrozenDict, 
+                     new_actor_importance: FrozenDict, new_critic_importance: FrozenDict) -> RegCLState:
+        index_to_params: dict = {0: new_actor_params, 1: new_critic_params}
+        index_to_importance: dict = {0: new_actor_importance, 1: new_critic_importance}
+        new_cl_state = []
+        for i in range(2):
+            ω_old = cl_state[i] # note cl_state = [actor_cl_state, critic_cl_state]
+            ω_new = index_to_importance[i]
+            if self.normalize_task:
+                m = _tree_mean_abs(ω_new)
+                ω_new = jax.tree_util.tree_map(lambda x: x / (m + 1e-8), ω_new)
 
-        if self.mode == "online":
-            ω = jax.tree_util.tree_map(lambda a, b: self.decay * a + (1.0 - self.decay) * b, ω_old, ω_new)
-        elif self.mode == "multi":
-            ω = jax.tree_util.tree_map(jnp.add, ω_old, ω_new)
-        else:  # "last"
-            ω = ω_new
-
-        return RegCLState(old_params=new_params, importance=ω, mask=cl_state.mask)
+            if self.mode == "online":
+                ω = jax.tree_util.tree_map(lambda a, b: self.decay * a + (1.0 - self.decay) * b, ω_old, ω_new)
+            elif self.mode == "multi":
+                ω = jax.tree_util.tree_map(jnp.add, ω_old, ω_new)
+            else:  # "last"
+                ω = ω_new
+            new_cl_state.append(RegCLState(old_params=index_to_params[i], importance=ω, mask=cl_state[i].mask))
+        
+        return (state for state in new_cl_state)
 
     def penalty(self, params: FrozenDict, cl_state: RegCLState, coef: float) -> jnp.ndarray:
         def _term(p, o, w, m): return m * w * (p - o) ** 2

@@ -1,8 +1,9 @@
 import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
+from typing import Tuple
 
-from experiments.continual.base import RegCLMethod, RegCLState
+from experiments.continual.base import RegCLMethod, RegCLState, CLState
 
 
 class L2(RegCLMethod):
@@ -12,9 +13,14 @@ class L2(RegCLMethod):
     """
     name = "l2"
 
-    def update_state(self, cl_state: RegCLState, new_params: FrozenDict, new_importance: FrozenDict) -> RegCLState:
+    def update_state(self, cl_state: Tuple[CLState, CLState], new_actor_params: FrozenDict, new_critic_params: FrozenDict, 
+                     new_actor_importance, new_critic_importance) -> RegCLState:
+        actor_cl_state, critic_cl_state = cl_state # unpack
+
         # we only need to remember θᵗ
-        return RegCLState(old_params=new_params, importance=cl_state.importance, mask=cl_state.mask)
+        new_actor_state = RegCLState(old_params=new_actor_params, importance=actor_cl_state.importance, mask=actor_cl_state.mask)
+        new_critic_state = RegCLState(old_params=new_critic_params, importance=critic_cl_state.importance, mask=critic_cl_state.mask)
+        return new_actor_state, new_critic_state
 
     def penalty(self,
                 params: FrozenDict,
