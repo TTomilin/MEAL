@@ -81,7 +81,7 @@ def test_cramped_room_single_agent():
     # ---------------------------------------------------------------------
     # 5. Assertions
     # ---------------------------------------------------------------------
-    expected_shaped = 3 * 3 + 3 + 5  # 3 onions + plate + soup = 17
+    expected_shaped = 3 * 3 + 5  # 3 onions + soup pickup = 14
     assert np.isclose(total_shaped, expected_shaped), f"shaped reward {total_shaped} != {expected_shaped}"
     assert done["__all__"] is False, "episode ended prematurely"
 

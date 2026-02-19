@@ -85,7 +85,7 @@ def test_cramped_room_double_agent():
     # ---------------------------------------------------------------------
     # 5. Assertions
     # ---------------------------------------------------------------------
-    expected_shaped = 3 * 3 + 3 + 5  # 3 onions + plate + soup = 17
+    expected_shaped = 3 * 3 + 5  # 3 onions + soup pickup = 14
     assert np.isclose(total_shaped_0, expected_shaped), f"shaped reward {total_shaped_0} != {expected_shaped}"
     assert total_reward >= float(DELIVERY_REWARD), "didn't get delivery reward!"
     assert done["__all__"] is False, "episode ended prematurely"
