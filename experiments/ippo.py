@@ -576,7 +576,6 @@ def main():
                         log_prob = pi.log_prob(traj_batch.action)
                         logratio = log_prob - traj_batch.log_prob
                         ratio = jnp.exp(logratio)
-                        jax.debug.breakpoint()
 
                         gae = (gae - gae.mean()) / (gae.std() + 1e-8)
                         loss_actor_unclipped = ratio * gae
