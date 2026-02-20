@@ -69,7 +69,7 @@ class QNetwork(nn.Module):
         act = self._act()
 
         # optional additional layer
-        x = nn.Dense(hidden_size,
+        x = nn.Dense(self.hidden_size,
                      kernel_init=orthogonal(np.sqrt(2)),
                      bias_init=constant(0.0))(x)
         x = act(x)
