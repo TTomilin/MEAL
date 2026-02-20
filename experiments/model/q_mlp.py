@@ -18,8 +18,7 @@ def choose_head(t: jnp.ndarray, n_heads: int, env_idx):
 class MLPEncoder(nn.Module):
     hidden_size: int = 128
     activation: str = "relu"
-    num_layers: int = 2
-    big_network: bool = False
+    num_layers: int = 3
     use_layer_norm: bool = False
 
     def _act(self):
@@ -29,11 +28,10 @@ class MLPEncoder(nn.Module):
     def __call__(self, x: jnp.ndarray):
         x = x.reshape((x.shape[0], -1))
         act = self._act()
-        hid = 256 if self.big_network else self.hidden_size
 
-        for i in range(self.num_layers + self.big_network):
+        for i in range(self.num_layers):
             x = nn.Dense(
-                hid,
+                self.hidden_size,
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
                 name=f"mlp_dense{i + 1}",
@@ -53,7 +51,6 @@ class QNetwork(nn.Module):
     num_tasks: int = 1
     use_multihead: bool = False
     use_task_id: bool = False
-    big_network: bool = False
     use_layer_norm: bool = False
 
     def _act(self):
@@ -63,7 +60,6 @@ class QNetwork(nn.Module):
         return MLPEncoder(
             hidden_size=self.hidden_size,
             activation=self.activation,
-            big_network=self.big_network,
             use_layer_norm=self.use_layer_norm,
         )
 
@@ -71,10 +67,9 @@ class QNetwork(nn.Module):
     def __call__(self, x: jnp.ndarray, *, env_idx: int = 0):
         x = self._encoder()(x)  # <-- swapped in!
         act = self._act()
-        hid = 256 if self.big_network else self.hidden_size
 
         # optional additional layer
-        x = nn.Dense(hid,
+        x = nn.Dense(hidden_size,
                      kernel_init=orthogonal(np.sqrt(2)),
                      bias_init=constant(0.0))(x)
         x = act(x)

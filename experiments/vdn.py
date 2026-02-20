@@ -55,7 +55,7 @@ class Config:
     alg_name: str = "vdn"
     steps_per_task: float = 1e8
     num_envs: int = 2048
-    num_steps: int = 1  # env steps collected per update before learning
+    num_steps: int = 128  # env steps collected per update before learning
     hidden_size: int = 256
     eps_start: float = 1.0
     eps_finish: float = 0.05
@@ -81,7 +81,6 @@ class Config:
     activation: str = "relu"
     use_cnn: bool = False
     use_layer_norm: bool = True
-    big_network: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # CONTINUAL LEARNING PARAMETERS
@@ -473,7 +472,6 @@ def main():
         action_dim=train_envs[0].max_action_space,
         hidden_size=cfg.hidden_size,
         activation=cfg.activation,
-        big_network=cfg.big_network,
         use_layer_norm=cfg.use_layer_norm,
         use_multihead=cfg.use_multihead,
         use_task_id=cfg.use_task_id,
@@ -882,7 +880,6 @@ def main():
                 "use_cnn": config.use_cnn,
                 "num_tasks": seq_length,
                 "use_multihead": config.use_multihead,
-                "big_network": config.big_network,
                 "use_task_id": config.use_task_id,
                 "regularize_heads": config.regularize_heads,
                 "use_layer_norm": config.use_layer_norm,
