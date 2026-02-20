@@ -55,7 +55,7 @@ class Config:
     alg_name: str = "vdn"
     steps_per_task: float = 1e8
     num_envs: int = 2048
-    num_steps: int = 400  # env steps collected per update before learning
+    num_steps: int = 128  # env steps collected per update before learning
     hidden_size: int = 256
     eps_start: float = 1.0
     eps_finish: float = 0.05
@@ -134,6 +134,8 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     # EVALUATION PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
+    max_episode_steps: int = 400  # env episode length; separate from num_steps (collection phase size)
+    eval_num_envs: int = 128      # envs for evaluation (smaller than num_envs to save memory during eval)
     evaluation: bool = True
     eval_num_episodes: int = 5
     record_video: bool = False
@@ -305,9 +307,12 @@ def rollout_for_video_vdn(rng, config, train_state, env, network, env_idx=0, max
         actions = {}
         for agent_id in env.agents:
             obs_v = obs[agent_id]
-            obs_b = obs_v[None] if obs_v.ndim == 1 else obs_v
+            # Always add batch dim first, then flatten non-batch dims for MLP.
+            # (The old code `obs_v if ndim>1` was wrong: a 2D obs like (7,182)
+            # would be treated as a batch of 7, giving kernel shape mismatch.)
+            obs_b = obs_v[None]  # (1, *obs_shape)
             if not config.use_cnn:
-                obs_b = obs_b.reshape(obs_b.shape[0], -1)
+                obs_b = obs_b.reshape(1, -1)  # (1, flat_obs_dim)
             q_vals = network.apply(train_state.params, obs_b, env_idx=env_idx)
             actions[agent_id] = jnp.argmax(q_vals[0])
 
@@ -375,7 +380,7 @@ def main():
         env_id=cfg.env_name,
         seed=seed,
         num_agents=cfg.num_agents,
-        max_steps=cfg.num_steps,
+        max_steps=cfg.max_episode_steps,
         random_reset=cfg.random_reset,
         layout_names=cfg.layouts,
         difficulty=cfg.difficulty,
@@ -518,7 +523,7 @@ def main():
     init_timestep_unbatched = jax.tree.map(
         lambda x: x[0],
         Timestep(
-            obs=init_obs2,
+            obs={a: init_obs2[a] for a in agents},  # strip __all__; only per-agent obs needed for Q-network
             actions=init_actions,
             avail_actions=init_avail,
             rewards=init_rewards,
@@ -614,7 +619,7 @@ def main():
                 )
 
                 timestep = Timestep(
-                    obs=last_obs,
+                    obs={a: last_obs[a] for a in agents},  # strip __all__; saves ~50% buffer obs memory
                     actions=actions,
                     avail_actions=avail_actions,
                     rewards=rewards,
