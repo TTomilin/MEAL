@@ -26,13 +26,6 @@ from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
 from experiments.evaluation import evaluate_all_envs
-from experiments.experimental.utils_vdn import (
-    CustomTrainState,
-    Timestep,
-    eps_greedy_exploration,
-    batchify as vdn_batchify,
-    unbatchify as vdn_unbatchify,
-)
 from experiments.model.q_mlp import QNetwork
 from experiments.utils import (
     batchify,
@@ -40,6 +33,13 @@ from experiments.utils import (
     init_cl_state,
     add_eval_metrics,
     create_visualizer,
+)
+from experiments.utils_vdn import (
+    CustomTrainState,
+    Timestep,
+    eps_greedy_exploration,
+    batchify as vdn_batchify,
+    unbatchify as vdn_unbatchify,
 )
 from meal import make_sequence
 from meal.env.utils.max_soup_calculator import calculate_max_soup
@@ -66,7 +66,7 @@ class Config:
     anneal_lr: bool = False
     gamma: float = 0.99
     tau: float = 1.0  # target network update rate (1 = hard copy)
-    buffer_size: int = 1000000
+    buffer_size: int = 10000000
     buffer_batch_size: int = 256
     learning_starts: int = 1000
     target_update_interval: int = 10
@@ -762,7 +762,8 @@ def main():
                 "General/update_steps": train_state.n_updates,
                 "General/grad_steps": train_state.grad_steps,
                 "General/epsilon": eps_scheduler(train_state.n_updates),
-                "General/learning_rate": lr_scheduler(train_state.n_updates * cfg.num_epochs) if cfg.anneal_lr else cfg.lr,
+                "General/learning_rate": lr_scheduler(
+                    train_state.n_updates * cfg.num_epochs) if cfg.anneal_lr else cfg.lr,
                 "General/reward_shaping_anneal": rew_shaping_anneal(train_state.timesteps),
                 "Losses/total_loss": total_loss.mean(),
                 "Losses/td_loss": td_loss.mean(),
