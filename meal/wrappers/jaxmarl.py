@@ -1,10 +1,24 @@
 """ Wrappers for use with jaxmarl baselines. """
+import math
 from functools import partial
 
 import jax
 import jax.numpy as jnp
 
 from meal.env.multi_agent_env import MultiAgentEnv
+
+
+def get_space_dim(space) -> int:
+    """Return the flat integer size of a gym-style space.
+
+    - Discrete(n)  → n
+    - Box(shape)   → product of shape dimensions
+    """
+    if hasattr(space, "n"):
+        return int(space.n)
+    if hasattr(space, "shape"):
+        return int(math.prod(space.shape)) if space.shape else 1
+    raise ValueError(f"Cannot determine dimension of space: {space}")
 
 
 class JaxMARLWrapper(object):

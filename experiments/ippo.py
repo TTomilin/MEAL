@@ -50,7 +50,7 @@ class Config:
 
     # Reward shaping
     reward_shaping: bool = True
-    reward_shaping_horizon: float = 2.5e6
+    reward_shaping_horizon: float = 2.5e7
 
     # Reward distribution settings
     sparse_rewards: bool = False  # Only shared reward for soup delivery
@@ -760,6 +760,7 @@ def main():
                     update_step * cfg.num_minibatches * cfg.update_epochs)
             else:
                 metrics["General/learning_rate"] = cfg.lr
+            metrics["General/reward_shaping_anneal"] = rew_shaping_anneal(current_timestep)
 
             # Losses section
             # Extract total_loss and components from loss_info

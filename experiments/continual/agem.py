@@ -122,6 +122,108 @@ def agem_project(grads_ppo, grads_mem, max_norm=40.):
     return unravel(projected), stats
 
 
+@struct.dataclass
+class VDNAGEMMemory:
+    obs: jnp.ndarray       # [max_tasks, max_size_per_task, num_agents, obs_dim]
+    actions: jnp.ndarray   # [max_tasks, max_size_per_task, num_agents]
+    rewards: jnp.ndarray   # [max_tasks, max_size_per_task]  (joint __all__ reward)
+    next_obs: jnp.ndarray  # [max_tasks, max_size_per_task, num_agents, obs_dim]
+    dones: jnp.ndarray     # [max_tasks, max_size_per_task]  (__all__ done)
+    ptrs: jnp.ndarray      # [max_tasks]
+    sizes: jnp.ndarray     # [max_tasks]
+    max_tasks: int
+    max_size_per_task: int
+
+
+def init_vdn_agem_memory(max_size: int, num_agents: int, obs_dim: int, max_tasks: int = 20):
+    """Create an empty per-task VDN AGEM memory buffer."""
+    max_size_per_task = max_size // max_tasks
+    zeros = lambda *shape: jnp.zeros(shape, dtype=jnp.float32)
+    zeros_int = lambda *shape: jnp.zeros(shape, dtype=jnp.int32)
+    return VDNAGEMMemory(
+        obs=zeros(max_tasks, max_size_per_task, num_agents, obs_dim),
+        actions=zeros_int(max_tasks, max_size_per_task, num_agents),
+        rewards=zeros(max_tasks, max_size_per_task),
+        next_obs=zeros(max_tasks, max_size_per_task, num_agents, obs_dim),
+        dones=zeros(max_tasks, max_size_per_task),
+        ptrs=zeros_int(max_tasks),
+        sizes=zeros_int(max_tasks),
+        max_tasks=max_tasks,
+        max_size_per_task=max_size_per_task,
+    )
+
+
+def sample_vdn_task_slot(mem: VDNAGEMMemory, task_idx: int, sample_size: int, rng):
+    """Sample uniformly from a single task's VDN memory slot."""
+    task_size = mem.sizes[task_idx]
+    idx = jax.random.randint(rng, (sample_size,), 0, jnp.maximum(task_size, 1))
+    idx = jnp.minimum(idx, jnp.maximum(task_size - 1, 0))
+    return (
+        mem.obs[task_idx, idx],       # (sample_size, num_agents, obs_dim)
+        mem.actions[task_idx, idx],   # (sample_size, num_agents)
+        mem.rewards[task_idx, idx],   # (sample_size,)
+        mem.next_obs[task_idx, idx],  # (sample_size, num_agents, obs_dim)
+        mem.dones[task_idx, idx],     # (sample_size,)
+    )
+
+
+def compute_vdn_memory_gradient(network, params, target_params, gamma,
+                                mem_obs, mem_actions, mem_rewards, mem_next_obs, mem_dones,
+                                env_idx=0):
+    """Compute the VDN TD-loss gradient on memory data using the current target network."""
+    mem_obs = jax.lax.stop_gradient(mem_obs)           # (B, A, D)
+    mem_actions = jax.lax.stop_gradient(mem_actions)   # (B, A)
+    mem_rewards = jax.lax.stop_gradient(mem_rewards)   # (B,)
+    mem_next_obs = jax.lax.stop_gradient(mem_next_obs) # (B, A, D)
+    mem_dones = jax.lax.stop_gradient(mem_dones)       # (B,)
+
+    # Transpose to (A, B, D) for agent-wise vmap
+    mem_obs_T = mem_obs.transpose(1, 0, 2)
+    mem_next_obs_T = mem_next_obs.transpose(1, 0, 2)
+    mem_actions_T = mem_actions.T  # (A, B)
+
+    # Fresh TD targets from current target network
+    q_next = jax.vmap(
+        lambda o: network.apply(target_params, o, env_idx=env_idx), in_axes=0
+    )(mem_next_obs_T)  # (A, B, action_dim)
+    q_next_max_sum = q_next.max(-1).sum(0)  # (B,) — max per agent, sum over agents
+
+    vdn_target = jax.lax.stop_gradient(
+        mem_rewards + gamma * (1.0 - mem_dones) * q_next_max_sum
+    )
+
+    def loss_fn(p):
+        q_vals = jax.vmap(
+            lambda o: network.apply(p, o, env_idx=env_idx), in_axes=0
+        )(mem_obs_T)  # (A, B, action_dim)
+        chosen_q = jnp.take_along_axis(
+            q_vals, mem_actions_T[..., jnp.newaxis], axis=-1
+        ).squeeze(-1)  # (A, B)
+        return jnp.mean((chosen_q.sum(0) - vdn_target) ** 2)
+
+    return jax.grad(loss_fn)(params)
+
+
+def update_vdn_agem_memory(mem: VDNAGEMMemory, env_idx: int,
+                           obs_b, actions_b, rewards_all, next_obs_b, dones_all):
+    """Store experience into the VDN AGEM circular buffer for the given task slot."""
+    task_idx = jnp.clip(env_idx, 0, mem.max_tasks - 1)
+    b = obs_b.shape[0]
+    current_ptr = mem.ptrs[task_idx]
+    current_size = mem.sizes[task_idx]
+    indices = (current_ptr + jnp.arange(b)) % mem.max_size_per_task
+
+    return mem.replace(
+        obs=mem.obs.at[task_idx, indices].set(obs_b),
+        actions=mem.actions.at[task_idx, indices].set(actions_b),
+        rewards=mem.rewards.at[task_idx, indices].set(rewards_all),
+        next_obs=mem.next_obs.at[task_idx, indices].set(next_obs_b),
+        dones=mem.dones.at[task_idx, indices].set(dones_all),
+        ptrs=mem.ptrs.at[task_idx].set((current_ptr + b) % mem.max_size_per_task),
+        sizes=mem.sizes.at[task_idx].set(jnp.minimum(current_size + b, mem.max_size_per_task)),
+    )
+
+
 def sample_task_slot(mem: AGEMMemory, task_idx: int, sample_size: int, rng):
     """Sample uniformly from a single task's circular buffer slot."""
     task_size = mem.sizes[task_idx]

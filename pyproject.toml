@@ -21,38 +21,39 @@ classifiers = [
 ]
 
 dependencies = [
-    "jax",
-    "flax",
     "chex",
-    "gymnax",
-    "tyro",
     "distrax",
+    "flashbax",
+    "flax",
+    "gymnax",
+    "jax",
+    "pyyaml",
     "tensorboard",
     "tensorboardX",
+    "tyro",
     "wandb",
-    "pyyaml",
 ]
 
 [project.optional-dependencies]
 viz = [
-    "scipy",
     "imageio",
-    "pygame",
-    "matplotlib",
-    "pillow",
-    "seaborn",
+    "imageio[ffmpeg]",
     "ipython",
     "ipywidgets",
-    "imageio[ffmpeg]",
     "jinja2",
+    "matplotlib",
+    "pillow",
+    "pygame",
+    "scipy",
+    "seaborn",
 ]
 utils = [
-    "optax",
     "numpy",
-    "tqdm",
-    "pandas",
+    "optax",
     "orbax-checkpoint",
+    "pandas",
     "pytest",
+    "tqdm",
 ]
 
 [project.urls]

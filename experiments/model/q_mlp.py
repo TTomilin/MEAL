@@ -8,10 +8,11 @@ import numpy as np
 from flax.linen.initializers import constant, orthogonal
 
 
-def choose_head(t: jnp.ndarray, n_heads: int, env_idx: int):
+def choose_head(t: jnp.ndarray, n_heads: int, env_idx):
     b, tot = t.shape
     base = tot // n_heads
-    return t.reshape(b, n_heads, base)[:, env_idx, :]
+    env_idx = jnp.asarray(env_idx, jnp.int32)  # support dynamic (traced) env_idx
+    return jnp.take(t.reshape(b, n_heads, base), env_idx, axis=1)
 
 
 class MLPEncoder(nn.Module):
