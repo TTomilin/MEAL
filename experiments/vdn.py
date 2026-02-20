@@ -55,7 +55,7 @@ class Config:
     alg_name: str = "vdn"
     steps_per_task: float = 1e8
     num_envs: int = 2048
-    num_steps: int = 128  # env steps collected per update before learning
+    num_steps: int = 1  # env steps collected per update before learning
     hidden_size: int = 256
     eps_start: float = 1.0
     eps_finish: float = 0.05
@@ -66,14 +66,10 @@ class Config:
     anneal_lr: bool = False
     gamma: float = 0.99
     tau: float = 1.0  # target network update rate (1 = hard copy)
-    buffer_size: int = 10000000
+    buffer_size: int = 1000000
     buffer_batch_size: int = 256
     learning_starts: int = 1000
     target_update_interval: int = 10
-
-    # Reward shaping
-    reward_shaping: bool = True
-    reward_shaping_horizon: float = 2.5e7
 
     # Reward distribution settings
     sparse_rewards: bool = False  # only shared delivery reward, no shaped rewards
@@ -134,7 +130,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     # EVALUATION PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
-    max_episode_steps: int = 400  # env episode length; separate from num_steps (collection phase size)
+    max_episode_steps: int = 100  # env episode length; separate from num_steps (collection phase size)
     eval_num_envs: int = 128      # envs for evaluation (smaller than num_envs to save memory during eval)
     evaluation: bool = True
     eval_num_episodes: int = 5
@@ -576,11 +572,6 @@ def main():
         # Fresh replay buffer
         buffer_state = buffer.init(init_timestep_unbatched)
 
-        reward_shaping_horizon = cfg.steps_per_task / 2
-        rew_shaping_anneal = optax.linear_schedule(
-            init_value=1.0, end_value=0.0, transition_steps=reward_shaping_horizon
-        )
-
         def _update_step(runner_state, _):
             train_state, buffer_state, expl_state, rng = runner_state
 
@@ -613,7 +604,7 @@ def main():
                 shaped_reward = infos.pop("shaped_reward")
                 shaped_reward["__all__"] = vdn_batchify(shaped_reward, agents).sum(axis=0)
                 rewards = jax.tree.map(
-                    lambda x, y: x + y * rew_shaping_anneal(train_state.timesteps),
+                    lambda x, y: x + y,
                     rewards,
                     shaped_reward,
                 )
@@ -769,7 +760,6 @@ def main():
                 "General/epsilon": eps_scheduler(train_state.n_updates),
                 "General/learning_rate": lr_scheduler(
                     train_state.n_updates * cfg.update_epochs) if cfg.anneal_lr else cfg.lr,
-                "General/reward_shaping_anneal": rew_shaping_anneal(train_state.timesteps),
                 "Losses/total_loss": total_loss.mean(),
                 "Losses/td_loss": td_loss.mean(),
                 "Losses/cl_penalty": cl_penalty.mean(),
