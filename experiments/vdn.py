@@ -61,7 +61,7 @@ class Config:
     eps_finish: float = 0.05
     eps_decay: float = 0.1  # fraction of num_updates over which eps decays
     max_grad_norm: float = 1.0
-    num_epochs: int = 8  # gradient updates per collection phase
+    update_epochs: int = 8  # gradient updates per collection phase
     lr: float = 1e-3
     anneal_lr: bool = False
     gamma: float = 0.99
@@ -458,7 +458,7 @@ def main():
 
     # Schedules
     lr_scheduler = optax.linear_schedule(
-        cfg.lr, 1e-10, cfg.num_epochs * cfg.num_updates
+        cfg.lr, 1e-10, cfg.update_epochs * cfg.num_updates
     )
     lr = lr_scheduler if cfg.anneal_lr else cfg.lr
     tx = optax.chain(
@@ -733,14 +733,14 @@ def main():
 
             (train_state, rng), (total_loss, td_loss, qvals, cl_penalty) = jax.lax.cond(
                 is_learn_time,
-                lambda ts, r: jax.lax.scan(_learn_phase, (ts, r), xs=None, length=cfg.num_epochs),
+                lambda ts, r: jax.lax.scan(_learn_phase, (ts, r), xs=None, length=cfg.update_epochs),
                 lambda ts, r: (
                     (ts, r),
                     (
-                        jnp.zeros(cfg.num_epochs),
-                        jnp.zeros(cfg.num_epochs),
-                        jnp.zeros(cfg.num_epochs),
-                        jnp.zeros(cfg.num_epochs),
+                        jnp.zeros(cfg.update_epochs),
+                        jnp.zeros(cfg.update_epochs),
+                        jnp.zeros(cfg.update_epochs),
+                        jnp.zeros(cfg.update_epochs),
                     ),
                 ),
                 train_state,
@@ -768,7 +768,7 @@ def main():
                 "General/grad_steps": train_state.grad_steps,
                 "General/epsilon": eps_scheduler(train_state.n_updates),
                 "General/learning_rate": lr_scheduler(
-                    train_state.n_updates * cfg.num_epochs) if cfg.anneal_lr else cfg.lr,
+                    train_state.n_updates * cfg.update_epochs) if cfg.anneal_lr else cfg.lr,
                 "General/reward_shaping_anneal": rew_shaping_anneal(train_state.timesteps),
                 "Losses/total_loss": total_loss.mean(),
                 "Losses/td_loss": td_loss.mean(),
