@@ -119,7 +119,7 @@ def init_cl_state(actor_params: FrozenVariableDict, critic_params: FrozenVariabl
                   regularize_heads: bool, cl: CLMethod, envs: List[Overcooked], seq_length: int, cfg) -> CLState:
     if isinstance(cl, Packnet):
         return PacknetState(
-            masks=cl.init_mask_tree(actor_params),
+            mask=cl.init_mask_tree(actor_params["params"]),
             current_task=0,
             train_mode=True
         )

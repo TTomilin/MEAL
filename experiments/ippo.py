@@ -944,7 +944,7 @@ def main():
 
         if cfg.cl_method.lower() == "packnet":
             # # Prune the model and update the parameters
-            new_actor_params, packnet_state = cl.on_train_end(actor_train_state.params, packnet_state)
+            new_actor_params, cl_state = cl.on_train_end(actor_train_state.params, cl_state)
             actor_train_state = actor_train_state.replace(params=new_actor_params)
 
         # Return the runner state after the training loop, and the metrics arrays
