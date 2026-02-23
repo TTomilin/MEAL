@@ -224,6 +224,132 @@ def update_vdn_agem_memory(mem: VDNAGEMMemory, env_idx: int,
     )
 
 
+@struct.dataclass
+class QMIXAGEMMemory:
+    obs: jnp.ndarray              # [max_tasks, max_size_per_task, num_agents, obs_dim]
+    global_state: jnp.ndarray     # [max_tasks, max_size_per_task, state_dim]
+    actions: jnp.ndarray          # [max_tasks, max_size_per_task, num_agents]
+    rewards: jnp.ndarray          # [max_tasks, max_size_per_task]  (joint __all__ reward)
+    next_obs: jnp.ndarray         # [max_tasks, max_size_per_task, num_agents, obs_dim]
+    next_global_state: jnp.ndarray  # [max_tasks, max_size_per_task, state_dim]
+    dones: jnp.ndarray            # [max_tasks, max_size_per_task]  (__all__ done)
+    ptrs: jnp.ndarray             # [max_tasks]
+    sizes: jnp.ndarray            # [max_tasks]
+    max_tasks: int
+    max_size_per_task: int
+
+
+def init_qmix_agem_memory(max_size: int, num_agents: int, obs_dim: int, state_dim: int,
+                           max_tasks: int = 20):
+    """Create an empty per-task QMIX AGEM memory buffer."""
+    max_size_per_task = max_size // max_tasks
+    zeros = lambda *shape: jnp.zeros(shape, dtype=jnp.float32)
+    zeros_int = lambda *shape: jnp.zeros(shape, dtype=jnp.int32)
+    return QMIXAGEMMemory(
+        obs=zeros(max_tasks, max_size_per_task, num_agents, obs_dim),
+        global_state=zeros(max_tasks, max_size_per_task, state_dim),
+        actions=zeros_int(max_tasks, max_size_per_task, num_agents),
+        rewards=zeros(max_tasks, max_size_per_task),
+        next_obs=zeros(max_tasks, max_size_per_task, num_agents, obs_dim),
+        next_global_state=zeros(max_tasks, max_size_per_task, state_dim),
+        dones=zeros(max_tasks, max_size_per_task),
+        ptrs=zeros_int(max_tasks),
+        sizes=zeros_int(max_tasks),
+        max_tasks=max_tasks,
+        max_size_per_task=max_size_per_task,
+    )
+
+
+def sample_qmix_task_slot(mem: QMIXAGEMMemory, task_idx: int, sample_size: int, rng):
+    """Sample uniformly from a single task's QMIX memory slot."""
+    task_size = mem.sizes[task_idx]
+    idx = jax.random.randint(rng, (sample_size,), 0, jnp.maximum(task_size, 1))
+    idx = jnp.minimum(idx, jnp.maximum(task_size - 1, 0))
+    return (
+        mem.obs[task_idx, idx],                # (sample_size, num_agents, obs_dim)
+        mem.global_state[task_idx, idx],       # (sample_size, state_dim)
+        mem.actions[task_idx, idx],            # (sample_size, num_agents)
+        mem.rewards[task_idx, idx],            # (sample_size,)
+        mem.next_obs[task_idx, idx],           # (sample_size, num_agents, obs_dim)
+        mem.next_global_state[task_idx, idx],  # (sample_size, state_dim)
+        mem.dones[task_idx, idx],              # (sample_size,)
+    )
+
+
+def compute_qmix_memory_gradient(network, mixing_network, combined_params, target_combined_params,
+                                  gamma,
+                                  mem_obs, mem_global_state, mem_actions, mem_rewards,
+                                  mem_next_obs, mem_next_global_state, mem_dones,
+                                  env_idx=0):
+    """Compute QMIX TD-loss gradient on memory data using target networks."""
+    mem_obs = jax.lax.stop_gradient(mem_obs)
+    mem_global_state = jax.lax.stop_gradient(mem_global_state)
+    mem_actions = jax.lax.stop_gradient(mem_actions)
+    mem_rewards = jax.lax.stop_gradient(mem_rewards)
+    mem_next_obs = jax.lax.stop_gradient(mem_next_obs)
+    mem_next_global_state = jax.lax.stop_gradient(mem_next_global_state)
+    mem_dones = jax.lax.stop_gradient(mem_dones)
+
+    # (B, A, D) → (A, B, D) for agent-wise vmap
+    mem_obs_T = mem_obs.transpose(1, 0, 2)
+    mem_next_obs_T = mem_next_obs.transpose(1, 0, 2)
+    mem_actions_T = mem_actions.T  # (A, B)
+
+    tgt_q_params = target_combined_params["q"]
+    tgt_mix_params = target_combined_params["mix"]
+
+    # Target Q_total: greedy Q-values per agent through target mixing network
+    q_next = jax.vmap(
+        lambda o: network.apply(tgt_q_params, o, env_idx=env_idx), in_axes=0
+    )(mem_next_obs_T)  # (A, B, action_dim)
+    q_next_max = q_next.max(-1)  # (A, B)
+    q_next_max_T = q_next_max.T  # (B, A)
+    q_total_next = mixing_network.apply(tgt_mix_params, q_next_max_T, mem_next_global_state)  # (B,)
+
+    qmix_target = jax.lax.stop_gradient(
+        mem_rewards + gamma * (1.0 - mem_dones) * q_total_next
+    )
+
+    def loss_fn(combined_params):
+        q_params = combined_params["q"]
+        mix_params = combined_params["mix"]
+
+        q_vals = jax.vmap(
+            lambda o: network.apply(q_params, o, env_idx=env_idx), in_axes=0
+        )(mem_obs_T)  # (A, B, action_dim)
+        chosen_q = jnp.take_along_axis(
+            q_vals, mem_actions_T[..., jnp.newaxis], axis=-1
+        ).squeeze(-1)  # (A, B)
+        chosen_q_T = chosen_q.T  # (B, A)
+        q_total = mixing_network.apply(mix_params, chosen_q_T, mem_global_state)  # (B,)
+        return jnp.mean((q_total - qmix_target) ** 2)
+
+    return jax.grad(loss_fn)(combined_params)
+
+
+def update_qmix_agem_memory(mem: QMIXAGEMMemory, env_idx: int,
+                             obs_b, global_state_b, actions_b, rewards_all,
+                             next_obs_b, next_global_state_b, dones_all):
+    """Store experience into the QMIX AGEM circular buffer for the given task slot."""
+    task_idx = jnp.clip(env_idx, 0, mem.max_tasks - 1)
+    b = obs_b.shape[0]
+    current_ptr = mem.ptrs[task_idx]
+    current_size = mem.sizes[task_idx]
+    indices = (current_ptr + jnp.arange(b)) % mem.max_size_per_task
+
+    return mem.replace(
+        obs=mem.obs.at[task_idx, indices].set(obs_b),
+        global_state=mem.global_state.at[task_idx, indices].set(global_state_b),
+        actions=mem.actions.at[task_idx, indices].set(actions_b),
+        rewards=mem.rewards.at[task_idx, indices].set(rewards_all),
+        next_obs=mem.next_obs.at[task_idx, indices].set(next_obs_b),
+        next_global_state=mem.next_global_state.at[task_idx, indices].set(next_global_state_b),
+        dones=mem.dones.at[task_idx, indices].set(dones_all),
+        ptrs=mem.ptrs.at[task_idx].set((current_ptr + b) % mem.max_size_per_task),
+        sizes=mem.sizes.at[task_idx].set(jnp.minimum(current_size + b, mem.max_size_per_task)),
+    )
+
+
 def sample_task_slot(mem: AGEMMemory, task_idx: int, sample_size: int, rng):
     """Sample uniformly from a single task's circular buffer slot."""
     task_size = mem.sizes[task_idx]
