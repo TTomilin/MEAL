@@ -42,6 +42,28 @@ class MLPEncoder(nn.Module):
         return x
 
 
+class CNNEncoder(nn.Module):
+    """3-layer CNN encoder for spatial observations (H, W, C) → (batch, 64)."""
+    activation: str = "relu"
+
+    def _act(self):
+        return nn.relu if self.activation == "relu" else nn.tanh
+
+    @nn.compact
+    def __call__(self, x: jnp.ndarray):
+        act = self._act()
+        x = nn.Conv(32, (5, 5), kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
+        x = act(x)
+        x = nn.Conv(32, (3, 3), kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
+        x = act(x)
+        x = nn.Conv(32, (3, 3), kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
+        x = act(x)
+        x = x.reshape((x.shape[0], -1))
+        x = nn.Dense(64, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
+        x = act(x)
+        return x
+
+
 class QNetwork(nn.Module):
     action_dim: int
     hidden_size: int = 64
@@ -57,6 +79,8 @@ class QNetwork(nn.Module):
         return nn.relu if self.activation == "relu" else nn.tanh
 
     def _encoder(self):
+        if self.encoder_type == "cnn":
+            return CNNEncoder(activation=self.activation)
         return MLPEncoder(
             hidden_size=self.hidden_size,
             activation=self.activation,
