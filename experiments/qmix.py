@@ -523,7 +523,7 @@ def main():
     # Evaluation function: greedy argmax Q-values (IGM property makes this correct for QMIX)
     evaluate_env = make_qmix_eval_fn(
         reset_switch, step_switch, network, agents,
-        num_envs=cfg.num_envs, num_steps=cfg.num_steps, use_cnn=cfg.use_cnn
+        num_envs=cfg.eval_num_envs, num_steps=cfg.max_episode_steps, use_cnn=cfg.use_cnn
     )
 
     # Importance function: Q-network only (mixing network is not regularised)
@@ -749,22 +749,38 @@ def main():
             train_state = train_state.replace(n_updates=train_state.n_updates + 1)
 
             metrics = {
-                "General/task_id": jnp.int32(env_idx),
-                "General/env_step": train_state.timesteps,
-                "General/update_steps": train_state.n_updates,
+                "General/env_index": jnp.int32(env_idx),
+                "General/env_step": train_state.n_updates * cfg.num_steps * cfg.num_envs,
+                "General/steps_for_env": train_state.n_updates * cfg.num_steps * cfg.num_envs,
+                "General/update_step": train_state.n_updates,
                 "General/grad_steps": train_state.grad_steps,
                 "General/epsilon": eps_scheduler(train_state.n_updates),
                 "General/learning_rate": lr_scheduler(
                     train_state.grad_steps) if cfg.anneal_lr else cfg.lr,
                 "Losses/total_loss": total_loss,
                 "Losses/td_loss": td_loss,
-                "Losses/cl_penalty": cl_penalty,
+                "Losses/reg_loss": cl_penalty,
                 "Values/qvals": qvals,
                 "Rewards/step_reward": timesteps.rewards["__all__"].mean(),
             }
+            # Soup: per-episode averages matching ippo logging style
             soups_info = infos.pop("soups", {})
-            for agent_key, val in soups_info.items():
-                metrics[f"Soup/{agent_key}"] = val.mean()
+            soups_tea = jnp.stack([soups_info[a] for a in agents], axis=-1)  # (T, E, A)
+            soups_per_env = soups_tea.sum(axis=(0, 2))  # (E,)
+            don_te = timesteps.dones["__all__"]  # (T, E)
+            episodes_per_env = don_te.sum(axis=0)  # (E,)
+            mask = episodes_per_env > 0
+            true_avg = jnp.where(mask, soups_per_env / jnp.maximum(episodes_per_env, 1), 0.0)
+            num_finished = jnp.maximum(mask.sum(), 1)
+            max_per_episode = max_soup_vals[env_idx]
+            metrics["Soup/total"] = true_avg.sum() / num_finished
+            metrics["Soup/scaled"] = jnp.where(
+                max_per_episode > 0, (true_avg / max_per_episode).sum() / num_finished, 0.0
+            )
+            for ai, agent in enumerate(agents):
+                soups_te = soups_tea[:, :, ai].sum(axis=0)  # (E,)
+                per_agent = jnp.where(mask, soups_te / jnp.maximum(episodes_per_env, 1), 0.0)
+                metrics[f"Soup/{agent}"] = per_agent.sum() / num_finished
             metrics.update(jax.tree.map(lambda x: x.mean(), infos))
 
             def evaluate_and_log(rng, update_step):
