@@ -16,3 +16,5 @@ eval "$(conda shell.bash activate)"
 source activate meal_env
 
 module load PyTorch/2.1.2-foss-2023a-CUDA-12.1.1
+
+python experiments/ippo.py --num_envs 1 --difficulty easy --seq_len 2 --cl_method packnet
