@@ -54,7 +54,7 @@ class Config:
     alg_name: str = "vdn"
     steps_per_task: float = 1e8
     num_envs: int = 2048
-    num_steps: int = 128  # env steps collected per update before learning
+    num_steps: int = 400
     hidden_size: int = 256
     eps_start: float = 1.0
     eps_finish: float = 0.05
@@ -127,7 +127,6 @@ class Config:
     # EVALUATION PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
     max_episode_steps: int = 400  # env episode length; separate from num_steps (collection phase size)
-    eval_num_envs: int = 128      # envs for evaluation (smaller than num_envs to save memory during eval)
     evaluation: bool = True
     eval_num_episodes: int = 5
     record_video: bool = False
@@ -181,7 +180,7 @@ def make_vdn_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
             env_state, obs, rewards, soups, rng = carry
 
             obs_b = batchify(obs, agents, num_agents * num_envs, not use_cnn)
-            obs_b = obs_b.reshape(num_agents, num_envs, -1)
+            obs_b = obs_b.reshape((num_agents, num_envs) + obs_b.shape[1:])
 
             # Greedy Q-values for all agents
             q_vals = jax.vmap(
@@ -233,8 +232,7 @@ def make_q_importance_fn(reset_switch, step_switch, network, agents, use_cnn: bo
                 obs, state, acc, rng = carry
                 rng, s1, s2 = jax.random.split(rng, 3)
 
-                obs_b = batchify(obs, agents, num_agents, not use_cnn)
-                obs_b = obs_b.reshape(num_agents, 1, -1)  # (A, 1, obs_dim)
+                obs_b = jnp.stack([obs[a] for a in agents])[:, jnp.newaxis]  # (A, 1, *obs_shape)
 
                 def q_l2_loss(p):
                     q = jax.vmap(
@@ -397,6 +395,7 @@ def main():
         wandb.init(
             project=cfg.project,
             config=asdict(cfg),
+            sync_tensorboard=True,
             mode=cfg.wandb_mode,
             tags=cfg.tags or [],
             group=cfg.cl_method.upper(),
@@ -469,11 +468,13 @@ def main():
         use_multihead=cfg.use_multihead,
         use_task_id=cfg.use_task_id,
         num_tasks=seq_length,
+        encoder_type="cnn" if cfg.use_cnn else "mlp",
     )
     network.apply = jax.jit(network.apply)
 
-    obs_dim = np.prod(temp_env.observation_space().shape)
-    init_x = jnp.zeros((1, obs_dim))
+    obs_shape = temp_env.observation_space().shape
+    obs_dim = int(np.prod(obs_shape))
+    init_x = jnp.zeros((1,) + obs_shape) if cfg.use_cnn else jnp.zeros((1, obs_dim))
     network_params = network.init(net_rng, init_x)
 
     train_state = CustomTrainState.create(
@@ -496,7 +497,7 @@ def main():
     # Evaluation function (VDN-specific: argmax Q-values)
     evaluate_env = make_vdn_eval_fn(
         reset_switch, step_switch, network, agents,
-        num_envs=cfg.eval_num_envs, num_steps=cfg.max_episode_steps, use_cnn=cfg.use_cnn
+        num_envs=cfg.num_envs, num_steps=cfg.max_episode_steps, use_cnn=cfg.use_cnn
     )
 
     # Importance function: Q-specific version for EWC/MAS, else zeros
@@ -537,7 +538,7 @@ def main():
                 rng, rng_action, rng_step = jax.random.split(rng, 3)
 
                 obs_b = batchify(last_obs, agents, num_agents * cfg.num_envs, not cfg.use_cnn)
-                obs_b = obs_b.reshape(num_agents, cfg.num_envs, -1)
+                obs_b = obs_b.reshape((num_agents, cfg.num_envs) + obs_b.shape[1:])
 
                 q_vals = jax.vmap(
                     lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
@@ -572,10 +573,10 @@ def main():
                     rewards=rewards,
                     dones=dones,
                 )
-                return (new_obs, new_env_state, rng), (timestep, infos)
+                return (new_obs, new_env_state, rng), (timestep, infos, shaped_reward)
 
             rng, _rng = jax.random.split(rng)
-            (new_obs, new_env_state, _), (timesteps, infos) = jax.lax.scan(
+            (new_obs, new_env_state, _), (timesteps, infos, shaped_rewards) = jax.lax.scan(
                 _step_env, (*expl_state, _rng), xs=None, length=cfg.num_steps
             )
             expl_state = (new_obs, new_env_state)
@@ -596,9 +597,9 @@ def main():
                 for a in agents
             }  # (num_steps, num_envs, obs_dim)
 
-            # Flatten (num_steps, num_envs, ...) → (N, ...)
-            obs_flat = {a: timesteps.obs[a].reshape(N, -1) for a in agents}
-            nxt_flat = {a: next_obs[a].reshape(N, -1) for a in agents}
+            # Flatten (num_steps, num_envs, ...) → (N, ...) preserving obs dims
+            obs_flat = {a: timesteps.obs[a].reshape((N,) + timesteps.obs[a].shape[2:]) for a in agents}
+            nxt_flat = {a: next_obs[a].reshape((N,) + next_obs[a].shape[2:]) for a in agents}
             act_flat = {a: timesteps.actions[a].reshape(N) for a in agents}
             rew_flat = timesteps.rewards["__all__"].reshape(N)
             don_flat = timesteps.dones["__all__"].reshape(N).astype(jnp.float32)
@@ -733,6 +734,8 @@ def main():
                 per_agent = jnp.where(mask, soups_te / jnp.maximum(episodes_per_env, 1), 0.0)
                 metrics[f"Soup/{agent}"] = per_agent.sum() / num_finished
             metrics.update(jax.tree.map(lambda x: x.mean(), infos))
+            for agent in agents:
+                metrics[f"General/shaped_reward_{agent}"] = shaped_rewards[agent].mean()
 
             def evaluate_and_log(rng, update_step):
                 rng, eval_rng = jax.random.split(rng)
@@ -746,20 +749,22 @@ def main():
                             avg_rewards, avg_soups, env_names, max_soup_vals, metrics
                         )
 
-                    def callback(m, step, env_ctr):
+                    def callback(args):
+                        m, step, env_ctr = args
                         real_step = int((env_ctr - 1) * cfg.num_updates + step)
                         for k, v in m.items():
                             writer.add_scalar(k, float(v), real_step)
-                        if cfg.use_wandb:
-                            wandb.log({k: float(v) for k, v in m.items()}, step=real_step)
 
-                    jax.debug.callback(callback, metrics, update_step, jnp.int32(env_idx + 1))
+                    jax.experimental.io_callback(callback, None, (metrics, update_step, jnp.int32(env_idx + 1)))
+                    return None
+
+                def do_not_log(m, s):
                     return None
 
                 jax.lax.cond(
                     (update_step % cfg.log_interval) == 0,
                     log_metrics,
-                    lambda m, s: None,
+                    do_not_log,
                     metrics,
                     update_step,
                 )
@@ -792,7 +797,7 @@ def main():
                 rng, rng_a, rng_s = jax.random.split(rng, 3)
 
                 obs_b = batchify(last_obs, agents, num_agents * cfg.num_envs, not cfg.use_cnn)
-                obs_b = obs_b.reshape(num_agents, cfg.num_envs, -1)
+                obs_b = obs_b.reshape((num_agents, cfg.num_envs) + obs_b.shape[1:])
 
                 q_vals = jax.vmap(
                     lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
