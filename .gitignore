@@ -31,3 +31,4 @@ model_*
 *.txt
 *.csv
 /.env
+bash/*
