@@ -40,7 +40,7 @@ class Config:
     anneal_lr: bool = False
     num_envs: int = 2048
     num_steps: int = 400
-    steps_per_task: float = 1e4
+    steps_per_task: float = 1e8
     update_epochs: int = 8
     num_minibatches: int = 16
     gamma: float = 0.99
@@ -1015,8 +1015,8 @@ def main():
         with open(path, "wb") as f:
             f.write(
                 flax.serialization.to_bytes(
-                    {"actor_params": actor_train_state.params},
-                    {"critic_params": critic_train_state.params}
+                    {"actor_params": actor_train_state.params,
+                    "critic_params": critic_train_state.params}
                 )
             )
 
