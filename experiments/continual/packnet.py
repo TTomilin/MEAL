@@ -235,7 +235,6 @@ class Packnet(CLMethod):
             mask[layer_name] = mask_layer
 
         masks = self.update_mask_tree(state.masks, mask, state.current_task)
-        jax.debug.breakpoint()
         state = state.replace(masks=masks)
 
         new_param_dict = new_params
