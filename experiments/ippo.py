@@ -94,6 +94,8 @@ class Config:
     # Packnet specific parameters
     train_epochs: int = 8
     finetune_epochs: int = 2
+    finetune_lr: float = 1e-4
+    finetune_timesteps: int = 1e6
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
@@ -148,6 +150,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     num_actors: int = 0
     num_updates: int = 0
+    finetune_updates: int = 0
     minibatch_size: int = 0
 
 
@@ -287,6 +290,7 @@ def main():
 
     cfg.num_actors = num_agents * cfg.num_envs
     cfg.num_updates = cfg.steps_per_task // cfg.num_steps // cfg.num_envs
+    cfg.finetune_updates = cfg.finetune_timesteps // cfg.num_steps // cfg.num_envs
     cfg.minibatch_size = (cfg.num_actors * cfg.num_steps) // cfg.num_minibatches
 
     def linear_schedule(count):
@@ -943,9 +947,39 @@ def main():
         )
 
         if cfg.cl_method.lower() == "packnet":
-            # # Prune the model and update the parameters
+            # Unpack runner state
+            (actor_train_state, critic_train_state), env_state, last_obs, _, _, rng, cl_state = runner_state
+            
+            # Prune the model and update the parameters
             new_actor_params, cl_state = cl.on_train_end(actor_train_state.params, cl_state)
+            sparsity = cl.compute_sparsity(new_actor_params["params"])
+            jax.debug.print(
+            "Sparsity after pruning: {sparsity}", sparsity=sparsity)
             actor_train_state = actor_train_state.replace(params=new_actor_params)
+
+            rng, finetune_rng = jax.random.split(rng)
+
+            # create new runner state for fine-tuning:
+            runner_state = ((actor_train_state, critic_train_state), env_state, last_obs, 0, 0, finetune_rng, cl_state)
+
+            # run fine-tuning
+            runner_state, metrics = jax.lax.scan(
+                f=_update_step,
+                init=runner_state,
+                xs=None,
+                length=cfg.finetune_updates
+            )
+
+            # check the sparsity after finetuning
+            actor_train_state = runner_state[0][0]
+            sparsity = cl.compute_sparsity(actor_train_state.params["params"])
+            jax.debug.print(
+                "Sparsity after finetuning: {sparsity}", sparsity=sparsity)
+            # handle the end of the finetune phase 
+            cl_state = cl.on_finetune_end(cl_state)
+
+            # add cl_state (packnet_state in this case) to new runner state
+            runner_state = ((actor_train_state, critic_train_state), env_state, last_obs, 0, 0, finetune_rng, cl_state)
 
         # Return the runner state after the training loop, and the metrics arrays
         return runner_state, metrics

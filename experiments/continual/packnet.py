@@ -7,7 +7,7 @@ import jax
 import jax.numpy as jnp
 import flax.linen as nn
 from flax.core.frozen_dict import FrozenDict
-from experiments.continual.base import CLMethod, CLState
+from experiments.continual.base import CLState, CLMethod
 
 
 @flax.struct.dataclass
@@ -15,6 +15,7 @@ class PacknetState(CLState):
     '''
     Class to store the state of the Packnet
     '''
+    masks: FrozenDict
     current_task: int
     train_mode: bool
 
@@ -159,20 +160,20 @@ class Packnet(CLMethod):
         returns the pruned model
         '''
 
-        mask = jax.lax.cond(
-            (state.current_task == 0) & (state.mask is None),
+        masks = jax.lax.cond(
+            (state.current_task == 0) & (state.masks is None),
             lambda _: self.init_mask_tree(params),
-            lambda _: state.mask,
+            lambda _: state.masks,
             operand=None
         )
 
-        state = state.replace(mask=mask)
+        state = state.replace(masks=masks)
 
         # Compute the pruning quantile
         prune_perc = self.create_pruning_percentage(state)
 
         # Get the combined mask of all previous tasks
-        combined_mask = self.combine_masks(state.mask, state.current_task)
+        combined_mask = self.combine_masks(state.masks, state.current_task)
         sparsity_mask = self.compute_sparsity(combined_mask)
         jax.debug.print("sparsity_mask: {sparsity_mask}", sparsity_mask=sparsity_mask)
 
@@ -216,10 +217,10 @@ class Packnet(CLMethod):
                     complete_mask = jnp.logical_or(prev_mask_leaf, new_mask_leaf)
 
                     # Generate small random values instead of zeros
-                    #rng_key = jax.random.PRNGKey(state.current_task + 42)
-                    #rng_key = jax.random.fold_in(rng_key, hash(layer_name + param_name))
-                    #small_random_values = jax.random.normal(
-                    #    rng_key, param_array.shape) * 0.001  # Small initialization
+                    # rng_key = jax.random.PRNGKey(state.current_task + 42)
+                    # rng_key = jax.random.fold_in(rng_key, hash(layer_name + param_name))
+                    # small_random_values = jax.random.normal(
+                    #     rng_key, param_array.shape) * 0.001  # Small initialization
 
                     # prune the parameters
                     pruned_params = jnp.where(complete_mask, param_array, 0)
@@ -233,8 +234,9 @@ class Packnet(CLMethod):
             new_params[layer_name] = new_layer
             mask[layer_name] = mask_layer
 
-        mask = self.update_mask_tree(state.mask, mask, state.current_task)
-        state = state.replace(mask=mask)
+        masks = self.update_mask_tree(state.masks, mask, state.current_task)
+        jax.debug.breakpoint()
+        state = state.replace(masks=masks)
 
         new_param_dict = new_params
         return new_param_dict, state
@@ -257,7 +259,7 @@ class Packnet(CLMethod):
 
         def other_tasks():
             # get all weights allocated for previous tasks 
-            prev_mask = self.combine_masks(state.mask, state.current_task)
+            prev_mask = self.combine_masks(state.masks, state.current_task)
             return prev_mask
 
         prev_mask = jax.lax.cond(
@@ -289,7 +291,7 @@ class Packnet(CLMethod):
         This mask should be applied before each optimizer step during fine-tuning
         '''
 
-        current_mask = self.get_mask(state.mask, state.current_task)
+        current_mask = self.get_mask(state.masks, state.current_task)
 
         def reset_params_finetune(param_leaf, param_copy_leaf, mask_leaf):
             """
@@ -314,22 +316,22 @@ class Packnet(CLMethod):
         so that the biases will not be updated after the first task
         '''
 
-        mask = state.mask
-        def after_first_task(mask):
+        masks = state.masks
+        def after_first_task(masks):
             # Iterate over all masks and set the biases to True
-            for layer_name, layer_dict in mask.items():
+            for layer_name, layer_dict in masks.items():
                 for param_name, mask_array in layer_dict.items():
                     if "bias" in param_name:
                         # Set the mask to True for all tasks
-                        mask[layer_name][param_name] = jnp.ones(mask_array.shape, dtype=bool)
-            return mask
+                        masks[layer_name][param_name] = jnp.ones(mask_array.shape, dtype=bool)
+            return masks
 
-        def first_task(mask):
+        def first_task(masks):
             # No previous tasks to fix
-            return mask
+            return masks
 
-        mask =  jax.lax.cond(state.current_task == 0, first_task, after_first_task, mask)
-        state = state.replace(mask=mask)
+        masks =  jax.lax.cond(state.current_task == 0, first_task, after_first_task, masks)
+        state = state.replace(masks=masks)
 
         return state
 
@@ -337,7 +339,7 @@ class Packnet(CLMethod):
         '''
         Applies the mask of a given task to the model to revert to that network state
         '''
-        assert len(state.mask) > task_id, "Current task index exceeds available masks"
+        assert len(state.masks) > task_id, "Current task index exceeds available masks"
 
         masked_params = {}
 
@@ -349,7 +351,7 @@ class Packnet(CLMethod):
                     full_param_name = f"{layer_name}/{param_name}"
                     prev_mask = jnp.zeros(param_array.shape, dtype=bool)
                     for i in range(0, task_id+1):
-                        prev_mask = jnp.logical_or(prev_mask, state.mask[i][full_param_name])
+                        prev_mask = jnp.logical_or(prev_mask, state.masks[i][full_param_name])
 
                     # Zero out all weights that are not in the mask for this task
                     masked_layer_dict[param_name] = param_array * prev_mask
@@ -365,7 +367,7 @@ class Packnet(CLMethod):
         Masks the remaining parameters of the model that are not pruned
         typically called after the last task's initial training phase
         '''
-        prev_mask = self.combine_masks(state.mask, state.current_task)
+        prev_mask = self.combine_masks(state.masks, state.current_task)
 
         mask = {}
 
@@ -384,8 +386,8 @@ class Packnet(CLMethod):
 
             mask[layer_name] = mask_layer
 
-        mask = self.update_mask_tree(state.mask, mask, state.current_task)
-        state = state.replace(mask=mask)
+        masks = self.update_mask_tree(state.masks, mask, state.current_task)
+        state = state.replace(masks=masks)
 
         # create the parameters to return the same shape as prune
         new_param_dict = params
@@ -437,7 +439,7 @@ class Packnet(CLMethod):
 
         def train_mode():
             # Training mode: mask gradients for weights from previous tasks
-            prev_mask = self.combine_masks(state.mask, jnp.maximum(state.current_task-1, 0))
+            prev_mask = self.combine_masks(state.masks, jnp.maximum(state.current_task-1, 0))
 
             def mask_gradient_leaf(grad_leaf, mask_leaf):
                 """
@@ -451,7 +453,7 @@ class Packnet(CLMethod):
 
         def finetune_mode():
             # Fine-tuning mode: mask gradients for pruned weights of current task
-            current_mask = self.get_mask(state.mask, state.current_task)
+            current_mask = self.get_mask(state.masks, state.current_task)
 
             def mask_gradient_leaf(grad_leaf, mask_leaf):
                 """
@@ -528,6 +530,3 @@ class Packnet(CLMethod):
         sparsity = zero_params / total_params if total_params > 0 else 1
         sparsity = jnp.round(sparsity, 4)
         return sparsity
-    
-    def penalty(self, params, cl_state, coef) -> jnp.ndarray:
-        return jnp.array(0.0, dtype=jnp.float32)
