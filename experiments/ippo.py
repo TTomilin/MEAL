@@ -234,6 +234,26 @@ def main():
         random_cook_time=cfg.random_cook_time,
     )
 
+    eval_envs = make_sequence(
+        sequence_length=seq_length,
+        strategy=strategy,
+        env_id=cfg.env_name,
+        seed=seed,
+        num_agents=cfg.num_agents,
+        max_steps=cfg.num_steps,
+        random_reset=cfg.random_reset,
+        layout_names=cfg.layouts,
+        difficulty=cfg.difficulty,
+        repeat_sequence=cfg.repeat_sequence,
+        random_agent_start=cfg.random_agent_start,
+        complementary_restrictions=cfg.complementary_restrictions,
+        separated_agents=cfg.separated_agents,
+        sticky_actions=cfg.sticky_actions,
+        slippery_tiles=cfg.slippery_tiles,
+        random_pot_size=cfg.random_pot_size,
+        random_cook_time=cfg.random_cook_time,
+    )
+
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
     network_spec = f'act_{cfg.activation}_big_net_{cfg.big_network}_cnn_{cfg.use_cnn}_layer_norm_{cfg.use_layer_norm}'
     run_name = f'{cfg.alg_name}_{cfg.cl_method}_{difficulty}_{cfg.num_agents}agents_{network_spec}_seq{seq_length}_{strategy}_seed_{seed}_{timestamp}'
@@ -367,7 +387,7 @@ def main():
     def step_switch(key, state, actions, task_idx):
         return jax.lax.switch(task_idx, step_fns, key, state, actions)
 
-    evaluate_env = make_eval_fn(reset_switch, step_switch, actor, agents, seq_length, cfg.num_steps, cfg.use_cnn)
+    evaluate_env = make_eval_fn(reset_switch, step_switch, actor, critic, agents, cfg.cl_method, eval_envs, seq_length, cfg.num_steps, cfg.use_cnn)
 
     importance_functions = cl.make_importance_fn(reset_switch, step_switch, actor, critic, agents, cfg.use_cnn,
                                           cfg.importance_episodes, cfg.importance_steps, cfg.normalize_importance,
@@ -907,8 +927,8 @@ def main():
 
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
-                        avg_rewards, avg_soups = evaluate_all_envs(
-                            eval_rng, actor_train_state.params, seq_length, evaluate_env
+                        avg_rewards, avg_soups = evaluate_env(
+                            eval_rng, actor_train_state.params, critic_train_state.params
                         )
                         metrics = add_eval_metrics(avg_rewards, avg_soups, env_names, max_soup_vals, metrics)
 
