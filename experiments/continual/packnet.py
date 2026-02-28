@@ -138,7 +138,7 @@ class Packnet(CLMethod):
 
         num_tasks_left = self.seq_length - state.current_task
         prune_percentage = num_tasks_left/(num_tasks_left + 1)
-        return prune_percentage
+        return 0.0 # debug
 
     def layer_is_prunable(self, layer_name):
         '''
@@ -375,3 +375,45 @@ class Packnet(CLMethod):
         sparsity = zero_params / total_params if total_params > 0 else 1
         sparsity = jnp.round(sparsity, 4)
         return sparsity
+
+def debug_packnet_masks(state: PacknetState, params):
+    frozen_counts = {}
+    current_task_counts = {}
+    free_counts = {}
+    total_counts = {}
+
+    # Loop over layers using Python dict iteration (safe outside jit)
+    for layer_name, layer_dict in params.items():
+        frozen_counts[layer_name] = {}
+        current_task_counts[layer_name] = {}
+        free_counts[layer_name] = {}
+        total_counts[layer_name] = {}
+
+        for param_name, param_array in layer_dict.items():
+            # Mask arrays
+            mask_tree = state.masks[layer_name][param_name]
+
+            # Previous tasks mask (combined)
+            prev_mask = jnp.any(mask_tree[:state.current_task], axis=0)
+
+            # Current task mask
+            current_mask = mask_tree[state.current_task]
+
+            # Counts
+            frozen_count = jnp.sum(prev_mask)
+            current_count = jnp.sum(current_mask)
+            free_mask = jnp.logical_not(jnp.logical_or(prev_mask, current_mask))
+            free_count = jnp.sum(free_mask)
+            total_count = param_array.size
+
+            # Store as JAX arrays (safe for JIT)
+            frozen_counts[layer_name][param_name] = frozen_count
+            current_task_counts[layer_name][param_name] = current_count
+            free_counts[layer_name][param_name] = free_count
+            total_counts[layer_name][param_name] = total_count
+
+            # Optional: print via jax.debug.print (works inside jit)
+            jax.debug.print(
+                "Layer: {}, Param: {} | Total: {} | Frozen: {} | Current: {} | Free: {}",
+                layer_name, param_name, total_count, frozen_count, current_count, free_count
+            )
