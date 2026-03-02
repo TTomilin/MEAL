@@ -771,10 +771,10 @@ def main():
                     actor_train_state = actor_train_state.apply_gradients(grads=actor_grads)
                     critic_train_state = critic_train_state.apply_gradients(grads=critic_grads)
 
-                    if cfg.cl_method == "packnet":
-                        actor_train_state = actor_train_state.replace(
-                            params=cl.apply_mask(actor_train_state.params["params"], cl_state)
-                        )
+                    # if cfg.cl_method == "packnet":
+                    #     actor_train_state = actor_train_state.replace(
+                    #         params=cl.apply_mask(actor_train_state.params["params"], cl_state)
+                    #     )
 
                     # Of course we also need to add the network to the carry here
                     return ((actor_train_state, critic_train_state), cl_state), loss_information

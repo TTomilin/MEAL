@@ -297,6 +297,10 @@ class Packnet(CLMethod):
             params
         )
         # fix the structure of the params:
+        mask = self.combine_masks(state.masks, state.current_task)
+        jax.debug.print("{}", new_params["Dense_1"]["kernel"])
+        jax.debug.print("{}", mask["Dense_1"]["kernel"])
+        
         new_params = {"params": new_params}
         return new_params, state
 
