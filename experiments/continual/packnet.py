@@ -139,8 +139,8 @@ class Packnet(CLMethod):
         '''
         assert self.seq_length is not None, "Sequence length not provided"
 
-        num_tasks_left = self.seq_length - state.current_task
-        prune_percentage = num_tasks_left/(num_tasks_left + 1)
+        num_tasks_left = self.seq_length - state.current_task - 1
+        prune_percentage = num_tasks_left / num_tasks_left
         return prune_percentage
 
     def layer_is_prunable(self, layer_name):
@@ -401,6 +401,35 @@ class Packnet(CLMethod):
         sparsity = zero_params / total_params if total_params > 0 else 1
         sparsity = jnp.round(sparsity, 4)
         return sparsity
+
+    def apply_mask(self, params, state: PacknetState):
+        """
+        Hard-enforce masks by restoring frozen weights from memory.
+        This is the safest PackNet implementation.
+        """
+
+        # Combine all masks up to current task
+        combined_mask = self.combine_masks(state.masks, state.current_task)
+
+        # If we have memory, restore frozen weights
+        if len(state.weight_memory) > 0:
+            reference_weights = state.weight_memory[state.current_task]
+        else:
+            reference_weights = params
+
+        def restore_leaf(p, ref, mask):
+            # mask == True → frozen weight → restore reference
+            # mask == False → free weight → keep new value
+            return jnp.where(mask, ref, p)
+
+        restored = jax.tree_util.tree_map(
+            restore_leaf,
+            params,
+            reference_weights,
+            combined_mask
+        )
+
+        return {"params": restored}
 
 def debug_packnet_masks(state: PacknetState, params):
     frozen_counts = {}
