@@ -416,8 +416,6 @@ def main():
             new_actor_optimizer = actor_tx.init(actor_train_state.params)
             new_critic_optimizer = critic_tx.init(critic_train_state.params)
             actor_train_state = actor_train_state.replace(tx=actor_tx, opt_state=new_actor_optimizer)
-            new_opt_state = actor_train_state.tx.init(actor_train_state.params)
-            actor_train_state = actor_train_state.replace(opt_state=new_opt_state)
             critic_train_state = critic_train_state.replace(tx=critic_tx, opt_state=new_critic_optimizer)
 
         # Initialize and reset the environment
@@ -988,6 +986,8 @@ def main():
             jax.debug.print(
             "Sparsity after pruning: {sparsity}", sparsity=sparsity)
             actor_train_state = actor_train_state.replace(params=new_actor_params)
+            new_opt_state_actor = actor_train_state.tx.init(actor_train_state.params)
+            actor_train_state = actor_train_state.replace(opt_state=new_opt_state_actor)
 
             rng, finetune_rng = jax.random.split(rng)
 
@@ -1012,7 +1012,7 @@ def main():
             debug_packnet_masks(cl_state, actor_train_state.params["params"])
 
             # add cl_state (packnet_state in this case) to new runner state
-            runner_state = ((actor_train_state, critic_train_state), env_state, last_obs, 0, 0, finetune_rng, cl_state)
+            runner_state = ((actor_train_state, critic_train_state), env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
 
         # Return the runner state after the training loop, and the metrics arrays
         return runner_state, metrics
