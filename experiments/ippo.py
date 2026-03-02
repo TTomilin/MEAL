@@ -403,8 +403,18 @@ def main():
 
         # reset the optimizer and learning rate
         if cfg.reset_optimizer:
-            new_actor_optimizer = actor_train_state.tx.init(actor_train_state.params)
-            new_critic_optimizer = critic_train_state.tx.init(critic_train_state.params)
+            print("Training on environment")
+            # reset the learning rate and the optimizer
+            actor_tx = optax.chain(
+                optax.clip_by_global_norm(cfg.max_grad_norm),
+                optax.adam(learning_rate=linear_schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
+            )
+            critic_tx = optax.chain(
+                optax.clip_by_global_norm(cfg.max_grad_norm),
+                optax.adam(learning_rate=linear_schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
+            )
+            new_actor_optimizer = actor_tx.init(actor_train_state.params)
+            new_critic_optimizer = critic_tx.init(critic_train_state.params)
             actor_train_state = actor_train_state.replace(tx=actor_tx, opt_state=new_actor_optimizer)
             critic_train_state = critic_train_state.replace(tx=critic_tx, opt_state=new_critic_optimizer)
 
@@ -968,10 +978,10 @@ def main():
 
         if cfg.cl_method.lower() == "packnet":
             # Unpack runner state
-            (actor_train_state, critic_train_state), env_state, last_obs, _, _, rng, cl_state = runner_state
+            (actor_train_state, critic_train_state), env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
             
             # Prune the model and update the parameters
-            new_actor_params, cl_state = cl.on_train_end(actor_train_state.params, cl_state)
+            new_actor_params, cl_state = cl.on_train_end(actor_train_state.params["params"], cl_state)
             sparsity = cl.compute_sparsity(new_actor_params["params"])
             jax.debug.print(
             "Sparsity after pruning: {sparsity}", sparsity=sparsity)
@@ -980,7 +990,7 @@ def main():
             rng, finetune_rng = jax.random.split(rng)
 
             # create new runner state for fine-tuning:
-            runner_state = ((actor_train_state, critic_train_state), env_state, last_obs, 0, 0, finetune_rng, cl_state)
+            runner_state = ((actor_train_state, critic_train_state), env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
 
             # run fine-tuning
             runner_state, metrics = jax.lax.scan(

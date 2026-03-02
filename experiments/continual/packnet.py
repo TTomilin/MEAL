@@ -294,7 +294,7 @@ class Packnet(CLMethod):
             state.current_task == self.seq_length-1,
             last_task,
             other_tasks,
-            params["params"]
+            params
         )
         # fix the structure of the params:
         new_params = {"params": new_params}
