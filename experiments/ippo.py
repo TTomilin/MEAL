@@ -997,7 +997,7 @@ def main():
                 "Sparsity after finetuning: {sparsity}", sparsity=sparsity)
             # handle the end of the finetune phase 
             cl_state = cl.on_finetune_end(actor_train_state.params, cl_state)
-            #debug_packnet_masks(cl_state, actor_train_state.params["params"])
+            debug_packnet_masks(cl_state, actor_train_state.params["params"])
 
             # add cl_state (packnet_state in this case) to new runner state
             runner_state = ((actor_train_state, critic_train_state), env_state, last_obs, 0, 0, finetune_rng, cl_state)
