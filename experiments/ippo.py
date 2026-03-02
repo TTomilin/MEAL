@@ -416,6 +416,8 @@ def main():
             new_actor_optimizer = actor_tx.init(actor_train_state.params)
             new_critic_optimizer = critic_tx.init(critic_train_state.params)
             actor_train_state = actor_train_state.replace(tx=actor_tx, opt_state=new_actor_optimizer)
+            new_opt_state = actor_train_state.tx.init(actor_train_state.params)
+            actor_train_state = actor_train_state.replace(opt_state=new_opt_state)
             critic_train_state = critic_train_state.replace(tx=critic_tx, opt_state=new_critic_optimizer)
 
         # Initialize and reset the environment
