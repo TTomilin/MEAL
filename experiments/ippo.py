@@ -20,7 +20,7 @@ from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
-from experiments.continual.packnet import Packnet
+from experiments.continual.packnet import Packnet, debug_packnet_masks
 from experiments.evaluation import evaluate_all_envs, make_eval_fn
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.model.mlp import ActorCritic as MLPActorCritic
@@ -996,7 +996,8 @@ def main():
             jax.debug.print(
                 "Sparsity after finetuning: {sparsity}", sparsity=sparsity)
             # handle the end of the finetune phase 
-            cl_state = cl.on_finetune_end(cl_state)
+            cl_state = cl.on_finetune_end(actor_train_state.params, cl_state)
+            #debug_packnet_masks(cl_state, actor_train_state.params["params"])
 
             # add cl_state (packnet_state in this case) to new runner state
             runner_state = ((actor_train_state, critic_train_state), env_state, last_obs, 0, 0, finetune_rng, cl_state)

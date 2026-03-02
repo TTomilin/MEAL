@@ -122,7 +122,9 @@ def init_cl_state(actor_params: FrozenVariableDict, critic_params: FrozenVariabl
             masks=cl.init_mask_tree(actor_params["params"]),
             mask={},
             current_task=0,
-            train_mode=True
+            train_mode=True,
+            mask_memory=[],
+            weight_memory=[]
         )
     elif isinstance(cl, AGEM):
         # Get observation dimension

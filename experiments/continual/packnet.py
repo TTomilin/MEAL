@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import flax.linen as nn
 from flax.core.frozen_dict import FrozenDict
 from experiments.continual.base import CLState, CLMethod
+from typing import List
 
 
 @flax.struct.dataclass
@@ -18,6 +19,8 @@ class PacknetState(CLState):
     masks: FrozenDict
     current_task: int
     train_mode: bool
+    weight_memory: List[dict]
+    mask_memory: List[dict]
 
 
 
@@ -138,7 +141,7 @@ class Packnet(CLMethod):
 
         num_tasks_left = self.seq_length - state.current_task
         prune_percentage = num_tasks_left/(num_tasks_left + 1)
-        return 0.0 # debug
+        return prune_percentage
 
     def layer_is_prunable(self, layer_name):
         '''
@@ -220,7 +223,7 @@ class Packnet(CLMethod):
                     rng_key = jax.random.PRNGKey(state.current_task + 42)
                     # deterministic per layer
                     rng_key = jax.random.fold_in(rng_key, hash(layer_name + param_name) & 0xFFFFFFFF)
-                    small_init = jax.random.normal(rng_key, param_array.shape) * 1e-3  # small noise
+                    small_init = jax.random.normal(rng_key, param_array.shape) * 1e-8  # small noise
 
                     # prune the parameters
                     pruned_params = jnp.where(complete_mask, param_array, small_init)
@@ -297,13 +300,36 @@ class Packnet(CLMethod):
         new_params = {"params": new_params}
         return new_params, state
 
-    def on_finetune_end(self, state: PacknetState):
+    def on_finetune_end(self, params, state: PacknetState):
         '''
         Handles the end of the finetuning phase on a task
         '''
+        self.update_and_verify_weight_memory(params, state)
         state = state.replace(current_task=state.current_task+1, train_mode=True)
 
         return state
+    
+    def update_and_verify_weight_memory(self, params, state: PacknetState):
+        mask = self.combine_masks(state.masks, state.current_task)
+        state.weight_memory.append(params["params"].copy())
+        state.mask_memory.append(mask.copy())
+        for i in range(len(state.weight_memory)):
+            mask_i = state.mask_memory[i]
+            weights_i = state.weight_memory[i]
+            for j in range(i+1, len(state.weight_memory)):
+                weights_j = state.weight_memory[j]
+                check_outcome = self.compare_tree_dicts(weights_i, weights_j, mask_i, i, j)
+
+    def compare_tree_dicts(self, dict_a, dict_b, mask_tree, i, j):
+        for layer_name, layer_dict in dict_a.items():
+            for module_name, module_array in layer_dict.items():
+                array_mask = mask_tree[layer_name][module_name]
+                array_a = jnp.where(array_mask, module_array, 0)
+                array_b = jnp.where(array_mask, dict_b[layer_name][module_name], 0)
+                out = jnp.all(array_a == array_b)
+                jax.debug.print("{},{}: {}|{} {}", i, j, layer_name, module_name, out)
+        return out
+
 
     def mask_gradients(self, state: PacknetState, gradients):
         '''
@@ -324,7 +350,7 @@ class Packnet(CLMethod):
                 Zero out gradients for frozen weights (where mask is True)
                 """
                 return jnp.where(mask_leaf, jnp.zeros_like(grad_leaf), grad_leaf)
-
+            
             # Apply masking to gradients
             masked_grads = jax.tree_util.tree_map(mask_gradient_leaf, gradients["params"], prev_mask)
             return {"params": masked_grads}
@@ -394,7 +420,7 @@ def debug_packnet_masks(state: PacknetState, params):
             mask_tree = state.masks[layer_name][param_name]
 
             # Previous tasks mask (combined)
-            prev_mask = jnp.any(mask_tree[:state.current_task], axis=0)
+            prev_mask = jnp.any(mask_tree, axis=0)
 
             # Current task mask
             current_mask = mask_tree[state.current_task]
@@ -417,3 +443,13 @@ def debug_packnet_masks(state: PacknetState, params):
                 "Layer: {}, Param: {} | Total: {} | Frozen: {} | Current: {} | Free: {}",
                 layer_name, param_name, total_count, frozen_count, current_count, free_count
             )
+
+def check_if_masked_zero(tree_dict, mask):
+    shape_check = jax.tree_util.tree_structure(tree_dict) == jax.tree_util.tree_structure(mask)
+    for layer_name, array_dict in tree_dict.items():
+        for module_name, array in array_dict.items():
+            current_mask = mask[layer_name][module_name]
+            current_masked_grads = jnp.where(current_mask, array, 0)
+            jax.debug.print("{}:{} has non_zero entries: {}", layer_name, module_name, jnp.any(current_mask != 0.0))
+            jax.debug.print("{}:{} is masked fully: {}", layer_name, module_name, jnp.all(current_masked_grads == 0.0))
+    jax.debug.print("Shapes of original array and mask are compatible: {}", shape_check)
