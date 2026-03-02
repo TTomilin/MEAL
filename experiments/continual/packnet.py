@@ -139,8 +139,8 @@ class Packnet(CLMethod):
         '''
         assert self.seq_length is not None, "Sequence length not provided"
 
-        num_tasks_left = self.seq_length - state.current_task - 1
-        prune_percentage = num_tasks_left / num_tasks_left
+        num_tasks_left = self.seq_length - state.current_task
+        prune_percentage = num_tasks_left / (num_tasks_left + 1)
         return prune_percentage
 
     def layer_is_prunable(self, layer_name):
@@ -413,7 +413,8 @@ class Packnet(CLMethod):
 
         # If we have memory, restore frozen weights
         if len(state.weight_memory) > 0:
-            reference_weights = state.weight_memory[state.current_task]
+            weight_stack = jax.tree_util.tree_map(lambda *tree: jnp.stack(tree), *state.weight_memory) # convert memory to trace-indexable dict
+            reference_weights = jax.tree_util.tree_map(lambda x: x[state.current_task], weight_stack) # recover correct weights from the dict
         else:
             reference_weights = params
 
