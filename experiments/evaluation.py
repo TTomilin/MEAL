@@ -190,7 +190,7 @@ def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl, cl_state,
         avg_soups = total_soups.mean()
         return avg_rewards, avg_soups
 
-    if False:
+    if isinstance(cl, Packnet):
         return evaluate_model_packnet
     else:
         return evaluate_env
