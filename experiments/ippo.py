@@ -386,15 +386,15 @@ def main():
         # reset the optimizer and learning rate
         if cfg.reset_optimizer:
             print("Training on environment")
-            # reset the learning rate and the optimizer
-            actor_tx = optax.chain(
-                optax.clip_by_global_norm(cfg.max_grad_norm),
-                optax.adam(learning_rate=linear_schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
-            )
-            critic_tx = optax.chain(
-                optax.clip_by_global_norm(cfg.max_grad_norm),
-                optax.adam(learning_rate=linear_schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
-            )
+            # # reset the learning rate and the optimizer
+            # actor_tx = optax.chain(
+            #     optax.clip_by_global_norm(cfg.max_grad_norm),
+            #     optax.adam(learning_rate=linear_schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
+            # )
+            # critic_tx = optax.chain(
+            #     optax.clip_by_global_norm(cfg.max_grad_norm),
+            #     optax.adam(learning_rate=linear_schedule if cfg.anneal_lr else cfg.lr, eps=1e-5)
+            # )
             new_actor_optimizer = actor_tx.init(actor_train_state.params)
             new_critic_optimizer = critic_tx.init(critic_train_state.params)
             actor_train_state = actor_train_state.replace(tx=actor_tx, opt_state=new_actor_optimizer)
