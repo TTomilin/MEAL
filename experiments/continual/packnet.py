@@ -300,7 +300,7 @@ class Packnet(CLMethod):
         mask = self.combine_masks(state.masks, state.current_task)
         jax.debug.print("{}", new_params["Dense_1"]["kernel"])
         jax.debug.print("{}", mask["Dense_1"]["kernel"])
-        
+
         new_params = {"params": new_params}
         return new_params, state
 
@@ -308,7 +308,7 @@ class Packnet(CLMethod):
         '''
         Handles the end of the finetuning phase on a task
         '''
-        self.update_and_verify_weight_memory(params, state)
+        #self.update_and_verify_weight_memory(params, state)
         state = state.replace(current_task=state.current_task+1, train_mode=True)
 
         return state
