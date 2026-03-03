@@ -222,37 +222,35 @@ class Packnet(CLMethod):
             # actually apply the pruning:
             for param_name, param_array in layer_dict.items():
                 # in case the layer is prunable and some parameters can still be pruned:
-                if (
-                    self.layer_is_prunable(layer_name)
+                if (self.layer_is_prunable(layer_name)
                     and "bias" not in param_name
-                    and cutoff is not None
-                ):
+                    and cutoff is not None):
                     prev_mask_leaf = combined_mask[layer_name][param_name]
                     new_mask_leaf = jnp.logical_and(
                         jnp.abs(param_array) > cutoff,
                         jnp.logical_not(prev_mask_leaf)
                     )
-                complete_mask = jnp.logical_or(prev_mask_leaf, new_mask_leaf)
+                    complete_mask = jnp.logical_or(prev_mask_leaf, new_mask_leaf)
 
-                # small init:
-                small_init = self._get_small_init(self, task_id=state.current_task, 
-                                                  path=(param_name, layer_name), leaf=param_array)
+                    # small init:
+                    small_init = self._get_small_init(task_id=state.current_task, 
+                                                      path=(param_name, layer_name), leaf=param_array)
 
-                pruned_params = jnp.where(
-                    complete_mask,
-                    param_array,
-                    small_init
-                ) # replace all unmasked regions with the small init
+                    pruned_params = jnp.where(
+                        complete_mask,
+                        param_array,
+                        small_init
+                    ) # replace all unmasked regions with the small init
 
-                # update the values in mask_layer and new_layer:
-                mask_layer[param_name] = new_mask_leaf
-                new_layer[param_name] = pruned_params
-            # in case no pruning is possible:
-            else:
-                mask_layer[param_name] = jnp.zeros(
-                    param_array.shape, dtype=bool # set mask to all zeroes
-                )
-                new_layer[param_name] = param_array # leave parameters untouched
+                    # update the values in mask_layer and new_layer:
+                    mask_layer[param_name] = new_mask_leaf
+                    new_layer[param_name] = pruned_params
+                # in case no pruning is possible:
+                else:
+                    mask_layer[param_name] = jnp.zeros(
+                        param_array.shape, dtype=bool # set mask to all zeroes
+                    )
+                    new_layer[param_name] = param_array # leave parameters untouched
 
             new_params[layer_name] = new_layer
             mask[layer_name] = mask_layer
@@ -332,8 +330,6 @@ class Packnet(CLMethod):
             params
         )
         mask = self.combine_masks(state.masks, state.current_task+1)
-        jax.debug.print("{}", new_params["Dense_1"]["kernel"])
-        jax.debug.print("{}", mask["Dense_1"]["kernel"])
 
         new_params = {"params": new_params}
         return new_params, state
