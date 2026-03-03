@@ -5,7 +5,7 @@ from experiments.utils import batchify, unbatchify
 from functools import partial
 from typing import Any, NamedTuple
 
-def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl_method, eval_envs, num_envs: int, num_steps: int, use_cnn: bool):
+def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl_method, cl_state, eval_envs, num_envs: int, num_steps: int, use_cnn: bool):
     """
     Returns a jitted evaluate_single_env(rng, params, env_idx) that *closes over*
     the static callables and constants so we don't pass non-arrays to jit.
@@ -144,7 +144,8 @@ def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl_method, ev
 
             # policy forward (greedy) on batched obs
             obs_batch = batchify(obs, agents, len(agents) * num_envs, not use_cnn)  # (num_actors, obs_dim)
-            pi, _ = actor.apply(actor_params, obs_batch, env_idx=env_idx)
+            masked_params = cl_method.apply_mask(actor_params, cl_state, env_idx) # apply mask during evaluation (as per packnet paper)
+            pi, _ = actor.apply(masked_params, obs_batch, env_idx=env_idx)
             action = pi.mode()  # deterministic eval
 
             # unbatch to dict of (num_envs,)
