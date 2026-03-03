@@ -73,7 +73,7 @@ def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl, cl_state,
                     '''
                     # For Packnet, train_state is a tuple of (actor_train_state, critic_train_state)
                     masked_params = cl.apply_mask(actor_params["params"], mask, env_idx)
-                    pi, _ = actor.apply(actor_params, obs, env_idx=env_idx)
+                    pi, _ = actor.apply(masked_params, obs, env_idx=env_idx)
                     value, _ = critic.apply(critic_params, obs, env_idx=env_idx)
 
                     action = jnp.squeeze(pi.sample(seed=rng), axis=0)
@@ -142,12 +142,24 @@ def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl, cl_state,
         total_rewards = jnp.zeros((num_envs,), jnp.float32)
         total_soups = jnp.zeros((num_envs,), jnp.float32)
 
+        # set mask if needed:
+        combined_mask = None
+        if isinstance(cl, Packnet):
+            combined_mask = cl.combine_masks(cl_state.masks, env_idx+1)
+
         def one_step(carry, _):
             env_state, obs, rewards, soups, rng = carry
 
             # policy forward (greedy) on batched obs
             obs_batch = batchify(obs, agents, len(agents) * num_envs, not use_cnn)  # (num_actors, obs_dim)
-            pi, _ = actor.apply(actor_params, obs_batch, env_idx=env_idx)
+
+            # select action:
+            if isinstance(cl, Packnet):
+                masked_params = cl.apply_mask(actor_params, combined_mask, env_idx)
+                pi, _ = actor.apply(masked_params, obs_batch, env_idx=env_idx)
+            else:
+                pi, _ = actor.apply(actor_params, obs_batch, env_idx=env_idx)
+
             action = pi.mode()  # deterministic eval
 
             # unbatch to dict of (num_envs,)
@@ -178,7 +190,7 @@ def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl, cl_state,
         avg_soups = total_soups.mean()
         return avg_rewards, avg_soups
 
-    if (isinstance(cl, Packnet)):
+    if False:
         return evaluate_model_packnet
     else:
         return evaluate_env

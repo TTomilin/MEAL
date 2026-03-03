@@ -927,8 +927,8 @@ def main():
 
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
-                        avg_rewards, avg_soups = evaluate_env(
-                            eval_rng, actor_train_state.params, critic_train_state.params
+                        avg_rewards, avg_soups = evaluate_all_envs(
+                            eval_rng, actor_train_state.params, critic_train_state.params, evaluate_env
                         )
                         metrics = add_eval_metrics(avg_rewards, avg_soups, env_names, max_soup_vals, metrics)
 
