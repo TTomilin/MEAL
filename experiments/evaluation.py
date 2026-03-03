@@ -2,10 +2,11 @@ import jax
 import jax.numpy as jnp
 
 from experiments.utils import batchify, unbatchify
+from experiments.continual.packnet import Packnet
 from functools import partial
 from typing import Any, NamedTuple
 
-def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl_method, cl_state, eval_envs, num_envs: int, num_steps: int, use_cnn: bool):
+def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl, cl_state, eval_envs, num_envs: int, num_steps: int, use_cnn: bool):
     """
     Returns a jitted evaluate_single_env(rng, params, env_idx) that *closes over*
     the static callables and constants so we don't pass non-arrays to jit.
@@ -24,6 +25,7 @@ def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl_method, cl
             """
             Run a single episode using jax.lax.while_loop
             """
+            mask = cl.combine_masks(cl_state.masks, env_idx+1)
 
             class EvalState(NamedTuple):
                 key: Any
@@ -70,8 +72,8 @@ def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl_method, cl
                     returns the action and value
                     '''
                     # For Packnet, train_state is a tuple of (actor_train_state, critic_train_state)
-                    masked_params = cl_method.apply_mask(actor_params, cl_state, env_idx)
-                    pi, _ = actor.apply(masked_params, obs, env_idx=env_idx)
+                    masked_params = cl.apply_mask(actor_params["params"], mask, env_idx)
+                    pi, _ = actor.apply(actor_params, obs, env_idx=env_idx)
                     value, _ = critic.apply(critic_params, obs, env_idx=env_idx)
 
                     action = jnp.squeeze(pi.sample(seed=rng), axis=0)
@@ -176,10 +178,10 @@ def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl_method, cl
         avg_soups = total_soups.mean()
         return avg_rewards, avg_soups
 
-    if cl_method != "packnet":
-        return evaluate_env
-    else:
+    if (isinstance(cl, Packnet)):
         return evaluate_model_packnet
+    else:
+        return evaluate_env
 
 
 def evaluate_all_envs(rng, actor_params, num_envs, evaluate_env):

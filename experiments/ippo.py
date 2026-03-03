@@ -372,7 +372,7 @@ def main():
     cl_state = init_cl_state(actor_train_state.params, critic_train_state.params, 
                             cfg.regularize_critic, cfg.regularize_heads, cl, envs, seq_length, cfg)
     
-    evaluate_env = make_eval_fn(reset_switch, step_switch, actor, critic, agents, cfg.cl_method, cl_state, eval_envs, seq_length, cfg.num_steps, cfg.use_cnn)
+    evaluate_env = make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl, cl_state, eval_envs, seq_length, cfg.num_steps, cfg.use_cnn)
 
     importance_functions = cl.make_importance_fn(reset_switch, step_switch, actor, critic, agents, cfg.use_cnn,
                                           cfg.importance_episodes, cfg.importance_steps, cfg.normalize_importance,
@@ -1136,7 +1136,7 @@ def main():
 
     # Run the model
     rng, train_rng = jax.random.split(rng)
-
+    
     # apply the loop_over_envs function to the environments
     loop_over_envs(train_rng, actor_train_state, critic_train_state, cl_state, envs)
 

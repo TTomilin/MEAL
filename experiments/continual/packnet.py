@@ -264,7 +264,7 @@ class Packnet(CLMethod):
         return new_param_dict, state     
 
     def _get_small_init(self, task_id: int, path, leaf):
-        layer_name, param_name = path
+        layer_name, param_name = str(path[0]), str(path[1])
         rng_key = jax.random.PRNGKey(task_id + 42)
         rng_key = jax.random.fold_in(
             rng_key,
@@ -436,25 +436,25 @@ class Packnet(CLMethod):
         sparsity = jnp.round(sparsity, 4)
         return sparsity
 
-    def apply_mask(self, params, state: PacknetState, task_id: int):
+    def apply_mask(self, params, combined_mask, task_id: int):
         """
         Apply a given task mask to the parameters, used at evaluation time (as per original Packnet paper).
         """
 
         # Combine all masks up to current task
         last_task = task_id + 1
-        combined_mask = self.combine_masks(state.masks, last_task)
         deterministic_init = self.get_deterministic_init(last_task, params)
 
-        def mask_leaf(p, mask):
+        def mask_leaf(p, mask, init):
             # mask == True → frozen weight → keep parameter
             # mask == False → free weight → discard parameter
-            return jnp.where(mask, p, deterministic_init) # restore original deterministic init
+            return jnp.where(mask, p, init) # restore original deterministic init
 
         masked_params = jax.tree_util.tree_map(
             mask_leaf,
             params,
-            combined_mask
+            combined_mask,
+            deterministic_init
         )
 
         return {"params": masked_params}
