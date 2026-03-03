@@ -132,7 +132,7 @@ def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl, cl_state,
         return all_avg_rewards, all_avg_soups
 
     @jax.jit
-    def evaluate_env(rng, actor_params, critic_params, env_idx):
+    def evaluate_env(rng, actor_params, env_idx):
         # Reset a batch of envs for shape parity with train
         rng, env_rng = jax.random.split(rng)
         reset_rng = jax.random.split(env_rng, num_envs)
@@ -155,7 +155,7 @@ def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl, cl_state,
 
             # select action:
             if isinstance(cl, Packnet):
-                masked_params = cl.apply_mask(actor_params, combined_mask, env_idx)
+                masked_params = cl.apply_mask(actor_params["params"], combined_mask, env_idx)
                 pi, _ = actor.apply(masked_params, obs_batch, env_idx=env_idx)
             else:
                 pi, _ = actor.apply(actor_params, obs_batch, env_idx=env_idx)
