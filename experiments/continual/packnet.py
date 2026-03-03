@@ -235,14 +235,7 @@ class Packnet(CLMethod):
                 complete_mask = jnp.logical_or(prev_mask_leaf, new_mask_leaf)
 
                 # small init:
-                rng_key = jax.random.PRNGKey(state.current_task + 42)
-                rng_key = jax.random.fold_in(
-                    rng_key,
-                    hash(layer_name + param_name) & 0xFFFFFFFF # ensure positivity
-                )
-                small_init = (
-                    jax.random.normal(rng_key, param_array.shape) * 1e-6
-                )
+                small_init = self._get_small_init(self, task_id=state.current_task, leaf=param_array)
 
                 pruned_params = jnp.where(
                     complete_mask,
@@ -269,7 +262,19 @@ class Packnet(CLMethod):
 
         # return:
         new_param_dict = new_params
-        return new_param_dict, state        
+        return new_param_dict, state     
+
+    def _get_small_init(self, task_id: int, leaf):
+        rng_key = jax.random.PRNGKey(task_id + 42)
+        rng_key = jax.random.fold_in(
+            rng_key,
+            hash(task_id + len(leaf)) & 0xFFFFFFFF # ensure positivity
+        )
+        return (jax.random.normal(rng_key, leaf.shape) * 1e-6)
+    
+    def get_deterministic_init(self, task_id: int, param_tree: dict):
+        leaf_initiatior = lambda leaf: self._get_small_init(task_id=task_id, leaf=leaf)
+        return jax.tree.tree_map(leaf_initiatior, param_tree)
 
     def mask_remaining_params(self, params, state: PacknetState):
         '''
@@ -441,11 +446,12 @@ class Packnet(CLMethod):
         # Combine all masks up to current task
         last_task = task_id + 1
         combined_mask = self.combine_masks(state.masks, last_task)
+        deterministic_init = self.get_deterministic_init(last_task, params)
 
         def mask_leaf(p, mask):
             # mask == True → frozen weight → keep parameter
             # mask == False → free weight → discard parameter
-            return jnp.where(mask, p, 0)
+            return jnp.where(mask, p, deterministic_init) # restore original deterministic init
 
         masked_params = jax.tree_util.tree_map(
             mask_leaf,
