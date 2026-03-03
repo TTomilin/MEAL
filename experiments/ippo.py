@@ -382,10 +382,10 @@ def main():
         @param rng: random number generator
         returns the runner state and the metrics
         '''
+        print("Training on environment")
 
         # reset the optimizer and learning rate
         if cfg.reset_optimizer:
-            print("Training on environment")
             # # reset the learning rate and the optimizer
             # actor_tx = optax.chain(
             #     optax.clip_by_global_norm(cfg.max_grad_norm),
