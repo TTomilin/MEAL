@@ -234,25 +234,7 @@ def main():
         random_cook_time=cfg.random_cook_time,
     )
 
-    eval_envs = make_sequence(
-        sequence_length=seq_length,
-        strategy=strategy,
-        env_id=cfg.env_name,
-        seed=seed,
-        num_agents=cfg.num_agents,
-        max_steps=cfg.num_steps,
-        random_reset=cfg.random_reset,
-        layout_names=cfg.layouts,
-        difficulty=cfg.difficulty,
-        repeat_sequence=cfg.repeat_sequence,
-        random_agent_start=cfg.random_agent_start,
-        complementary_restrictions=cfg.complementary_restrictions,
-        separated_agents=cfg.separated_agents,
-        sticky_actions=cfg.sticky_actions,
-        slippery_tiles=cfg.slippery_tiles,
-        random_pot_size=cfg.random_pot_size,
-        random_cook_time=cfg.random_cook_time,
-    )
+    eval_envs = envs
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
     network_spec = f'act_{cfg.activation}_big_net_{cfg.big_network}_cnn_{cfg.use_cnn}_layer_norm_{cfg.use_layer_norm}'
