@@ -20,7 +20,7 @@ def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl_method, cl
         returns the average reward
         '''
 
-        def run_episode_while(env, key_r, max_steps=1000):
+        def run_episode_while(env, key_r, env_idx: int, max_steps=1000):
             """
             Run a single episode using jax.lax.while_loop
             """
@@ -70,8 +70,9 @@ def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl_method, cl
                     returns the action and value
                     '''
                     # For Packnet, train_state is a tuple of (actor_train_state, critic_train_state)
-                    pi, _ = actor.apply(actor_params, obs, env_idx=eval_idx)
-                    value, _ = critic.apply(critic_params, obs, env_idx=eval_idx)
+                    masked_params = cl_method.apply_mask(actor_params, cl_state, env_idx)
+                    pi, _ = actor.apply(masked_params, obs, env_idx=env_idx)
+                    value, _ = critic.apply(critic_params, obs, env_idx=env_idx)
 
                     action = jnp.squeeze(pi.sample(seed=rng), axis=0)
                     return action, value
@@ -115,11 +116,11 @@ def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl_method, cl
         all_avg_rewards = []
         all_avg_soups = []
 
-        for eval_idx, env in enumerate(eval_envs):
+        for env_idx, env in enumerate(eval_envs):
             # Run k episodes
             EVAL_NUM_EPISODES = 5 # make configurable later
             keys = jax.random.split(rng, EVAL_NUM_EPISODES)
-            all_rewards, all_soups = jax.vmap(lambda k: run_episode_while(env, k, num_steps))(keys)
+            all_rewards, all_soups = jax.vmap(lambda k: run_episode_while(env, k, env_idx, num_steps))(keys)
 
             avg_reward = jnp.mean(all_rewards)
             avg_soup = jnp.mean(all_soups)
@@ -144,8 +145,7 @@ def make_eval_fn(reset_switch, step_switch, actor, critic, agents, cl_method, cl
 
             # policy forward (greedy) on batched obs
             obs_batch = batchify(obs, agents, len(agents) * num_envs, not use_cnn)  # (num_actors, obs_dim)
-            masked_params = cl_method.apply_mask(actor_params, cl_state, env_idx) # apply mask during evaluation (as per packnet paper)
-            pi, _ = actor.apply(masked_params, obs_batch, env_idx=env_idx)
+            pi, _ = actor.apply(actor_params, obs_batch, env_idx=env_idx)
             action = pi.mode()  # deterministic eval
 
             # unbatch to dict of (num_envs,)
