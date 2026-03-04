@@ -239,7 +239,7 @@ class Packnet(CLMethod):
                     pruned_params = jnp.where(
                         complete_mask,
                         param_array,
-                        small_init
+                        0
                     ) # replace all unmasked regions with the small init
 
                     # update the values in mask_layer and new_layer:
@@ -448,7 +448,7 @@ class Packnet(CLMethod):
         def mask_leaf(p, mask, init):
             # mask == True → frozen weight → keep parameter
             # mask == False → free weight → discard parameter
-            return jnp.where(mask, p, init) # restore original deterministic init
+            return jnp.where(mask, p, 0) # restore original deterministic init
 
         masked_params = jax.tree_util.tree_map(
             mask_leaf,
