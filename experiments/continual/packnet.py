@@ -45,7 +45,8 @@ class Packnet(CLMethod):
         self.prune_instructions = prune_instructions
         self.train_finetune_split = train_finetune_split
         self.prunable_layers = prunable_layers
-        self.forbidden_param_names = ['bias', 'critic'] # do not mask bias
+        self.forbidden_param_names = ['bias'] # do not mask bias and critic parameters
+        self.forbidden_layer_names = ['critic']
 
     def init_mask_tree(self, params):
         '''
@@ -158,7 +159,8 @@ class Packnet(CLMethod):
         '''
         for prunable_type in self.prunable_layers:
             if prunable_type.__name__ in layer_name:
-                return True
+                layer_name_forbidden = any([n in layer_name for n in self.forbidden_layer_names])
+                return not(layer_name_forbidden)
         return False
 
     def prune(self, params, state: PacknetState):
