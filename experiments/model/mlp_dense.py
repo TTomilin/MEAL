@@ -33,7 +33,6 @@ class ActorCritic(nn.Module):
 
         act_fn = nn.relu if self.activation == "relu" else nn.tanh
         activations = [] if self.track_dormant_ratio else None
-
         actor_x = x
         critic_x = x
 
@@ -69,12 +68,13 @@ class ActorCritic(nn.Module):
         if self.use_layer_norm:
             a = nn.LayerNorm(name="actor_dense2_ln")(a)
 
+        # -------- actor head --------------------------------------------------
         logits_dim = self.action_dim * (self.num_tasks if self.use_multihead else 1)
         all_logits = nn.Dense(
             logits_dim,
             kernel_init=orthogonal(0.01),
             bias_init=constant(0.0),
-            name="actor_out"
+            name="actor_dense3"
         )(a)
 
         logits = (
@@ -112,7 +112,7 @@ class ActorCritic(nn.Module):
             vdim,
             kernel_init=orthogonal(1.0),
             bias_init=constant(0.0),
-            name="critic_out"
+            name="critic_dense3"
         )(c)
 
         v = (
