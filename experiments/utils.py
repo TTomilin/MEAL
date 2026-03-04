@@ -6,9 +6,14 @@ from typing import NamedTuple
 import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
+from flax.typing import FrozenVariableDict
+from flax.core.frozen_dict import FrozenDict
 from tensorboardX import SummaryWriter
+import numpy as np
 
-from experiments.continual.base import CLState
+from experiments.continual.base import CLState, RegCLState, CLMethod
+from experiments.continual.agem import init_agem_memory
+from experiments.continual.packnet import PacknetState
 
 
 class Transition(NamedTuple):
@@ -103,13 +108,24 @@ def build_reg_weights(params, regularize_critic: bool, regularize_heads: bool) -
     return jax.tree_util.tree_map_with_path(_mark, params)
 
 
-def init_cl_state(params: FrozenDict, regularize_critic: bool, regularize_heads: bool) -> CLState:
-    mask = build_reg_weights(params, regularize_critic, regularize_heads)
-    return CLState(
-        old_params=jax.tree.map(lambda x: x.copy(), params),
-        importance=jax.tree.map(jnp.zeros_like, params),
-        mask=mask
-    )
+def init_cl_state(params: FrozenVariableDict, regularize_critic: bool, 
+                  regularize_heads: bool, cl: CLMethod, cfg) -> CLState:
+    if cfg.cl_method == "packnet":
+        return PacknetState(
+            masks=cl.init_mask_tree(params["params"]),
+            mask={},
+            current_task=0,
+            train_mode=True,
+            mask_memory=[],
+            weight_memory=[]
+        )
+    else:
+        mask = build_reg_weights(params, regularize_critic, regularize_heads)
+        return RegCLState(
+            old_params=jax.tree.map(lambda x: x.copy(), params),
+            importance=jax.tree.map(jnp.zeros_like, params),
+            mask=mask
+        )
 
 
 # ---------------------------------------------------------------

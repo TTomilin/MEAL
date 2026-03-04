@@ -45,6 +45,9 @@ class Packnet(CLMethod):
         self.prune_instructions = prune_instructions
         self.train_finetune_split = train_finetune_split
         self.prunable_layers = prunable_layers
+        self.prunable_layer_type_names = [layer_type.__name__ for layer_type in self.prunable_layers]
+        self.prunable_layer_type_names = [name.lower() for name in self.prunable_layer_type_names]
+        #self.prunable_layers += [name.lower() for name in prunable_layers]
         self.forbidden_param_names = ['bias'] # do not mask bias and critic parameters
         self.forbidden_layer_names = ['critic']
 
@@ -157,8 +160,8 @@ class Packnet(CLMethod):
         @param layer_name: the name of the layer
         returns a boolean indicating whether the layer is prunable
         '''
-        for prunable_type in self.prunable_layers:
-            if prunable_type.__name__ in layer_name:
+        for prunable_layer_type_name in self.prunable_layer_type_names:
+            if prunable_layer_type_name in layer_name:
                 # check if the layer name is not allowed (e.g. it contains 'critic'):
                 layer_name_forbidden = any([n in layer_name for n in self.forbidden_layer_names])
                 return not(layer_name_forbidden)
@@ -325,11 +328,12 @@ class Packnet(CLMethod):
 
         return new_param_dict, state
     
-    def on_train_end(self, params, train_state):
+    def on_train_end(self, train_state, cl_state: PacknetState):
         '''
         Handles pruning and retrieving updated parameters/optimizer after training.
         '''
         # Prune the model and update the parameters:
+        params = train_state.params["params"]
         new_params, cl_state = self.dispatch_prune(params, cl_state)
         # compute and log sparsity:
         sparsity = self.compute_sparsity(new_params["params"])
@@ -337,7 +341,7 @@ class Packnet(CLMethod):
         "Sparsity after pruning: {sparsity}", sparsity=sparsity)
         # update train_state:        
         train_state = train_state.replace(params=new_params)
-        new_opt_state = new_opt_state.tx.init(train_state.params)
+        new_opt_state = train_state.tx.init(train_state.params)
         train_state = train_state.replace(opt_state=new_opt_state)
         # return train_state and cl_state:
         return train_state, cl_state
@@ -425,7 +429,7 @@ class Packnet(CLMethod):
             
             # Apply masking to gradients
             masked_grads = jax.tree_util.tree_map(mask_gradient_leaf, gradients["params"], prev_mask)
-            return {"params": masked_grads}
+            return {**gradients, "params": masked_grads}
 
         def finetune_mode():
             # Fine-tuning mode: mask gradients for pruned weights of current task
@@ -440,7 +444,7 @@ class Packnet(CLMethod):
 
             # Apply masking to gradients
             masked_grads = jax.tree_util.tree_map(mask_gradient_leaf, gradients["params"], current_mask)
-            return {"params": masked_grads}
+            return {**gradients, "params": masked_grads}
 
         def train_mode_dispatch():
             # Dispatch between first task and other tasks in training mode

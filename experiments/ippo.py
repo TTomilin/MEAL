@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Sequence, Optional, List, Literal
 
 import flax
+import flax.linen as nn
 import numpy as np
 import optax
 import tyro
@@ -15,11 +16,12 @@ from jax._src.flatten_util import ravel_pytree
 
 from experiments.continual.agem import AGEM, init_agem_memory, sample_memory, sample_task_slot, \
     compute_memory_gradient, agem_project, update_agem_memory
+from experiments.continual.base import RegCLMethod
 from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
-from experiments.continual.packnet import Packnet, PacknetState
+from experiments.continual.packnet import Packnet
 from experiments.evaluation import evaluate_all_envs, make_eval_fn
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.model.mlp import ActorCritic as MLPActorCritic
@@ -345,7 +347,7 @@ def main():
     def step_switch(key, state, actions, task_idx):
         return jax.lax.switch(task_idx, step_fns, key, state, actions)
 
-    evaluate_env = make_eval_fn(reset_switch, step_switch, network, agents, seq_length, cfg.num_steps, cfg.use_cnn)
+    evaluate_env = make_eval_fn(cl, reset_switch, step_switch, network, agents, seq_length, cfg.num_steps, cfg.use_cnn)
 
     importance_fn = cl.make_importance_fn(reset_switch, step_switch, network, agents, cfg.use_cnn,
                                           cfg.importance_episodes, cfg.importance_steps, cfg.normalize_importance,
@@ -578,7 +580,10 @@ def main():
                         entropy = pi.entropy().mean()
 
                         # CL penalty (for regularization-based methods)
-                        cl_penalty = cl.penalty(params, cl_state, cfg.reg_coef)
+                        if isinstance(cl, RegCLMethod):
+                            cl_penalty = cl.penalty(params, cl_state, cfg.reg_coef)
+                        else:
+                            cl_penalty = 0.0
 
                         total_loss = (loss_actor
                                       + cfg.vf_coef * value_loss
@@ -688,7 +693,7 @@ def main():
 
                     # If using packnet, mask before applying gradient:
                     if cfg.cl_method == "packnet":
-                        grads = cl.mask_gradients(grads)
+                        grads = cl.mask_gradients(cl_state, grads)
 
                     # Apply the gradients to the network
                     train_state = train_state.apply_gradients(grads=grads)
@@ -901,7 +906,7 @@ def main():
             train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
             
             # Prune the model and update the parameters
-            train_state, cl_state = cl.on_train_end(train_state.params["params"], cl_state)
+            train_state, cl_state = cl.on_train_end(train_state, cl_state)
 
             # create new runner state for fine-tuning:
             rng, finetune_rng = jax.random.split(rng)
@@ -1049,7 +1054,7 @@ def main():
 
     # Run the model
     rng, train_rng = jax.random.split(rng)
-    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads)
+    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads, cl, cfg)
 
     # Initialize AGEM memory if using AGEM and this is the first environment
     if cfg.cl_method.lower() == "agem":
