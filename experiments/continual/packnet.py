@@ -458,6 +458,10 @@ class Packnet(CLMethod):
             deterministic_init
         )
 
+        jax.config.update("jax_disable_jit", True)
+        print("Masked params:", masked_params)
+        jax.config.update("jax_disable_jit", False)
+
         return {"params": masked_params}
 
 def debug_packnet_masks(state: PacknetState, params):

@@ -5,14 +5,14 @@ from experiments.utils import batchify, unbatchify
 from experiments.continual.packnet import Packnet
 
 
-def make_eval_fn(cl, cl_state, reset_switch, step_switch, actor, agents, num_envs: int, num_steps: int, use_cnn: bool):
+def make_eval_fn(cl, reset_switch, step_switch, actor, agents, num_envs: int, num_steps: int, use_cnn: bool):
     """
     Returns a jitted evaluate_single_env(rng, params, env_idx) that *closes over*
     the static callables and constants so we don't pass non-arrays to jit.
     """
 
     @jax.jit
-    def evaluate_env(rng, actor_params, env_idx):
+    def evaluate_env(cl_state, rng, actor_params, env_idx):
         # Reset a batch of envs for shape parity with train
         rng, env_rng = jax.random.split(rng)
         reset_rng = jax.random.split(env_rng, num_envs)
@@ -69,9 +69,9 @@ def make_eval_fn(cl, cl_state, reset_switch, step_switch, actor, agents, num_env
     return evaluate_env
 
 
-def evaluate_all_envs(rng, actor_params, num_envs, evaluate_env):
+def evaluate_all_envs(cl_state, rng, actor_params, num_envs, evaluate_env):
     env_indices = jnp.arange(num_envs, dtype=jnp.int32)
     rngs = jax.random.split(rng, num_envs)
-    eval_vmapped = jax.vmap(evaluate_env, in_axes=(0, None, 0))
-    avg_rewards, avg_soups = eval_vmapped(rngs, actor_params, env_indices)
+    eval_vmapped = jax.vmap(evaluate_env, in_axes=(None, 0, None, 0))
+    avg_rewards, avg_soups = eval_vmapped(cl_state, rngs, actor_params, env_indices)
     return avg_rewards, avg_soups
