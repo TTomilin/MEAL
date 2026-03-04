@@ -497,7 +497,7 @@ class Packnet(CLMethod):
             combined_mask,
             deterministic_init
         )
-
+        
         return {**params, "params": masked_params}
 
 def debug_packnet_masks(state: PacknetState, params):

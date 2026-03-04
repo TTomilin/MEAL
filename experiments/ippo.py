@@ -920,6 +920,7 @@ def main():
                 length=cfg.finetune_updates
             )
 
+            train_state = runner_state[0]
             # handle the end of the finetune phase 
             cl_state = cl.on_finetune_end(train_state.params, cl_state)
             #debug_packnet_masks(cl_state, actor_train_state.params["params"])
@@ -952,6 +953,8 @@ def main():
             # Continual Learning
             importance = importance_fn(train_state.params, task_idx, rng)
             cl_state = cl.update_state(cl_state, train_state.params, importance)
+            # jax.debug.print("{}", cl_state.current_task)
+            # jax.debug.print("{}", cl.combine_masks(cl_state.masks, cl_state.current_task))
 
             # Video Recording
             if cfg.record_video:

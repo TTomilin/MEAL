@@ -12,7 +12,7 @@ def make_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: int, 
     """
 
     @jax.jit
-    def evaluate_env(cl_state, rng, actor_params, env_idx):
+    def evaluate_env(cl_state, rng, params, env_idx):
         # Reset a batch of envs for shape parity with train
         rng, env_rng = jax.random.split(rng)
         reset_rng = jax.random.split(env_rng, num_envs)
@@ -32,10 +32,10 @@ def make_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: int, 
             # policy forward (greedy) on batched obs
             obs_batch = batchify(obs, agents, len(agents) * num_envs, not use_cnn)  # (num_actors, obs_dim)
             if isinstance(cl, Packnet):
-                masked_params = cl.apply_mask(actor_params, mask, env_idx)
+                masked_params = cl.apply_mask(params, mask, env_idx)
                 pi, _, _ = network.apply(masked_params, obs_batch, env_idx=env_idx)
             else:
-                pi, _, _ = network.apply(actor_params, obs_batch, env_idx=env_idx)
+                pi, _, _ = network.apply(params, obs_batch, env_idx=env_idx)
             action = pi.mode()  # deterministic eval
 
             # unbatch to dict of (num_envs,)
@@ -68,10 +68,19 @@ def make_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: int, 
 
     return evaluate_env
 
+def evaluate_all_envs(cl_state, rng, params, num_envs, evaluate_env):
+    # Initialize accumulators
+    total_rewards = jnp.zeros(num_envs, dtype=jnp.float32)
+    total_soups = jnp.zeros(num_envs, dtype=jnp.float32)
 
-def evaluate_all_envs(cl_state, rng, actor_params, num_envs, evaluate_env):
-    env_indices = jnp.arange(num_envs, dtype=jnp.int32)
-    rngs = jax.random.split(rng, num_envs)
-    eval_vmapped = jax.vmap(evaluate_env, in_axes=(None, 0, None, 0))
-    avg_rewards, avg_soups = eval_vmapped(cl_state, rngs, actor_params, env_indices)
-    return avg_rewards, avg_soups
+    # Loop through all environments
+    for i in range(num_envs):
+        env_idx = i
+        rng_env = jax.random.split(rng, num_envs)[i]
+        avg_rewards, avg_soups = evaluate_env(cl_state, rng_env, params, env_idx)
+        
+        # Accumulate rewards and soups
+        total_rewards = total_rewards.at[i].set(avg_rewards)
+        total_soups = total_soups.at[i].set(avg_soups)
+
+    return total_rewards, total_soups
