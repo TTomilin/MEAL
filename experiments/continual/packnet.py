@@ -47,7 +47,6 @@ class Packnet(CLMethod):
         self.prunable_layers = prunable_layers
         self.prunable_layer_type_names = [layer_type.__name__ for layer_type in self.prunable_layers]
         self.prunable_layer_type_names = [name.lower() for name in self.prunable_layer_type_names]
-        #self.prunable_layers += [name.lower() for name in prunable_layers]
         self.forbidden_param_names = ['bias'] # do not mask bias and critic parameters
         self.forbidden_layer_names = ['critic']
 
@@ -225,12 +224,14 @@ class Packnet(CLMethod):
                     cutoff,
                     num_pruned
                 ) # log info for layer
-            else:
+            elif self.layer_is_prunable(layer_name):
                 cutoff = None
                 jax.debug.print(
                     "Layer: {}, no more pruning possible",
                     layer_name
                 ) # log if pruning complete
+            else:
+                cutoff = None
 
             # actually apply the pruning:
             for param_name, param_array in layer_dict.items():
@@ -333,8 +334,7 @@ class Packnet(CLMethod):
         Handles pruning and retrieving updated parameters/optimizer after training.
         '''
         # Prune the model and update the parameters:
-        params = train_state.params["params"]
-        new_params, cl_state = self.dispatch_prune(params, cl_state)
+        new_params, cl_state = self.dispatch_prune(train_state.params, cl_state)
         # compute and log sparsity:
         sparsity = self.compute_sparsity(new_params["params"])
         jax.debug.print(
@@ -352,23 +352,24 @@ class Packnet(CLMethod):
         '''
         # change the mode to finetuning
         state = state.replace(train_mode=False)
+        unpacked_params = params["params"]
 
-        def last_task(params):
+        def last_task(unpacked_params):
             # if we are on the last task, mask all remaining parameters
-            return self.mask_remaining_params(params, state)
+            return self.mask_remaining_params(unpacked_params, state)
 
-        def other_tasks(params):
-            return self.prune(params, state)
+        def other_tasks(unpacked_params):
+            return self.prune(unpacked_params, state)
 
 
         new_params, state = jax.lax.cond(
             state.current_task == self.seq_length-1,
             last_task,
             other_tasks,
-            params
+            unpacked_params
         )
 
-        new_params = {"params": new_params}
+        new_params = {**params, "params": new_params}
         return new_params, state
 
     def on_finetune_end(self, params, state: PacknetState):
@@ -381,7 +382,6 @@ class Packnet(CLMethod):
             "Sparsity after finetuning: {sparsity}", sparsity=sparsity)
         # update task id after tuning:
         state = state.replace(current_task=state.current_task+1, train_mode=True)
-        self.update_and_verify_weight_memory(params, state)
 
         return state
     
@@ -484,7 +484,7 @@ class Packnet(CLMethod):
         """
 
         # Combine all masks up to current task
-        deterministic_init = self.get_deterministic_init(task_id, params)
+        deterministic_init = self.get_deterministic_init(task_id, params["params"])
 
         def mask_leaf(p, mask, init):
             # mask == True → frozen weight → keep parameter
@@ -493,12 +493,12 @@ class Packnet(CLMethod):
 
         masked_params = jax.tree_util.tree_map(
             mask_leaf,
-            params,
+            params["params"],
             combined_mask,
             deterministic_init
         )
 
-        return {"params": masked_params}
+        return {**params, "params": masked_params}
 
 def debug_packnet_masks(state: PacknetState, params):
     frozen_counts = {}

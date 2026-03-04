@@ -32,7 +32,7 @@ def make_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: int, 
             # policy forward (greedy) on batched obs
             obs_batch = batchify(obs, agents, len(agents) * num_envs, not use_cnn)  # (num_actors, obs_dim)
             if isinstance(cl, Packnet):
-                masked_params = cl.apply_mask(actor_params["params"], mask, env_idx)
+                masked_params = cl.apply_mask(actor_params, mask, env_idx)
                 pi, _, _ = network.apply(masked_params, obs_batch, env_idx=env_idx)
             else:
                 pi, _, _ = network.apply(actor_params, obs_batch, env_idx=env_idx)
