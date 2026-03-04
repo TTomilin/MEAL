@@ -149,6 +149,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     num_actors: int = 0
     num_updates: int = 0
+    finetune_updates: int = 0
     minibatch_size: int = 0
 
 
@@ -288,6 +289,7 @@ def main():
 
     cfg.num_actors = num_agents * cfg.num_envs
     cfg.num_updates = cfg.steps_per_task // cfg.num_steps // cfg.num_envs
+    cfg.finetune_updates = cfg.finetune_timesteps // cfg.num_steps // cfg.num_envs
     cfg.minibatch_size = (cfg.num_actors * cfg.num_steps) // cfg.num_minibatches
 
     def linear_schedule(count):
@@ -901,9 +903,8 @@ def main():
             # Prune the model and update the parameters
             train_state, cl_state = cl.on_train_end(train_state.params["params"], cl_state)
 
-            rng, finetune_rng = jax.random.split(rng)
-
             # create new runner state for fine-tuning:
+            rng, finetune_rng = jax.random.split(rng)
             runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
 
             # run fine-tuning
