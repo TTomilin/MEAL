@@ -139,8 +139,8 @@ class Packnet(CLMethod):
         '''
         assert self.seq_length is not None, "Sequence length not provided"
 
-        num_tasks_left = self.seq_length - state.current_task
-        prune_percentage = (num_tasks_left - 1) / num_tasks_left
+        num_tasks_left = self.seq_length - state.current_task - 1
+        prune_percentage = num_tasks_left / (num_tasks_left + 1)
         return prune_percentage
 
     def layer_is_prunable(self, layer_name):
