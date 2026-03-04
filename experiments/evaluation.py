@@ -32,10 +32,8 @@ def make_eval_fn(cl, cl_state, reset_switch, step_switch, actor, agents, num_env
             # policy forward (greedy) on batched obs
             obs_batch = batchify(obs, agents, len(agents) * num_envs, not use_cnn)  # (num_actors, obs_dim)
             if isinstance(cl, Packnet):
-                copied_actor_params = jax.tree.map(jnp.copy, actor_params)
-                actor_params = cl.apply_mask(actor_params["params"], mask, env_idx)
-                pi, _ = actor.apply(actor_params, obs_batch, env_idx=env_idx)
-                actor_params = copied_actor_params
+                masked_params = cl.apply_mask(actor_params["params"], mask, env_idx)
+                pi, _ = actor.apply(masked_params, obs_batch, env_idx=env_idx)
             else:
                 pi, _ = actor.apply(actor_params, obs_batch, env_idx=env_idx)
             action = pi.mode()  # deterministic eval
