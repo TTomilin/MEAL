@@ -1066,7 +1066,7 @@ def main():
         actor_train_state, critic_train_state = train_states
 
         # # Prune the model and update the parameters
-        new_actor_params, packnet_state = cl.on_train_end(actor_train_state.params["params"], packnet_state)
+        new_actor_params, packnet_state = cl.dispatch_prune(actor_train_state.params["params"], packnet_state)
 
         # check the sparsity of the new params
         sparsity = cl.compute_sparsity(new_actor_params["params"])

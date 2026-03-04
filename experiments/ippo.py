@@ -19,6 +19,7 @@ from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
+from experiments.continual.packnet import Packnet, PacknetState
 from experiments.evaluation import evaluate_all_envs, make_eval_fn
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.model.mlp import ActorCritic as MLPActorCritic
@@ -88,6 +89,12 @@ class Config:
     agem_memory_size: int = 100000
     agem_sample_size: int = 1024
     agem_gradient_scale: float = 1.0
+
+    # Packnet specific parameters
+    train_epochs: int = 8
+    finetune_epochs: int = 2
+    finetune_lr: float = 1e-4
+    finetune_timesteps: int = 1e6
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
@@ -177,7 +184,7 @@ def main():
         cfg.cl_method = "ft"
     if cfg.cl_method is None:
         raise ValueError(
-            "cl_method is required. Please specify a continual learning method (e.g., ewc, mas, l2, ft, agem).")
+            "cl_method is required. Please specify a continual learning method (e.g., ewc, mas, l2, ft, agem, packnet).")
 
     difficulty = cfg.difficulty
     seq_length = cfg.seq_length
@@ -197,7 +204,10 @@ def main():
                       mas=MAS(mode=cfg.importance_mode, decay=cfg.importance_decay),
                       l2=L2(),
                       ft=FT(),
-                      agem=AGEM(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size))
+                      agem=AGEM(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
+                      packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4, 
+                      train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
+                      prunable_layers=[nn.Dense]))
 
     cl = method_map[cfg.cl_method.lower()]
 
@@ -674,6 +684,10 @@ def main():
 
                     loss_information = total_loss, grads, agem_stats
 
+                    # If using packnet, mask before applying gradient:
+                    if cfg.cl_method == "packnet":
+                        grads = cl.mask_gradients(grads)
+
                     # Apply the gradients to the network
                     train_state = train_state.apply_gradients(grads=grads)
 
@@ -842,7 +856,7 @@ def main():
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
                         avg_rewards, avg_soups = evaluate_all_envs(
-                            eval_rng, train_state.params, seq_length, evaluate_env
+                            cl_state, eval_rng, train_state.params, seq_length, evaluate_env
                         )
                         metrics = add_eval_metrics(avg_rewards, avg_soups, env_names, max_soup_vals, metrics)
 
@@ -879,6 +893,33 @@ def main():
             xs=None,
             length=cfg.num_updates
         )
+
+        if cfg.cl_method.lower() == "packnet":
+            # Unpack runner state
+            train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+            
+            # Prune the model and update the parameters
+            train_state, cl_state = cl.on_train_end(train_state.params["params"], cl_state)
+
+            rng, finetune_rng = jax.random.split(rng)
+
+            # create new runner state for fine-tuning:
+            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
+
+            # run fine-tuning
+            runner_state, metrics = jax.lax.scan(
+                f=_update_step,
+                init=runner_state,
+                xs=None,
+                length=cfg.finetune_updates
+            )
+
+            # handle the end of the finetune phase 
+            cl_state = cl.on_finetune_end(train_state.params, cl_state)
+            #debug_packnet_masks(cl_state, actor_train_state.params["params"])
+
+            # add cl_state (packnet_state in this case) to new runner state
+            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
 
         # Return the runner state after the training loop, and the metrics arrays
         return runner_state, metrics
