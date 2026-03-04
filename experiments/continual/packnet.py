@@ -442,8 +442,7 @@ class Packnet(CLMethod):
         """
 
         # Combine all masks up to current task
-        last_task = task_id + 1
-        deterministic_init = self.get_deterministic_init(last_task, params)
+        deterministic_init = self.get_deterministic_init(task_id, params)
 
         def mask_leaf(p, mask, init):
             # mask == True → frozen weight → keep parameter
