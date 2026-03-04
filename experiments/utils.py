@@ -100,6 +100,10 @@ def add_eval_metrics(avg_rewards, avg_soups, layout_names, max_soup_dict, metric
         metrics[f"Evaluation/Returns/{i}_{layout_name}"] = avg_rewards[i]
         metrics[f"Evaluation/Soup/{i}_{layout_name}"] = avg_soups[i]
         metrics[f"Evaluation/Soup_Scaled/{i}_{layout_name}"] = avg_soups[i] / max_soup_dict[i]
+    sum_soups = sum([s for s in avg_soups])
+    sum_rewards = sum([r for r in avg_rewards])
+    metrics[f"Evaluation/Soup/Total_over_envs"] = sum_soups
+    metrics[f"Evaluation/Returns/Total_over_envs"] = sum_soups
     return metrics
 
 
