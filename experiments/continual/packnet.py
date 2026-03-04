@@ -233,7 +233,7 @@ class Packnet(CLMethod):
                     complete_mask = jnp.logical_or(prev_mask_leaf, new_mask_leaf)
 
                     # small init:
-                    small_init = self._get_small_init(task_id=state.current_task, 
+                    small_init = self._deterministic_leaf_init(task_id=state.current_task, 
                                                       path=(param_name, layer_name), leaf=param_array)
 
                     pruned_params = jnp.where(
@@ -263,7 +263,11 @@ class Packnet(CLMethod):
         new_param_dict = new_params
         return new_param_dict, state     
 
-    def _get_small_init(self, task_id: int, path, leaf):
+    def _deterministic_leaf_init(self, task_id: int, path, leaf):
+        '''
+        Create the initial values for a given leaf, depending deterministically
+        on the task_id, layer name, and parameter name.
+        '''
         layer_name, param_name = str(path[0]), str(path[1])
         rng_key = jax.random.PRNGKey(task_id + 42)
         rng_key = jax.random.fold_in(
@@ -273,7 +277,10 @@ class Packnet(CLMethod):
         return (jax.random.normal(rng_key, leaf.shape) * 1e-6)
     
     def get_deterministic_init(self, task_id: int, param_tree: dict):
-        leaf_initiatior = lambda path, leaf: self._get_small_init(task_id=task_id, path=path, leaf=leaf)
+        '''
+        Create the deterministic initial values for a given parameter tree and task_id.
+        '''
+        leaf_initiatior = lambda path, leaf: self._deterministic_leaf_init(task_id=task_id, path=path, leaf=leaf)
         return jax.tree.map_with_path(leaf_initiatior, param_tree)
 
     def mask_remaining_params(self, params, state: PacknetState):
@@ -329,7 +336,6 @@ class Packnet(CLMethod):
             other_tasks,
             params
         )
-        mask = self.combine_masks(state.masks, state.current_task+1)
 
         new_params = {"params": new_params}
         return new_params, state
