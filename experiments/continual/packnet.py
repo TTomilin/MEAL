@@ -484,7 +484,7 @@ class Packnet(CLMethod):
         """
 
         # Combine all masks up to current task
-        deterministic_init = self.get_deterministic_init(task_id, params["params"])
+        deterministic_init = self.get_deterministic_init(task_id, params)
 
         def mask_leaf(p, mask, init):
             # mask == True → frozen weight → keep parameter
@@ -493,12 +493,12 @@ class Packnet(CLMethod):
 
         masked_params = jax.tree_util.tree_map(
             mask_leaf,
-            params["params"],
+            params,
             combined_mask,
             deterministic_init
         )
-        
-        return {**params, "params": masked_params}
+
+        return {"params": masked_params}
 
 def debug_packnet_masks(state: PacknetState, params):
     frozen_counts = {}
