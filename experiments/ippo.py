@@ -234,8 +234,6 @@ def main():
         random_cook_time=cfg.random_cook_time,
     )
 
-    eval_envs = envs
-
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
     network_spec = f'act_{cfg.activation}_big_net_{cfg.big_network}_cnn_{cfg.use_cnn}_layer_norm_{cfg.use_layer_norm}'
     run_name = f'{cfg.alg_name}_{cfg.cl_method}_{difficulty}_{cfg.num_agents}agents_{network_spec}_seq{seq_length}_{strategy}_seed_{seed}_{timestamp}'
