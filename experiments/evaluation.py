@@ -24,7 +24,7 @@ def make_eval_fn(cl, reset_switch, step_switch, actor, agents, num_envs: int, nu
 
         mask = None
         if isinstance(cl, Packnet):
-            mask = cl.combine_masks(cl_state.masks, env_idx+1)
+            mask = cl.combine_masks(cl_state.masks, env_idx+1) # note that this collects all masks <= env_idx
 
         def one_step(carry, _):
             env_state, obs, rewards, soups, rng = carry
