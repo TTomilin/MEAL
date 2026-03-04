@@ -25,6 +25,7 @@ from experiments.continual.packnet import Packnet
 from experiments.evaluation import evaluate_all_envs, make_eval_fn
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.model.mlp import ActorCritic as MLPActorCritic
+from experiments.model.mlp_dense import ActorCritic as DenseActorCritic
 from experiments.utils import *
 from meal import make_sequence
 from meal.env.utils.max_soup_calculator import calculate_max_soup
@@ -302,7 +303,7 @@ def main():
         frac = 1.0 - (count // (cfg.num_minibatches * cfg.update_epochs)) / cfg.num_updates
         return cfg.lr * frac
 
-    ac_cls = CNNActorCritic if cfg.use_cnn else MLPActorCritic
+    ac_cls = CNNActorCritic if cfg.use_cnn else DenseActorCritic
 
     network = ac_cls(temp_env.action_space().n, cfg.activation, seq_length, cfg.use_multihead,
                      cfg.shared_backbone, cfg.big_network, cfg.use_task_id, cfg.regularize_heads,
@@ -953,8 +954,6 @@ def main():
             # Continual Learning
             importance = importance_fn(train_state.params, task_idx, rng)
             cl_state = cl.update_state(cl_state, train_state.params, importance)
-            # jax.debug.print("{}", cl_state.current_task)
-            # jax.debug.print("{}", cl.combine_masks(cl_state.masks, cl_state.current_task))
 
             # Video Recording
             if cfg.record_video:
