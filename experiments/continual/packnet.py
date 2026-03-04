@@ -444,7 +444,6 @@ class Packnet(CLMethod):
         # Combine all masks up to current task
         last_task = task_id + 1
         deterministic_init = self.get_deterministic_init(last_task, params)
-        jax.debug.print("{}", combined_mask)
 
         def mask_leaf(p, mask, init):
             # mask == True → frozen weight → keep parameter
