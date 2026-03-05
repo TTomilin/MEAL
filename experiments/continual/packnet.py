@@ -246,15 +246,11 @@ class Packnet(CLMethod):
                     )
                     complete_mask = jnp.logical_or(prev_mask_leaf, new_mask_leaf)
 
-                    # small init:
-                    small_init = self._deterministic_leaf_init(task_id=state.current_task, 
-                                                      path=(param_name, layer_name), leaf=param_array)
-
                     pruned_params = jnp.where(
                         complete_mask,
                         param_array,
-                        small_init
-                    ) # replace all unmasked regions with the small init
+                        0
+                    ) # replace all unmasked regions with zero
 
                     # update the values in mask_layer and new_layer:
                     mask_layer[param_name] = new_mask_leaf
@@ -296,6 +292,23 @@ class Packnet(CLMethod):
         '''
         leaf_initiatior = lambda path, leaf: self._deterministic_leaf_init(task_id=task_id, path=path, leaf=leaf)
         return jax.tree.map_with_path(leaf_initiatior, param_tree)
+    
+    def initialize_pruned_weights(self, params, state: PacknetState):
+        '''
+        Deterministically sets the pruned weights to small gaussian values based on the current task index,
+        the layer names, and the parameter names. Call this method after fine-tuning and after incrementing 
+        the PacknetState's task index to prevent overriding tuned parameters.
+        '''
+        unpacked_params = params["params"]
+        prev_task_masks = self.combine_masks(state.masks, state.current_task) # mask of all tasks < state.current_task
+        small_init = self.get_deterministic_init(state.current_task, params)
+        new_params = jnp.where(
+            prev_task_masks,
+            unpacked_params,
+            small_init
+        )
+
+        return {**params, 'params': new_params}
 
     def mask_remaining_params(self, params, state: PacknetState):
         '''
@@ -382,8 +395,14 @@ class Packnet(CLMethod):
             "Sparsity after finetuning: {sparsity}", sparsity=sparsity)
         # update task id after tuning:
         state = state.replace(current_task=state.current_task+1, train_mode=True)
-
-        return state
+        # initialize weights to small values:
+        new_params = self.initialize_pruned_weights(params, state)
+        # update train_state:        
+        train_state = train_state.replace(params=new_params)
+        new_opt_state = train_state.tx.init(train_state.params)
+        train_state = train_state.replace(opt_state=new_opt_state)
+        # return train_state and state:
+        return train_state, state
     
     def update_and_verify_weight_memory(self, params, state: PacknetState):
         mask = self.combine_masks(state.masks, state.current_task)
@@ -478,24 +497,20 @@ class Packnet(CLMethod):
         sparsity = jnp.round(sparsity, 4)
         return sparsity
 
-    def apply_mask(self, params, combined_mask, task_id: int):
+    def apply_mask(self, params, combined_mask):
         """
         Apply a given task mask to the parameters, used at evaluation time (as per original Packnet paper).
         """
 
-        # Combine all masks up to current task
-        deterministic_init = self.get_deterministic_init(task_id, params["params"])
-
-        def mask_leaf(p, mask, init):
+        def mask_leaf(p, mask):
             # mask == True → frozen weight → keep parameter
             # mask == False → free weight → discard parameter
-            return jnp.where(mask, p, init) # restore original deterministic init
+            return jnp.where(mask, p, 0)
 
         masked_params = jax.tree_util.tree_map(
             mask_leaf,
             params["params"],
-            combined_mask,
-            deterministic_init
+            combined_mask
         )
 
         return {**params, "params": masked_params}

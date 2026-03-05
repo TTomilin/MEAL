@@ -923,8 +923,7 @@ def main():
 
             train_state = runner_state[0]
             # handle the end of the finetune phase 
-            cl_state = cl.on_finetune_end(train_state.params, cl_state)
-            #debug_packnet_masks(cl_state, actor_train_state.params["params"])
+            train_state, cl_state = cl.on_finetune_end(train_state.params, cl_state)
 
             # add cl_state (packnet_state in this case) to new runner state
             runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
