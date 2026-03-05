@@ -186,7 +186,6 @@ class Packnet(CLMethod):
         for layer_name, layer_dict in params.items():
             mask_layer = {}
             if self.layer_is_for_norm(layer_name):
-                jax.debug.print("Freezing norm layer: {}", layer_name)
                 # if layer for normalization, mask completely
                 for param_name, param_array in layer_dict.items():
                     new_mask_leaf = jnp.ones_like(param_array, dtype=bool)
@@ -208,9 +207,7 @@ class Packnet(CLMethod):
         for layer_name, layer_dict in params.items():
             mask_layer = {}
             for param_name, param_array in layer_dict.items():
-                jax.debug.print("Logging all layers: {}, {}", layer_name, param_name)
                 if "bias" in param_name:
-                    jax.debug.print("Freezing bias parameters: {}, {}", layer_name, param_name)
                     # if bias, mask all:
                     mask_layer[param_name] = jnp.ones_like(param_array, dtype=bool)
                 else:
@@ -470,6 +467,8 @@ class Packnet(CLMethod):
         )
         # update task id after tuning:
         state = state.replace(current_task=state.current_task+1, train_mode=True)
+        self.update_and_verify_weight_memory(train_state.params["params"], state)
+        debug_packnet_masks(state, train_state.params["params"])
         if self.re_init_pruned_weights:
             # initialize weights to small values:
             new_params = self.initialize_pruned_weights(train_state.params, state)
@@ -489,7 +488,7 @@ class Packnet(CLMethod):
     
     def update_and_verify_weight_memory(self, params, state: PacknetState):
         mask = self.combine_masks(state.masks, state.current_task)
-        state.weight_memory.append(params["params"].copy())
+        state.weight_memory.append(params.copy())
         state.mask_memory.append(mask.copy())
         for i in range(len(state.weight_memory)):
             mask_i = state.mask_memory[i]
