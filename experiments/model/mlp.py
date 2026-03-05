@@ -50,7 +50,7 @@ class ActorCritic(nn.Module):
     @nn.compact
     def __call__(self, x, *, env_idx: int = 0):
         act = self._act()
-        hid = 256 if self.big_network else 128
+        hid = 128 if self.big_network else 128
 
         per_layer_ratios = []  # collect to average later
 
@@ -68,7 +68,7 @@ class ActorCritic(nn.Module):
                 if self.track_dormant_ratio:
                     per_layer_ratios.append(self._layer_dormant_ratio(x, f"shared_{i + 1}"))
                 if self.use_layer_norm:
-                    x = nn.LayerNorm(name=get_layer_name("common", nn.LayerNorm, i+i), epsilon=1e-5)(x)
+                    x = nn.LayerNorm(name=get_layer_name("common", nn.LayerNorm, i+i), epsilon=1e-6)(x)
             trunk = x
             actor_in = critic_in = trunk
         else:
@@ -82,7 +82,7 @@ class ActorCritic(nn.Module):
                     if self.track_dormant_ratio:
                         ratios.append(self._layer_dormant_ratio(inp, f"{prefix}_{i + 1}"))
                     if self.use_layer_norm:
-                        inp = nn.LayerNorm(name=get_layer_name(prefix, nn.LayerNorm, i+1), epsilon=1e-5)(inp)
+                        inp = nn.LayerNorm(name=get_layer_name(prefix, nn.LayerNorm, i+1), epsilon=1e-6)(inp)
                 return inp, ratios
 
             actor_in, actor_ratios = branch("actor", x)

@@ -186,6 +186,7 @@ class Packnet(CLMethod):
         for layer_name, layer_dict in params.items():
             mask_layer = {}
             if self.layer_is_for_norm(layer_name):
+                jax.debug.print("Freezing norm layer: {}", layer_name)
                 # if layer for normalization, mask completely
                 for param_name, param_array in layer_dict.items():
                     new_mask_leaf = jnp.ones_like(param_array, dtype=bool)
@@ -207,7 +208,9 @@ class Packnet(CLMethod):
         for layer_name, layer_dict in params.items():
             mask_layer = {}
             for param_name, param_array in layer_dict.items():
+                jax.debug.print("Logging all layers: {}, {}", layer_name, param_name)
                 if "bias" in param_name:
+                    jax.debug.print("Freezing bias parameters: {}, {}", layer_name, param_name)
                     # if bias, mask all:
                     mask_layer[param_name] = jnp.ones_like(param_array, dtype=bool)
                 else:
