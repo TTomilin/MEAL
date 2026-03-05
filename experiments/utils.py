@@ -15,7 +15,7 @@ import numpy as np
 from experiments.continual.base import CLState, RegCLState, CLMethod
 from experiments.continual.agem import init_agem_memory
 from experiments.continual.packnet import PacknetState
-from typing import Type
+from typing import Type, Union
 
 class Transition(NamedTuple):
     '''
@@ -131,10 +131,11 @@ def init_cl_state(params: FrozenVariableDict, regularize_critic: bool,
             mask=mask
         )
 
-def get_layer_name(actor_or_critic: str, layer_type: Type[nn.Module], index: int):
-    if actor_or_critic not in ['actor', 'critic']:
-        raise ValueError("Choose 'actor_or_critic' from ['actor', 'critic']")
-    return f"{actor_or_critic}_{layer_type.__name__}_{index}"
+ALLOWED_PREFIXES = ['actor', 'critic', 'common']
+def get_layer_name(actor_or_critic: str, layer_type: Type[nn.Module], suffix: Union[int, str]):
+    if actor_or_critic not in ALLOWED_PREFIXES:
+        raise ValueError(f"Choose 'actor_or_critic' from {ALLOWED_PREFIXES}")
+    return f"{actor_or_critic}_{layer_type.__name__}_{suffix}"
 
 # ---------------------------------------------------------------
 # util: build a (2, …) batch without Python branches

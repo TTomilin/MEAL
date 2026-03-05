@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from flax.linen.initializers import orthogonal, constant
-
+from experiments.utils import get_layer_name
 
 def choose_head(t: jnp.ndarray, n_heads: int, env_idx):
     env_idx = jnp.asarray(env_idx, jnp.int32)  # dynamic
@@ -63,12 +63,12 @@ class ActorCritic(nn.Module):
         # -------- shared trunk ------------------------------------------------
         if self.shared_backbone:
             for i in range(2 + self.big_network):  # 2 or 3 layers
-                x = self._dense(hid, f"common_dense{i + 1}", np.sqrt(2))(x)
+                x = self._dense(hid, get_layer_name("common", nn.Dense, i+1), np.sqrt(2))(x)
                 x = act(x)
                 if self.track_dormant_ratio:
                     per_layer_ratios.append(self._layer_dormant_ratio(x, f"shared_{i + 1}"))
                 if self.use_layer_norm:
-                    x = nn.LayerNorm(name=f"common_ln{i + 1}", epsilon=1e-5)(x)
+                    x = nn.LayerNorm(name=get_layer_name("common", nn.LayerNorm, i+i), epsilon=1e-5)(x)
             trunk = x
             actor_in = critic_in = trunk
         else:
@@ -77,12 +77,12 @@ class ActorCritic(nn.Module):
                 ratios = []
                 for i in range(2 + self.big_network):
                     inp = self._dense(
-                        hid, f"{prefix}_dense{i + 1}", np.sqrt(2))(inp)
+                        hid, get_layer_name(prefix, nn.Dense, i+1), np.sqrt(2))(inp)
                     inp = act(inp)
                     if self.track_dormant_ratio:
                         ratios.append(self._layer_dormant_ratio(inp, f"{prefix}_{i + 1}"))
                     if self.use_layer_norm:
-                        inp = nn.LayerNorm(name=f"{prefix}_ln{i + 1}", epsilon=1e-5)(inp)
+                        inp = nn.LayerNorm(name=get_layer_name(prefix, nn.LayerNorm, i+1), epsilon=1e-5)(inp)
                 return inp, ratios
 
             actor_in, actor_ratios = branch("actor", x)
@@ -94,7 +94,7 @@ class ActorCritic(nn.Module):
         # -------- actor head --------------------------------------------------
         logits_dim = self.action_dim * \
                      (self.num_tasks if self.use_multihead else 1)
-        all_logits = self._dense(logits_dim, "actor_head", 0.01)(actor_in)
+        all_logits = self._dense(logits_dim, get_layer_name("actor", nn.Dense, "head"), 0.01)(actor_in)
 
         logits = choose_head(all_logits, self.num_tasks,
                              env_idx) if self.use_multihead else all_logits
@@ -102,7 +102,7 @@ class ActorCritic(nn.Module):
 
         # -------- critic head -------------------------------------------------
         vdim = 1 * (self.num_tasks if self.use_multihead else 1)
-        all_v = self._dense(vdim, "critic_head", 1.0)(critic_in)
+        all_v = self._dense(vdim, get_layer_name("critic", nn.Dense, "head"), 1.0)(critic_in)
         v = choose_head(all_v, self.num_tasks,
                         env_idx) if self.use_multihead else all_v
         v = jnp.squeeze(v, -1)
