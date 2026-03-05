@@ -50,7 +50,7 @@ class ActorCritic(nn.Module):
     @nn.compact
     def __call__(self, x, *, env_idx: int = 0):
         act = self._act()
-        hid = 128 if self.big_network else 128
+        hid = 256 if self.big_network else 128
 
         per_layer_ratios = []  # collect to average later
 
