@@ -154,6 +154,9 @@ class Packnet(CLMethod):
         return prune_percentage
     
     def param_is_prunable(self, param_name):
+        '''
+        Checks if a parameter is prunable.
+        '''
         return not(any([n in param_name for n in self.forbidden_param_strings]))
 
     def layer_is_for_norm(self, layer_name):

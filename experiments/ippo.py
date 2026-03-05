@@ -305,7 +305,7 @@ def main():
         frac = 1.0 - (count // (cfg.num_minibatches * cfg.update_epochs)) / cfg.num_updates
         return cfg.lr * frac
 
-    ac_cls = CNNActorCritic if cfg.use_cnn else DenseActorCritic
+    ac_cls = CNNActorCritic if cfg.use_cnn else MLPActorCritic
 
     network = ac_cls(temp_env.action_space().n, cfg.activation, seq_length, cfg.use_multihead,
                      cfg.shared_backbone, cfg.big_network, cfg.use_task_id, cfg.regularize_heads,
