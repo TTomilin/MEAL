@@ -300,10 +300,15 @@ class Packnet(CLMethod):
         the PacknetState's task index to prevent overriding tuned parameters.
         '''
         unpacked_params = params["params"]
-        prev_task_masks = self.combine_masks(state.masks, state.current_task) # mask of all tasks < state.current_task
-        small_init = self.get_deterministic_init(state.current_task, params)
-        new_params = jnp.where(
-            prev_task_masks,
+        prev_tasks_mask = self.combine_masks(state.masks, state.current_task) # mask of all tasks < state.current_task
+        small_init = self.get_deterministic_init(state.current_task, unpacked_params)
+        
+        def init_pruned_weights_leaf(mask, p, init):
+            return jnp.where(mask, p, init)
+
+        new_params = jax.tree_util.tree_map(
+            init_pruned_weights_leaf,
+            prev_tasks_mask,
             unpacked_params,
             small_init
         )
@@ -385,18 +390,18 @@ class Packnet(CLMethod):
         new_params = {**params, "params": new_params}
         return new_params, state
 
-    def on_finetune_end(self, params, state: PacknetState):
+    def on_finetune_end(self, train_state, state: PacknetState):
         '''
         Handles the end of the finetuning phase on a task
         '''
         # compute and report sparsity:
-        sparsity = self.compute_sparsity(params["params"])
+        sparsity = self.compute_sparsity(train_state.params["params"])
         jax.debug.print(
             "Sparsity after finetuning: {sparsity}", sparsity=sparsity)
         # update task id after tuning:
         state = state.replace(current_task=state.current_task+1, train_mode=True)
         # initialize weights to small values:
-        new_params = self.initialize_pruned_weights(params, state)
+        new_params = self.initialize_pruned_weights(train_state.params, state)
         # update train_state:        
         train_state = train_state.replace(params=new_params)
         new_opt_state = train_state.tx.init(train_state.params)
