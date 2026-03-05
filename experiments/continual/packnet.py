@@ -33,6 +33,7 @@ class Packnet(CLMethod):
                  prune_instructions=0.5, 
                  train_finetune_split=(1,1), 
                  prunable_layers=(nn.Conv, nn.Dense),
+                 norm_layer_types=(nn.BatchNorm, nn.LayerNorm),
                  re_init_pruned_weights=False
             ):
         '''
@@ -45,11 +46,14 @@ class Packnet(CLMethod):
         self.seq_length = seq_length
         self.prune_instructions = prune_instructions
         self.train_finetune_split = train_finetune_split
-        self.prunable_layers = prunable_layers
-        self.prunable_layer_type_names = [layer_type.__name__ for layer_type in self.prunable_layers]
-        self.prunable_layer_type_names = [name.lower() for name in self.prunable_layer_type_names]
-        self.forbidden_param_names = ['bias'] # do not mask bias and critic parameters
-        self.forbidden_layer_names = ['critic']
+
+        # variables controlling which weights to freeze
+        self.prunable_layer_type_names = [layer_type.__name__ for layer_type in prunable_layers]
+        self.normalization_layer_type_names = [layer_type.__name__ for layer_type in norm_layer_types]
+        self.forbidden_param_strings = ['bias'] # ignore bias and critic parameters
+        self.forbidden_layer_strings = ['critic']
+        
+        # wether to re-initialize weights to small values after each fine-tuning:
         self.re_init_pruned_weights = re_init_pruned_weights
 
     def init_mask_tree(self, params):
@@ -150,23 +154,77 @@ class Packnet(CLMethod):
         return prune_percentage
     
     def param_is_prunable(self, param_name):
-        for name in self.forbidden_param_names:
-            if name in param_name:
-                return False
-        return True
+        return not(any([n in param_name for n in self.forbidden_param_strings]))
 
+    def layer_is_for_norm(self, layer_name):
+        '''
+        Checks if a layer is for normalization
+        @param layer_name: the name of the layer
+        returns a boolean indicating whether the layer is for normalization
+        '''
+        if any(n in layer_name for n in self.normalization_layer_type_names):
+            return not(any([n in layer_name for n in self.forbidden_layer_strings]))
+        
     def layer_is_prunable(self, layer_name):
         '''
         Checks if a layer is prunable
         @param layer_name: the name of the layer
         returns a boolean indicating whether the layer is prunable
         '''
-        for prunable_layer_type_name in self.prunable_layer_type_names:
-            if prunable_layer_type_name in layer_name:
-                # check if the layer name is not allowed (e.g. it contains 'critic'):
-                layer_name_forbidden = any([n in layer_name for n in self.forbidden_layer_names])
-                return not(layer_name_forbidden)
-        return False
+        if any(n in layer_name for n in self.prunable_layer_type_names):
+            return not(any([n in layer_name for n in self.forbidden_layer_strings]))
+    
+    def add_norm_layers_to_mask(self, params, mask):
+        '''
+        Modifies given mask to also freeze all normalization layers.
+        '''
+        new_mask = {}
+
+        for layer_name, layer_dict in params.items():
+            mask_layer = {}
+            if self.layer_is_for_norm(layer_name):
+                # if layer for normalization, mask completely
+                for param_name, param_array in layer_dict.items():
+                    new_mask_leaf = jnp.ones_like(param_array, dtype=bool)
+                    mask_layer[param_name] = new_mask_leaf
+            else:
+                # if layer not for normalization, use previous mask
+                for param_name, param_array in layer_dict.items():
+                    mask_layer[param_name] = mask[layer_name][param_name]
+            new_mask[layer_name] = mask_layer
+
+        return new_mask
+    
+    def add_biases_to_mask(self, params, mask):
+        '''
+        Modifies given mask to also freeze all biases.
+        '''
+        new_mask = {}
+
+        for layer_name, layer_dict in params.items():
+            mask_layer = {}
+            for param_name, param_array in layer_dict.items():
+                if "bias" in param_name:
+                    # if bias, mask all:
+                    mask_layer[param_name] = jnp.ones_like(param_array, dtype=bool)
+                else:
+                    # if not, use previous mask:
+                    mask_layer[param_name] = mask[layer_name][param_name]
+            new_mask[layer_name] = mask_layer
+
+        return new_mask
+    
+    def fix_biases_and_normalization(self, params, state: PacknetState):
+        # add biases an normalization to current mask:
+        current_mask = self.get_mask(state.masks, state.current_task)
+        new_mask = self.add_norm_layers_to_mask(params["params"], current_mask)
+        new_mask = self.add_biases_to_mask(params["params"], new_mask)
+        # update the state's mask tree:
+        masks = self.update_mask_tree(state.masks, new_mask, state.current_task)
+        state = state.replace(masks=masks)
+        # return the state:
+        return state
+
 
     def prune(self, params, state: PacknetState):
         '''
@@ -398,6 +456,12 @@ class Packnet(CLMethod):
         sparsity = self.compute_sparsity(train_state.params["params"])
         jax.debug.print(
             "Sparsity after finetuning: {sparsity}", sparsity=sparsity)
+        # If the first task was just tuned, freeze biases and normalization layers:
+        state = jax.lax.cond(
+            state.current_task == 0,
+            lambda: self.fix_biases_and_normalization(train_state.params, state),
+            lambda: state
+        )
         # update task id after tuning:
         state = state.replace(current_task=state.current_task+1, train_mode=True)
         if self.re_init_pruned_weights:

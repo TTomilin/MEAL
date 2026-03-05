@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import NamedTuple
 
 import jax
+import flax.linen as nn
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 from flax.typing import FrozenVariableDict
@@ -14,7 +15,7 @@ import numpy as np
 from experiments.continual.base import CLState, RegCLState, CLMethod
 from experiments.continual.agem import init_agem_memory
 from experiments.continual.packnet import PacknetState
-
+from typing import Type
 
 class Transition(NamedTuple):
     '''
@@ -130,6 +131,10 @@ def init_cl_state(params: FrozenVariableDict, regularize_critic: bool,
             mask=mask
         )
 
+def get_layer_name(actor_or_critic: str, layer_type: Type[nn.Module], index: int):
+    if actor_or_critic not in ['actor', 'critic']:
+        raise ValueError("Choose 'actor_or_critic' from ['actor', 'critic']")
+    return f"{actor_or_critic}_{layer_type.__name__}_{index}"
 
 # ---------------------------------------------------------------
 # util: build a (2, …) batch without Python branches

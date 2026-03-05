@@ -8,7 +8,7 @@ import flax.linen as nn
 import numpy as np
 from flax.linen.initializers import constant, orthogonal
 import distrax
-
+from experiments.utils import get_layer_name
 
 def choose_head(t: jnp.ndarray, n_heads: int, env_idx: int):
     b, tot = t.shape
@@ -51,22 +51,22 @@ class ActorCritic(nn.Module):
         a = nn.Dense(128,
                      kernel_init=orthogonal(np.sqrt(2)),
                      bias_init=constant(0.0),
-                     name="actor_dense1")(actor_x)
+                     name=get_layer_name('actor', nn.Dense, 1))(actor_x)
         a = act_fn(a)
         if self.track_dormant_ratio:
             activations.append(a)
         if self.use_layer_norm:
-            a = nn.LayerNorm(name="actor_dense1_ln")(a)
+            a = nn.LayerNorm(name=get_layer_name('actor', nn.LayerNorm, 1))(a)
 
         a = nn.Dense(128,
                      kernel_init=orthogonal(np.sqrt(2)),
                      bias_init=constant(0.0),
-                     name="actor_dense2")(a)
+                     name=get_layer_name('actor', nn.Dense, 2))(a)
         a = act_fn(a)
         if self.track_dormant_ratio:
             activations.append(a)
         if self.use_layer_norm:
-            a = nn.LayerNorm(name="actor_dense2_ln")(a)
+            a = nn.LayerNorm(name=get_layer_name('actor', nn.LayerNorm, 2))(a)
 
         # -------- actor head --------------------------------------------------
         logits_dim = self.action_dim * (self.num_tasks if self.use_multihead else 1)
@@ -74,7 +74,7 @@ class ActorCritic(nn.Module):
             logits_dim,
             kernel_init=orthogonal(0.01),
             bias_init=constant(0.0),
-            name="actor_dense3"
+            name=get_layer_name('actor', nn.Dense, 3)
         )(a)
 
         logits = (
@@ -90,29 +90,29 @@ class ActorCritic(nn.Module):
         c = nn.Dense(128,
                      kernel_init=orthogonal(np.sqrt(2)),
                      bias_init=constant(0.0),
-                     name="critic_dense1")(critic_x)
+                     name=get_layer_name('critic', nn.Dense, 1))(critic_x)
         c = act_fn(c)
         if self.track_dormant_ratio:
             activations.append(c)
         if self.use_layer_norm:
-            c = nn.LayerNorm(name="critic_dense1_ln")(c)
+            c = nn.LayerNorm(name=get_layer_name('critic', nn.LayerNorm, 1))(c)
 
         c = nn.Dense(128,
                      kernel_init=orthogonal(np.sqrt(2)),
                      bias_init=constant(0.0),
-                     name="critic_dense2")(c)
+                     name=get_layer_name('critic', nn.Dense, 2))(c)
         c = act_fn(c)
         if self.track_dormant_ratio:
             activations.append(c)
         if self.use_layer_norm:
-            c = nn.LayerNorm(name="critic_dense2_ln")(c)
+            c = nn.LayerNorm(name=get_layer_name('critic', nn.LayerNorm, 2))(c)
 
         vdim = 1 * (self.num_tasks if self.use_multihead else 1)
         all_v = nn.Dense(
             vdim,
             kernel_init=orthogonal(1.0),
             bias_init=constant(0.0),
-            name="critic_dense3"
+            name=get_layer_name('critic', nn.Dense, 3)
         )(c)
 
         v = (
