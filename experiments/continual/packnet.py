@@ -32,7 +32,8 @@ class Packnet(CLMethod):
                  seq_length, 
                  prune_instructions=0.5, 
                  train_finetune_split=(1,1), 
-                 prunable_layers=(nn.Conv, nn.Dense)
+                 prunable_layers=(nn.Conv, nn.Dense),
+                 re_init_pruned_weights=False
             ):
         '''
         Initializes the Packnet class
@@ -49,6 +50,7 @@ class Packnet(CLMethod):
         self.prunable_layer_type_names = [name.lower() for name in self.prunable_layer_type_names]
         self.forbidden_param_names = ['bias'] # do not mask bias and critic parameters
         self.forbidden_layer_names = ['critic']
+        self.re_init_pruned_weights = re_init_pruned_weights
 
     def init_mask_tree(self, params):
         '''
@@ -286,7 +288,7 @@ class Packnet(CLMethod):
         )
         return (jax.random.normal(rng_key, leaf.shape) * 1e-6)
     
-    def get_deterministic_init(self, task_id: int, param_tree: dict):
+    def _get_deterministic_init(self, task_id: int, param_tree: dict):
         '''
         Create the deterministic initial values for a given parameter tree and task_id.
         '''
@@ -301,7 +303,7 @@ class Packnet(CLMethod):
         '''
         unpacked_params = params["params"]
         prev_tasks_mask = self.combine_masks(state.masks, state.current_task) # mask of all tasks < state.current_task
-        small_init = self.get_deterministic_init(state.current_task, unpacked_params)
+        small_init = self._get_deterministic_init(state.current_task, unpacked_params)
         
         def init_pruned_weights_leaf(mask, p, init):
             return jnp.where(mask, p, init)
@@ -358,9 +360,7 @@ class Packnet(CLMethod):
         jax.debug.print(
         "Sparsity after pruning: {sparsity}", sparsity=sparsity)
         # update train_state:        
-        train_state = train_state.replace(params=new_params)
-        new_opt_state = train_state.tx.init(train_state.params)
-        train_state = train_state.replace(opt_state=new_opt_state)
+        train_state = self._update_train_state(train_state, new_params)
         # return train_state and cl_state:
         return train_state, cl_state
 
@@ -400,14 +400,22 @@ class Packnet(CLMethod):
             "Sparsity after finetuning: {sparsity}", sparsity=sparsity)
         # update task id after tuning:
         state = state.replace(current_task=state.current_task+1, train_mode=True)
-        # initialize weights to small values:
-        new_params = self.initialize_pruned_weights(train_state.params, state)
-        # update train_state:        
+        if self.re_init_pruned_weights:
+            # initialize weights to small values:
+            new_params = self.initialize_pruned_weights(train_state.params, state)
+            # update train_state:        
+            train_state = self._update_train_state(train_state, new_params)
+        # return train_state and state:
+        return train_state, state
+
+    def _update_train_state(self, train_state, new_params):
+        '''
+        Updates train state with new parameters and optimizers.
+        '''
         train_state = train_state.replace(params=new_params)
         new_opt_state = train_state.tx.init(train_state.params)
         train_state = train_state.replace(opt_state=new_opt_state)
-        # return train_state and state:
-        return train_state, state
+        return train_state
     
     def update_and_verify_weight_memory(self, params, state: PacknetState):
         mask = self.combine_masks(state.masks, state.current_task)
