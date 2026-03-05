@@ -56,7 +56,7 @@ class Packnet(CLMethod):
         # wether to re-initialize weights to small values after each fine-tuning:
         self.re_init_pruned_weights = re_init_pruned_weights
 
-    def _init_mask_tree(self, params):
+    def init_mask_tree(self, params):
         '''
         Initializes a pytree with a fixed size and shape to store all masks of previous tasks
         @param params: the parameters of the model, to get the shape of the masks
@@ -239,7 +239,7 @@ class Packnet(CLMethod):
 
         masks = jax.lax.cond(
             (state.current_task == 0) & (state.masks is None),
-            lambda _: self._init_mask_tree(params),
+            lambda _: self.init_mask_tree(params),
             lambda _: state.masks,
             operand=None
         )
