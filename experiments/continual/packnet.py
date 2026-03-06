@@ -584,6 +584,32 @@ class Packnet(CLMethod):
         )
 
         return {**params, "params": masked_params}
+    
+    def add_head_mask(self, mask):
+        '''
+        Modifies a mask to covers all parameters in output heads as well as what it currently covers.
+        '''
+        new_mask = {}
+
+        for layer_name, layer_dict in mask.items():
+            mask_layer = {}
+            if "head" in layer_name:
+                # if head layer, mask completely
+                for param_name, param_array in layer_dict.items():
+                    new_mask_leaf = jnp.ones_like(param_array, dtype=bool)
+                    mask_layer[param_name] = new_mask_leaf
+            else:
+                # if no head layer, copy current mask:
+                for param_name, param_array in layer_dict.items():
+                    mask_layer[param_name] = mask[layer_name][param_name]
+            new_mask[layer_name] = mask_layer
+
+        return new_mask
+
+    def get_eval_mask(self, mask_tree, last_task):
+        current_mask = self.combine_masks(mask_tree, last_task)
+        eval_mask = self.add_head_mask(mask_tree)
+        return eval_mask
 
 def debug_packnet_masks(state: PacknetState, params):
     frozen_counts = {}
