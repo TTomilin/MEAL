@@ -923,7 +923,7 @@ def main():
                 length=cfg.finetune_updates
             )
 
-            train_state = runner_state[0]
+            train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
             # handle the end of the finetune phase 
             train_state, cl_state = cl.on_finetune_end(train_state, cl_state)
 

@@ -50,8 +50,8 @@ class Packnet(CLMethod):
         # variables controlling which weights to freeze
         self.prunable_layer_type_names = [layer_type.__name__ for layer_type in prunable_layers]
         self.normalization_layer_type_names = [layer_type.__name__ for layer_type in norm_layer_types]
-        self.forbidden_param_strings = ['bias'] # ignore bias and critic parameters
-        self.forbidden_layer_strings = ['critic']
+        self.forbidden_param_strings = ['bias'] # ignore bias parameters
+        self.forbidden_layer_strings = ['critic', 'head'] # ignore critic layers and head layers
         
         # wether to re-initialize weights to small values after each fine-tuning:
         self.re_init_pruned_weights = re_init_pruned_weights
