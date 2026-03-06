@@ -514,10 +514,6 @@ class Packnet(CLMethod):
         This is the proper PackNet approach - zero gradients before optimizer sees them.
         '''
 
-        def first_task():
-            # No previous tasks to mask - return gradients unchanged
-            return gradients
-
         def train_mode():
             # Training mode: mask gradients for weights from previous tasks
             prev_mask = self.combine_masks(state.masks, jnp.maximum(state.current_task, 0))
@@ -547,18 +543,10 @@ class Packnet(CLMethod):
             masked_grads = jax.tree_util.tree_map(mask_gradient_leaf, gradients["params"], current_mask)
             return {**gradients, "params": masked_grads}
 
-        def train_mode_dispatch():
-            # Dispatch between first task and other tasks in training mode
-            return jax.lax.cond(
-                state.current_task == 0,
-                lambda: first_task(),
-                lambda: train_mode()
-            )
-
         # Apply gradient masking based on current task and mode using JAX conditionals
         return jax.lax.cond(
             state.train_mode,
-            train_mode_dispatch,
+            train_mode,
             finetune_mode
         )
 
