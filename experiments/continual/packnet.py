@@ -608,7 +608,7 @@ class Packnet(CLMethod):
 
     def get_eval_mask(self, mask_tree, last_task):
         current_mask = self.combine_masks(mask_tree, last_task)
-        eval_mask = self.add_head_mask(mask_tree)
+        eval_mask = self.add_head_mask(current_mask)
         return eval_mask
 
 def debug_packnet_masks(state: PacknetState, params):
