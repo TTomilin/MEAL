@@ -530,12 +530,12 @@ def main():
     critic.apply = jax.jit(critic.apply)
 
     # calculate sparsity
-    sparsity = cl.compute_sparsity(actor_params["params"])
+    sparsity = cl._compute_sparsity(actor_params["params"])
     print(f"Sparsity: {sparsity}")
 
     # Initialize the Packnet state
     packnet_state = PacknetState(
-        masks=cl.init_task_masks(actor_params["params"]),
+        masks=cl._init_task_masks(actor_params["params"]),
         current_task=0,
         train_mode=True
     )
@@ -913,16 +913,16 @@ def main():
                 def log_metrics(metric, update_step):
                     # average the metric
                     metric = jax.tree_util.tree_map(lambda x: x.mean(), metric)
-                    sparsity_actor = cl.compute_sparsity(actor_train_state_eval.params["params"])
-                    sparsity_grads = cl.compute_sparsity(grads_eval["params"])
+                    sparsity_actor = cl._compute_sparsity(actor_train_state_eval.params["params"])
+                    sparsity_grads = cl._compute_sparsity(grads_eval["params"])
                     # add the sparsity and mask compliance to the metric dictionary
                     metric["PackNet/sparsity_actor"] = sparsity_actor
                     metric["PackNet/sparsity_grads"] = sparsity_grads
                     metric["PackNet/current_task"] = packnet_state.current_task
                     metric["PackNet/train_mode"] = packnet_state.train_mode
 
-                    prev_mask = cl.combine_task_masks(packnet_state.masks, packnet_state.current_task)  # frozen weights
-                    cur_mask = cl.get_task_mask(packnet_state.masks, packnet_state.current_task)  # active weights
+                    prev_mask = cl._combine_task_masks(packnet_state.masks, packnet_state.current_task)  # frozen weights
+                    cur_mask = cl._get_task_mask(packnet_state.masks, packnet_state.current_task)  # active weights
 
                     # Flatten the mask trees and compute mean
                     prev_mask_flat, _ = jax.tree_util.tree_flatten(prev_mask)
@@ -1040,7 +1040,7 @@ def main():
             # unpack the loss information
             actor_grads = loss_info["actor_grads"]
             actor_grads = jax.tree_util.tree_map(lambda x: jnp.mean(x, axis=(0, 1)), actor_grads)
-            sparsity = cl.compute_sparsity(actor_grads["params"])
+            sparsity = cl._compute_sparsity(actor_grads["params"])
 
             rng = update_state[-1]
             runner_state = (train_states, env_state, packnet_state, last_obs, update_step, actor_grads, rng)
@@ -1066,10 +1066,10 @@ def main():
         actor_train_state, critic_train_state = train_states
 
         # # Prune the model and update the parameters
-        new_actor_params, packnet_state = cl.dispatch_prune(actor_train_state.params["params"], packnet_state)
+        new_actor_params, packnet_state = cl._dispatch_prune(actor_train_state.params["params"], packnet_state)
 
         # check the sparsity of the new params
-        sparsity = cl.compute_sparsity(new_actor_params["params"])
+        sparsity = cl._compute_sparsity(new_actor_params["params"])
         jax.debug.print(
             "Sparsity after pruning: {sparsity}", sparsity=sparsity)
 
@@ -1091,7 +1091,7 @@ def main():
 
         # check the sparsity after finetuning
         actor_train_state = runner_state[0][0]
-        sparsity = cl.compute_sparsity(actor_train_state.params["params"])
+        sparsity = cl._compute_sparsity(actor_train_state.params["params"])
         jax.debug.print(
             "Sparsity after finetuning: {sparsity}", sparsity=sparsity)
 
