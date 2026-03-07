@@ -535,7 +535,7 @@ def main():
 
     # Initialize the Packnet state
     packnet_state = PacknetState(
-        masks=cl.init_mask_tree(actor_params["params"]),
+        masks=cl.init_task_masks(actor_params["params"]),
         current_task=0,
         train_mode=True
     )
@@ -921,8 +921,8 @@ def main():
                     metric["PackNet/current_task"] = packnet_state.current_task
                     metric["PackNet/train_mode"] = packnet_state.train_mode
 
-                    prev_mask = cl.combine_masks(packnet_state.masks, packnet_state.current_task)  # frozen weights
-                    cur_mask = cl.get_mask(packnet_state.masks, packnet_state.current_task)  # active weights
+                    prev_mask = cl.combine_task_masks(packnet_state.masks, packnet_state.current_task)  # frozen weights
+                    cur_mask = cl.get_task_mask(packnet_state.masks, packnet_state.current_task)  # active weights
 
                     # Flatten the mask trees and compute mean
                     prev_mask_flat, _ = jax.tree_util.tree_flatten(prev_mask)

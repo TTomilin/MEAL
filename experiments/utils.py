@@ -115,14 +115,18 @@ def build_reg_weights(params, regularize_critic: bool, regularize_heads: bool) -
 def init_cl_state(params: FrozenVariableDict, regularize_critic: bool, 
                   regularize_heads: bool, cl: CLMethod, cfg) -> CLState:
     if cfg.cl_method == "packnet":
-        return PacknetState(
-            masks=cl.init_mask_tree(params["params"]),
+        state = PacknetState(
+            task_masks={},
             mask={},
+            bias_mask={},
+            head_mask={},
+            layer_norm_mask={},
             current_task=0,
             train_mode=True,
             mask_memory=[],
             weight_memory=[]
         )
+        return cl.init_packnet_state(params, state)
     else:
         mask = build_reg_weights(params, regularize_critic, regularize_heads)
         return RegCLState(
