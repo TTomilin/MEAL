@@ -60,18 +60,22 @@ class Packnet(CLMethod):
     def init_packnet_state(self, params, state: PacknetState):
         def get_bias_mask(parameter_dict):
             '''
-            Creates a mask over all network biases.
+            Creates a mask over all biases in prunable layers.
             '''
             new_mask = {}
 
             for layer_name, layer_dict in parameter_dict.items():
                 mask_layer = {}
-                for param_name, param_array in layer_dict.items():
-                    if "bias" in param_name:
-                        # if bias, mask all:
-                        mask_layer[param_name] = jnp.ones_like(param_array, dtype=bool)
-                    else:
-                        # if not, mask none:
+                if self.layer_is_prunable(layer_name):
+                    for param_name, param_array in layer_dict.items():
+                        if "bias" in param_name:
+                            # if bias, mask all:
+                            mask_layer[param_name] = jnp.ones_like(param_array, dtype=bool)
+                        else:
+                            # if not, mask none:
+                            mask_layer[param_name] = jnp.zeros_like(param_array, dtype=bool)
+                else:
+                    for param_name, param_array in layer_dict.items():
                         mask_layer[param_name] = jnp.zeros_like(param_array, dtype=bool)
                 new_mask[layer_name] = mask_layer
 
