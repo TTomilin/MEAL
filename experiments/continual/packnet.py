@@ -194,7 +194,7 @@ class Packnet(CLMethod):
                 """
                 OR the boolean-array leaves of two masks (i.e. combine masks)
                 """
-                return jax.tree_util.tree_map(lambda a, b: jnp.logical_or(a, b), m_a, m_b)
+                return jax.tree_util.tree_map(lambda l_a, l_b: jnp.logical_or(l_a, l_b), m_a, m_b)
             
             return jax.lax.cond(condition,
                 lambda mask: merge_masks(mask, mask_b),
@@ -367,8 +367,6 @@ class Packnet(CLMethod):
         @param state: the packnet state
         returns the pruned model
         '''
-        state = state.replace(task_masks=task_masks)
-
         # Compute the pruning quantile
         prune_perc = create_pruning_percentage(state)
 
@@ -383,7 +381,7 @@ class Packnet(CLMethod):
             '''
             assert self.seq_length is not None, "Sequence length not provided"
 
-            num_tasks_left = self.seq_length - state.current_task - 1
+            num_tasks_left = self.seq_length - s.current_task - 1
             prune_percentage = num_tasks_left / (num_tasks_left + 1)
             return prune_percentage
     
