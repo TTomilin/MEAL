@@ -205,6 +205,8 @@ class Packnet(CLMethod):
         new_mask = {}
 
         for layer_name, layer_dict in params.items():
+            if any([n in layer_name for n in self.forbidden_layer_strings]):
+                continue
             mask_layer = {}
             for param_name, param_array in layer_dict.items():
                 if "bias" in param_name:
