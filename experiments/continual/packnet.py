@@ -86,14 +86,13 @@ class Packnet(CLMethod):
             for layer_name, layer_dict in parameter_dict.items():
                 mask_layer = {}
                 if "head" in layer_name:
-                    # if head layer, mask completely
+                    # if head layer, mask completely:
                     for param_name, param_array in layer_dict.items():
-                        new_mask_leaf = jnp.ones_like(param_array, dtype=bool)
-                        mask_layer[param_name] = new_mask_leaf
+                        mask_layer[param_name] = jnp.ones_like(param_array, dtype=bool)
                 else:
-                    # if no head layer, copy current mask:
+                    # if no head layer, mask nothing:
                     for param_name, param_array in layer_dict.items():
-                        mask_layer[param_name] = parameter_dict[layer_name][param_name]
+                        mask_layer[param_name] = jnp.zeros_like(param_array, dtype=bool)
                 new_mask[layer_name] = mask_layer
 
             return new_mask
@@ -306,6 +305,12 @@ class Packnet(CLMethod):
         def train_mode():
             # Training mode: mask gradients for weights from previous tasks
             prev_mask = self._get_train_mask(state)
+            jax.lax.cond(
+                    state.current_task == 5,
+                    lambda _: jax.debug.breakpoint(),
+                    lambda _: None,
+                    operand=None
+                )
 
             def mask_gradient_leaf(grad_leaf, mask_leaf):
                 """
@@ -359,6 +364,21 @@ class Packnet(CLMethod):
 
     ### --- PRUNING --- ###
 
+    def param_is_prunable(self, param_name):
+        '''
+        Checks if a parameter is prunable.
+        '''
+        return not(any([n in param_name for n in self.forbidden_param_strings]))
+    
+    def layer_is_prunable(self, layer_name):
+        '''
+        Checks if a layer is prunable
+        @param layer_name: the name of the layer
+        returns a boolean indicating whether the layer is prunable
+        '''
+        if any(n in layer_name for n in self.prunable_layer_type_names):
+            return not(any([n in layer_name for n in self.forbidden_layer_strings]))
+
     def _prune(self, params, state: PacknetState):
         '''
         Prunes the model based on the pruning instructions
@@ -368,13 +388,6 @@ class Packnet(CLMethod):
         returns the pruned model
         '''
         # Compute the pruning quantile
-        prune_perc = create_pruning_percentage(state)
-
-        # Get the combined mask of all previous tasks
-        combined_mask = self._combine_task_masks(state.task_masks, state.current_task)
-        sparsity_mask = self._compute_sparsity(combined_mask)
-        jax.debug.print("sparsity_mask: {sparsity_mask}", sparsity_mask=sparsity_mask)
-
         def create_pruning_percentage(s: PacknetState):
             '''
             Creates the pruning instructions based on the sequence length
@@ -384,21 +397,12 @@ class Packnet(CLMethod):
             num_tasks_left = self.seq_length - s.current_task - 1
             prune_percentage = num_tasks_left / (num_tasks_left + 1)
             return prune_percentage
-    
-        def param_is_prunable(parameter_name):
-            '''
-            Checks if a parameter is prunable.
-            '''
-            return not(any([n in parameter_name for n in self.forbidden_param_strings]))
-        
-        def layer_is_prunable(name_of_layer):
-            '''
-            Checks if a layer is prunable
-            @param layer_name: the name of the layer
-            returns a boolean indicating whether the layer is prunable
-            '''
-            if any(n in name_of_layer for n in self.prunable_layer_type_names):
-                return not(any([n in name_of_layer for n in self.forbidden_layer_strings]))
+        prune_perc = create_pruning_percentage(state)
+
+        # Get the combined mask of all previous tasks
+        combined_mask = self._combine_task_masks(state.task_masks, state.current_task)
+        sparsity_mask = self._compute_sparsity(combined_mask)
+        jax.debug.print("sparsity_mask: {sparsity_mask}", sparsity_mask=sparsity_mask)
 
         mask = {}
         new_params = {}
@@ -409,9 +413,9 @@ class Packnet(CLMethod):
 
             # collect prunable parameters for layer:
             layer_prunable = []
-            if layer_is_prunable(layer_name):
+            if self.layer_is_prunable(layer_name):
                 for param_name, param_array in layer_dict.items():
-                    if param_is_prunable(param_name):
+                    if self.param_is_prunable(param_name):
                         prev_mask_leaf = combined_mask[layer_name][param_name]
                         p = jnp.where(
                             prev_mask_leaf,
@@ -432,7 +436,7 @@ class Packnet(CLMethod):
                     cutoff,
                     num_pruned
                 ) # log info for layer
-            elif layer_is_prunable(layer_name):
+            elif self.layer_is_prunable(layer_name):
                 cutoff = None
                 jax.debug.print(
                     "Layer: {}, no more pruning possible",
@@ -444,8 +448,8 @@ class Packnet(CLMethod):
             # actually apply the pruning:
             for param_name, param_array in layer_dict.items():
                 # in case the layer is prunable and some parameters can still be pruned:
-                if (layer_is_prunable(layer_name)
-                    and param_is_prunable(param_name)
+                if (self.layer_is_prunable(layer_name)
+                    and self.param_is_prunable(param_name)
                     and cutoff is not None):
                     prev_mask_leaf = combined_mask[layer_name][param_name]
                     new_mask_leaf = jnp.logical_and(
