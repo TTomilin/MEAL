@@ -205,15 +205,17 @@ class Packnet(CLMethod):
         new_mask = {}
 
         for layer_name, layer_dict in params.items():
-            if any([n in layer_name for n in self.forbidden_layer_strings]):
-                continue
             mask_layer = {}
-            for param_name, param_array in layer_dict.items():
-                if "bias" in param_name:
-                    # if bias, mask all:
-                    mask_layer[param_name] = jnp.ones_like(param_array, dtype=bool)
-                else:
-                    # if not, use previous mask:
+            if self.layer_is_prunable(layer_name):
+                for param_name, param_array in layer_dict.items():
+                    if "bias" in param_name:
+                        # if bias, mask all:
+                        mask_layer[param_name] = jnp.ones_like(param_array, dtype=bool)
+                    else:
+                        # if not, use previous mask:
+                        mask_layer[param_name] = mask[layer_name][param_name]
+            else:
+                for param_name, param_array in layer_dict.items():
                     mask_layer[param_name] = mask[layer_name][param_name]
             new_mask[layer_name] = mask_layer
 
