@@ -125,7 +125,8 @@ class Packnet(CLMethod):
                 """
                 OR the boolean-array leaves of two masks (i.e. combine masks)
                 """
-                return jax.tree_util.tree_map(lambda a, b: jnp.logical_or(a, b), mask_a, mask_b)
+                return jax.tree_util.tree_map(lambda a, b: jnp.logical_or(a, b), m_a, m_b)
+            
             return jax.lax.cond(condition,
                 lambda mask: merge_masks(mask, mask_b),
                 lambda mask: mask,
@@ -140,11 +141,11 @@ class Packnet(CLMethod):
     
     def get_eval_mask(self, current_task, state: PacknetState):
         # during evaluation, you want to USE:
-        # weights belonging to previous and current task
+        # weights belonging to previous AND current task
         # all biases
         # the head relevant to the task (or the single output head if set by user)
         # the normalization layers
-        base_mask = self.get_task_mask(state.task_masks, current_task+1)
+        base_mask = self.combine_task_masks(state.task_masks, current_task+1)
         return self.add_specified_masks(
             base_mask=base_mask,
             include_biases=True,
@@ -155,11 +156,11 @@ class Packnet(CLMethod):
     
     def get_train_mask(self, state: PacknetState):
         # during training, you want to CHANGE:
-        # any weights not belonging to previous tasks,
+        # any weights not belonging to previous tasks only
         # any weights in the current task head (or in the shared task head if set by user)
         # nothing else
         # However, during first task only, you DO want to change both biases and layer norm. But only then.
-        base_mask = self.get_task_mask(state.task_masks, state.current_task)
+        base_mask = self.combine_task_masks(state.task_masks, state.current_task)
         return jax.lax.cond(state.current_task == 0,
             lambda m: self.add_specified_masks(base_mask=m, include_biases=False, 
                                                include_heads=False, include_layer_norm=False, state=state),
@@ -174,7 +175,6 @@ class Packnet(CLMethod):
         # nothing else
         base_mask = self.get_task_mask(state.task_masks, state.current_task)
         return base_mask
-        
 
     def combine_task_masks(self, task_masks, last_task):
         '''
@@ -268,6 +268,26 @@ class Packnet(CLMethod):
 
         return new_mask
     
+    def get_norm_layer_mask(self, params):
+        '''
+        Creates a mask over all normalization layers.
+        '''
+        new_mask = {}
+
+        for layer_name, layer_dict in params.items():
+            mask_layer = {}
+            if self.layer_is_for_norm(layer_name):
+                # if layer for normalization, mask completely:
+                for param_name, param_array in layer_dict.items():
+                    mask_layer[param_name] = jnp.ones_like(param_array, dtype=bool)
+            else:
+                # if layer not for normalization, mask none:
+                for param_name, param_array in layer_dict.items():
+                    mask_layer[param_name] = jnp.zeros_like(param_array, dtype=bool)
+            new_mask[layer_name] = mask_layer
+
+        return new_mask
+
     ### --- PRUNING --- ###
 
     def create_pruning_percentage(self, state: PacknetState):
@@ -303,26 +323,6 @@ class Packnet(CLMethod):
         '''
         if any(n in layer_name for n in self.prunable_layer_type_names):
             return not(any([n in layer_name for n in self.forbidden_layer_strings]))
-    
-    def get_norm_layer_mask(self, params):
-        '''
-        Creates a mask over all normalization layers.
-        '''
-        new_mask = {}
-
-        for layer_name, layer_dict in params.items():
-            mask_layer = {}
-            if self.layer_is_for_norm(layer_name):
-                # if layer for normalization, mask completely:
-                for param_name, param_array in layer_dict.items():
-                    mask_layer[param_name] = jnp.ones_like(param_array, dtype=bool)
-            else:
-                # if layer not for normalization, mask none:
-                for param_name, param_array in layer_dict.items():
-                    mask_layer[param_name] = jnp.zeros_like(param_array, dtype=bool)
-            new_mask[layer_name] = mask_layer
-
-        return new_mask
 
     def prune(self, params, state: PacknetState):
         '''
