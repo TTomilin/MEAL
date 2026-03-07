@@ -22,8 +22,6 @@ class PacknetState(CLState):
     weight_memory: List[dict]
     mask_memory: List[dict]
 
-
-
 class Packnet(CLMethod):
     '''
     Class that implements the Packnet CL-method
@@ -42,6 +40,7 @@ class Packnet(CLMethod):
         @param prune_instructions: the percentage of the network to prune
         @param train_finetune_split: the split between training and finetuning
         @param prunable_layers: the layers that can be pruned
+        @param re_init_pruned_weights: whether to initialize pruned weights to small values after fine-tuning
         '''
         self.seq_length = seq_length
         self.prune_instructions = prune_instructions
@@ -222,6 +221,11 @@ class Packnet(CLMethod):
         return new_mask
     
     def fix_biases_and_normalization(self, params, state: PacknetState):
+        '''
+        Adds biases in prunable layers and the parameters in the actor's normalization
+        layers to the mask of the first task. Should be called right after running fine
+        tuning on the first task.
+        '''
         # add biases an normalization to current mask:
         current_mask = self.get_mask(state.masks, state.current_task)
         new_mask = self.add_norm_layers_to_mask(params["params"], current_mask)
@@ -236,10 +240,9 @@ class Packnet(CLMethod):
     def prune(self, params, state: PacknetState):
         '''
         Prunes the model based on the pruning instructions
-        @param model: the model to prune
-        @param prune_quantile: the quantile to prune
+        @param params: the parameters to prune
         @param state: the packnet state
-        returns the pruned model
+        returns the pruned parameters
         '''
 
         masks = jax.lax.cond(
@@ -431,7 +434,7 @@ class Packnet(CLMethod):
 
     def dispatch_prune(self, params, state: PacknetState):
         '''
-        Handles the end of the training phase on a task
+        Decides which pruning method to execute.
         '''
         # change the mode to finetuning
         state = state.replace(train_mode=False)
@@ -457,7 +460,7 @@ class Packnet(CLMethod):
 
     def on_finetune_end(self, train_state, state: PacknetState):
         '''
-        Handles the end of the finetuning phase on a task
+        Handles the end of the finetuning phase on a task.
         '''
         # compute and report sparsity:
         sparsity = self.compute_sparsity(train_state.params["params"])
@@ -610,9 +613,12 @@ class Packnet(CLMethod):
 
         return new_mask
 
-    def get_eval_mask(self, mask_tree, last_task):
-        current_mask = self.combine_masks(mask_tree, last_task)
+    def get_eval_mask(self, mask_tree, current_task):
+        # retrieve the current task mask:
+        current_mask = self.combine_masks(mask_tree, current_task + 1)
+        # add the head of the task to the mask:
         eval_mask = self.add_head_mask(current_mask)
+        # return mask:
         return eval_mask
 
 def debug_packnet_masks(state: PacknetState, params):
