@@ -287,6 +287,66 @@ class Packnet(CLMethod):
             new_mask[layer_name] = mask_layer
 
         return new_mask
+    
+    def mask_gradients(self, state: PacknetState, gradients):
+        '''
+        Masks gradients for frozen weights before the optimizer step.
+        This is the proper PackNet approach - zero gradients before optimizer sees them.
+        '''
+
+        def train_mode():
+            # Training mode: mask gradients for weights from previous tasks
+            prev_mask = self.get_train_mask(state)
+
+            def mask_gradient_leaf(grad_leaf, mask_leaf):
+                """
+                Zero out gradients for frozen weights (where mask is True)
+                """
+                return jnp.where(mask_leaf, jnp.zeros_like(grad_leaf), grad_leaf)
+            
+            # Apply masking to gradients
+            masked_grads = jax.tree_util.tree_map(mask_gradient_leaf, gradients["params"], prev_mask)
+            return {**gradients, "params": masked_grads}
+
+        def finetune_mode():
+            # Fine-tuning mode: mask gradients for pruned weights of current task
+            current_task_mask = self.get_tune_mask(state)
+
+            def mask_gradient_leaf(grad_leaf, mask_leaf):
+                """
+                Zero out gradients for pruned weights (where mask is False)
+                Keep gradients for active weights (where mask is True)
+                """
+                return jnp.where(mask_leaf, grad_leaf, jnp.zeros_like(grad_leaf))
+
+            # Apply masking to gradients
+            masked_grads = jax.tree_util.tree_map(mask_gradient_leaf, gradients["params"], current_task_mask)
+            return {**gradients, "params": masked_grads}
+
+        # Apply gradient masking based on current task and mode using JAX conditionals
+        return jax.lax.cond(
+            state.train_mode,
+            train_mode,
+            finetune_mode
+        )
+
+    def apply_mask(self, params, combined_mask):
+        """
+        Apply a given task mask to the parameters, used at evaluation time (as per original Packnet paper).
+        """
+
+        def mask_leaf(p, mask):
+            # mask == True → frozen weight → keep parameter
+            # mask == False → free weight → discard parameter
+            return jnp.where(mask, p, 0)
+
+        masked_params = jax.tree_util.tree_map(
+            mask_leaf,
+            params["params"],
+            combined_mask
+        )
+
+        return {**params, "params": masked_params}
 
     ### --- PRUNING --- ###
 
@@ -489,6 +549,23 @@ class Packnet(CLMethod):
         new_params = {**params, "params": new_params}
         return new_params, state
     
+    def compute_sparsity(self, params):
+        """Calculate percentage of zero weights in model"""
+        total_params = 0
+        zero_params = 0
+
+        for _, layer_dict in params.items():
+            for param_name, param_array in layer_dict.items():
+                if "kernel" in param_name:  # Only weight parameters
+                    total_params += param_array.size
+                    zero_params += jnp.sum(jnp.abs(param_array) < 1e-7)
+
+        # print(f"Total params: {total_params}, Zero params: {zero_params}")
+
+        sparsity = zero_params / total_params if total_params > 0 else 1
+        sparsity = jnp.round(sparsity, 4)
+        return sparsity
+
     ### --- WEIGHT INITIALIZATION --- ###
 
     def _deterministic_leaf_init(self, task_id: int, path, leaf):
@@ -601,84 +678,6 @@ class Packnet(CLMethod):
                 out = jnp.all(array_a == array_b)
                 jax.debug.print("{},{}: {}|{} {}", i, j, layer_name, module_name, out)
         return out
-
-
-    def mask_gradients(self, state: PacknetState, gradients):
-        '''
-        Masks gradients for frozen weights before the optimizer step.
-        This is the proper PackNet approach - zero gradients before optimizer sees them.
-        '''
-
-        def train_mode():
-            # Training mode: mask gradients for weights from previous tasks
-            prev_mask = self.get_train_mask(state)
-
-            def mask_gradient_leaf(grad_leaf, mask_leaf):
-                """
-                Zero out gradients for frozen weights (where mask is True)
-                """
-                return jnp.where(mask_leaf, jnp.zeros_like(grad_leaf), grad_leaf)
-            
-            # Apply masking to gradients
-            masked_grads = jax.tree_util.tree_map(mask_gradient_leaf, gradients["params"], prev_mask)
-            return {**gradients, "params": masked_grads}
-
-        def finetune_mode():
-            # Fine-tuning mode: mask gradients for pruned weights of current task
-            current_task_mask = self.get_tune_mask(state)
-
-            def mask_gradient_leaf(grad_leaf, mask_leaf):
-                """
-                Zero out gradients for pruned weights (where mask is False)
-                Keep gradients for active weights (where mask is True)
-                """
-                return jnp.where(mask_leaf, grad_leaf, jnp.zeros_like(grad_leaf))
-
-            # Apply masking to gradients
-            masked_grads = jax.tree_util.tree_map(mask_gradient_leaf, gradients["params"], current_task_mask)
-            return {**gradients, "params": masked_grads}
-
-        # Apply gradient masking based on current task and mode using JAX conditionals
-        return jax.lax.cond(
-            state.train_mode,
-            train_mode,
-            finetune_mode
-        )
-
-    def compute_sparsity(self, params):
-        """Calculate percentage of zero weights in model"""
-        total_params = 0
-        zero_params = 0
-
-        for layer_name, layer_dict in params.items():
-            for param_name, param_array in layer_dict.items():
-                if "kernel" in param_name:  # Only weight parameters
-                    total_params += param_array.size
-                    zero_params += jnp.sum(jnp.abs(param_array) < 1e-7)
-
-        # print(f"Total params: {total_params}, Zero params: {zero_params}")
-
-        sparsity = zero_params / total_params if total_params > 0 else 1
-        sparsity = jnp.round(sparsity, 4)
-        return sparsity
-
-    def apply_mask(self, params, combined_mask):
-        """
-        Apply a given task mask to the parameters, used at evaluation time (as per original Packnet paper).
-        """
-
-        def mask_leaf(p, mask):
-            # mask == True → frozen weight → keep parameter
-            # mask == False → free weight → discard parameter
-            return jnp.where(mask, p, 0)
-
-        masked_params = jax.tree_util.tree_map(
-            mask_leaf,
-            params["params"],
-            combined_mask
-        )
-
-        return {**params, "params": masked_params}
 
 def debug_packnet_masks(state: PacknetState, params):
     frozen_counts = {}
