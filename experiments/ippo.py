@@ -25,7 +25,7 @@ from experiments.continual.packnet import Packnet
 from experiments.evaluation import evaluate_all_envs, make_eval_fn
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.model.mlp import ActorCritic as MLPActorCritic
-from experiments.model.mlp_dense import ActorCritic as DenseActorCritic
+from experiments.model.mlp_packnet import ActorCritic as PacknetActorCritic
 from experiments.utils import *
 from meal import make_sequence
 from meal.env.utils.max_soup_calculator import calculate_max_soup
@@ -305,7 +305,7 @@ def main():
         frac = 1.0 - (count // (cfg.num_minibatches * cfg.update_epochs)) / cfg.num_updates
         return cfg.lr * frac
 
-    ac_cls = CNNActorCritic if cfg.use_cnn else MLPActorCritic
+    ac_cls = CNNActorCritic if cfg.use_cnn else PacknetActorCritic
 
     network = ac_cls(temp_env.action_space().n, cfg.activation, seq_length, cfg.use_multihead,
                      cfg.shared_backbone, cfg.big_network, cfg.use_task_id, cfg.regularize_heads,
