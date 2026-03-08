@@ -542,7 +542,7 @@ class Overcooked(MultiAgentEnv):
             agent_idx = jax.random.choice(subkey, all_pos, shape=(num_agents,),
                                         p=(~occupied.astype(jnp.bool_)).astype(jnp.float32), replace=False)
         else:
-            pos_rng_key = jax.random.PRNGKey(self.task_id + hash(self.difficutly) & 0xFFFFFFFF) # 0xFFFFFFFF ensures positivity
+            pos_rng_key = jax.random.PRNGKey(self.task_id)
             agent_idx = jax.random.choice(pos_rng_key, all_pos, shape=(num_agents,),
                                         p=(~occupied.astype(jnp.bool_)).astype(jnp.float32), replace=False)
 
