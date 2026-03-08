@@ -113,7 +113,7 @@ class Config:
     difficulty: Optional[str] = None
     single_task_idx: Optional[int] = None
     random_reset: bool = False
-    random_agent_start: bool = True
+    random_agent_start: bool = False
     complementary_restrictions: bool = False  # One agent can't pick up onions, other can't pick up plates
     separated_agents: bool = False  # only accept layouts where agents occupy different connected regions of the grid
 
