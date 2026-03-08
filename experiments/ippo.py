@@ -65,7 +65,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     activation: str = "relu"
     use_cnn: bool = False
-    use_layer_norm: bool = True
+    use_layer_norm: bool = False
     big_network: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
