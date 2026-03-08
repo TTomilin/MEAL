@@ -538,8 +538,13 @@ class Overcooked(MultiAgentEnv):
 
         # Reset agent position + dir
         key, subkey = jax.random.split(key)
-        agent_idx = jax.random.choice(subkey, all_pos, shape=(num_agents,),
-                                      p=(~occupied.astype(jnp.bool_)).astype(jnp.float32), replace=False)
+        if self.random_agent_start:
+            agent_idx = jax.random.choice(subkey, all_pos, shape=(num_agents,),
+                                        p=(~occupied.astype(jnp.bool_)).astype(jnp.float32), replace=False)
+        else:
+            pos_rng_key = jax.random.PRNGKey(self.task_id + hash(self.difficutly) & 0xFFFFFFFF) # 0xFFFFFFFF ensures positivity
+            agent_idx = jax.random.choice(pos_rng_key, all_pos, shape=(num_agents,),
+                                        p=(~occupied.astype(jnp.bool_)).astype(jnp.float32), replace=False)
 
         # Replace with fixed layout if applicable
         layout_agent_idx = layout.get("agent_idx", jnp.array([], dtype=jnp.uint32))
