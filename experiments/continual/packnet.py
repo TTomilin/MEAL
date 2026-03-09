@@ -483,7 +483,7 @@ class Packnet(CLMethod):
             train_state = self._update_train_state(train_state, new_params)
         # return train_state and state:
         return train_state, state
-
+    
     def _update_train_state(self, train_state, new_params):
         '''
         Updates train state with new parameters and optimizers.

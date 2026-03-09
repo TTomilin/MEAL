@@ -96,7 +96,6 @@ class Config:
     # Packnet specific parameters
     train_epochs: int = 8
     finetune_epochs: int = 2
-    finetune_lr: float = 1e-4
     finetune_timesteps: int = 1e6
     re_init_pruned_weights: bool = False
 
