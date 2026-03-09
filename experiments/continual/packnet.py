@@ -469,8 +469,9 @@ class Packnet(CLMethod):
         # If the first task was just tuned, freeze biases and normalization layers:
         state = jax.lax.cond(
             state.current_task == 0,
-            lambda: self._fix_biases_and_normalization(train_state.params, state),
-            lambda: state
+            lambda s: self._fix_biases_and_normalization(train_state.params, s),
+            lambda s: s,
+            state
         )
         # update task id after tuning:
         state = state.replace(current_task=state.current_task+1, train_mode=True)
