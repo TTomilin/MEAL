@@ -475,7 +475,6 @@ class Packnet(CLMethod):
         )
         # update task id after tuning:
         state = state.replace(current_task=state.current_task+1, train_mode=True)
-        self.update_and_verify_weight_memory(train_state.params["params"], state)
         debug_packnet_masks(state, train_state.params["params"])
         if self.re_init_pruned_weights:
             # initialize weights to small values:
