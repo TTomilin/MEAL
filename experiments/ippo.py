@@ -351,7 +351,8 @@ def main():
     def step_switch(key, state, actions, task_idx):
         return jax.lax.switch(task_idx, step_fns, key, state, actions)
 
-    evaluate_env = make_eval_fn(cl, reset_switch, step_switch, network, agents, seq_length, cfg.num_steps, cfg.use_cnn, cfg.eval_deterministic)
+    evaluate_env = make_eval_fn(cl, reset_switch, step_switch, network, agents, seq_length, 
+                                         cfg.num_steps, cfg.use_cnn, cfg.eval_deterministic, cfg.seed)
 
     importance_fn = cl.make_importance_fn(reset_switch, step_switch, network, agents, cfg.use_cnn,
                                           cfg.importance_episodes, cfg.importance_steps, cfg.normalize_importance,
