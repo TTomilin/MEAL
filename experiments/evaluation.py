@@ -6,7 +6,7 @@ from experiments.utils import batchify, unbatchify
 from experiments.continual.packnet import Packnet
 
 
-def make_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: int, num_steps: int, use_cnn: bool):
+def make_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: int, num_steps: int, use_cnn: bool, eval_deterministic: bool):
     """
     Returns a jitted evaluate_single_env(rng, params, env_idx) that *closes over*
     the static callables and constants so we don't pass non-arrays to jit.
@@ -15,6 +15,8 @@ def make_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: int, 
     @jax.jit
     def evaluate_env(cl_state, rng, params, env_idx):
         # Reset a batch of envs for shape parity with train
+        if eval_deterministic:
+            rng = jax.random.PRNGKey(env_idx) # get new rng, fixed per task
         rng, env_rng = jax.random.split(rng)
         reset_rng = jax.random.split(env_rng, num_envs)
         obs, env_state = jax.vmap(lambda k: reset_switch(k, jnp.int32(env_idx)))(reset_rng)
