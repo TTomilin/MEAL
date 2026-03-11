@@ -592,7 +592,7 @@ class Packnet(CLMethod):
 
         return {**params, "params": masked_params}
     
-    def _add_head_mask(self, mask):
+    def _add_multi_head_mask(self, mask):
         '''
         Modifies a mask to covers all parameters in output heads as well as what it currently covers.
         '''
@@ -617,7 +617,7 @@ class Packnet(CLMethod):
         # retrieve the current task mask:
         current_mask = self._combine_masks(mask_tree, current_task + 1)
         # add the head of the task to the mask:
-        eval_mask = self._add_head_mask(current_mask)
+        eval_mask = self._add_multi_head_mask(current_mask)
         # return mask:
         return eval_mask
 
