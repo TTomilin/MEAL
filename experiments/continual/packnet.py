@@ -613,13 +613,30 @@ class Packnet(CLMethod):
 
         return new_mask
 
-    def get_eval_mask(self, mask_tree, current_task):
+    def _get_full_mask(self, mask):
+        '''
+        Yields a complete mask over all parameters in the given mask.
+        '''
+        new_mask = {}
+
+        for layer_name, layer_dict in mask.items():
+            mask_layer = {}
+            for param_name, param_array in layer_dict.items():
+                new_mask_leaf = jnp.ones_like(param_array, dtype=bool)
+                mask_layer[param_name] = new_mask_leaf
+            new_mask[layer_name] = mask_layer
+
+        return new_mask
+
+    def get_eval_mask(self, current_task, state: PacknetState):
         # retrieve the current task mask:
-        current_mask = self._combine_masks(mask_tree, current_task + 1)
-        # add the head of the task to the mask:
-        eval_mask = self._add_multi_head_mask(current_mask)
-        # return mask:
-        return eval_mask
+        current_mask = self._combine_masks(state.masks, current_task + 1)
+        # return appropriate mask, based on current task and highest-trained task:
+        return jax.lax.cond(
+            current_task < state.current_task, # if current task has been trained...
+            self._add_multi_head_mask(current_mask), # return the appropriate mask
+            self._get_full_mask(current_mask) # else... use all parameters instead of masking
+        )
 
 def debug_packnet_masks(state: PacknetState, params):
     frozen_counts = {}

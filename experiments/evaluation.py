@@ -27,7 +27,7 @@ def make_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: int, 
 
         mask = None
         if isinstance(cl, Packnet):
-            mask = cl.get_eval_mask(cl_state.masks, env_idx) # note that this collects all masks <= env_idx
+            mask = cl.get_eval_mask(env_idx, cl_state) # note that this collects all masks <= env_idx
 
         def one_step(carry, _):
             env_state, obs, rewards, soups, rng = carry
@@ -65,19 +65,8 @@ def make_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: int, 
             length=num_steps
         )
 
-        env_id_valid = 1
-        if isinstance(cl, Packnet):
-            # if the environment has not yet been seen by packnet, set the reward to zero by default:
-            env_id_valid = jax.lax.cond(
-                env_idx < cl_state.current_task,
-                lambda: 1,
-                lambda: 0
-            )
-        # multiply with env_id_valid:
-        # - env_id_invalid == 1 if packnet is not used or the environment has been tuned on by packnet
-        # - env_id_invalid == 0 if packnet is used and the environment has not been tuned on by packnet
-        avg_rewards = total_rewards.mean() * env_id_valid
-        avg_soups = total_soups.mean() * env_id_valid
+        avg_rewards = total_rewards.mean()
+        avg_soups = total_soups.mean()
         return avg_rewards, avg_soups
 
     return evaluate_env
