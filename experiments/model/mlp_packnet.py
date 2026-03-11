@@ -50,7 +50,7 @@ class ActorCritic(nn.Module):
     @nn.compact
     def __call__(self, x, *, env_idx: int = 0):
         act = self._act()
-        hid = 128 if self.big_network else 128
+        hid = 256 if self.big_network else 128
 
         per_layer_ratios = []  # collect to average later
 
@@ -91,10 +91,13 @@ class ActorCritic(nn.Module):
                 per_layer_ratios.extend(actor_ratios)
                 per_layer_ratios.extend(critic_ratios)
 
+        # naming for actor/critic heads:
+        head_string = "multi_head" if self.use_multihead else "single_head"
+
         # -------- actor head --------------------------------------------------
         logits_dim = self.action_dim * \
                      (self.num_tasks if self.use_multihead else 1)
-        all_logits = self._dense(logits_dim, get_layer_name("actor", nn.Dense, "head"), 0.01)(actor_in)
+        all_logits = self._dense(logits_dim, get_layer_name("actor", nn.Dense, head_string), 0.01)(actor_in)
 
         logits = choose_head(all_logits, self.num_tasks,
                              env_idx) if self.use_multihead else all_logits
@@ -102,7 +105,7 @@ class ActorCritic(nn.Module):
 
         # -------- critic head -------------------------------------------------
         vdim = 1 * (self.num_tasks if self.use_multihead else 1)
-        all_v = self._dense(vdim, get_layer_name("critic", nn.Dense, "head"), 1.0)(critic_in)
+        all_v = self._dense(vdim, get_layer_name("critic", nn.Dense, head_string), 1.0)(critic_in)
         v = choose_head(all_v, self.num_tasks,
                         env_idx) if self.use_multihead else all_v
         v = jnp.squeeze(v, -1)

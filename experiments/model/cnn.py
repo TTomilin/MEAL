@@ -8,7 +8,6 @@ import jax.numpy as jnp
 import flax.linen as nn
 import distrax
 from flax.linen.initializers import constant, orthogonal
-from experiments.utils import get_layer_name
 
 
 # ───────────────────────────────── helper ────────────────────────────────────
@@ -44,7 +43,7 @@ class CNN(nn.Module):
         activations = [] if self.track_dormant_ratio else None
 
         def conv(name: str, x, kernel):
-            x = nn.Conv(32, kernel, name=get_layer_name(self.name_prefix, nn.Conv, name),
+            x = nn.Conv(32, kernel, name=f"{self.name_prefix}_{name}",
                         kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
             x = act(x)
             if self.track_dormant_ratio:
@@ -55,13 +54,13 @@ class CNN(nn.Module):
         x = conv("conv2", x, (3, 3))
 
         x = x.reshape((x.shape[0], -1))
-        x = nn.Dense(64, name=get_layer_name(self.name_prefix, nn.Dense, "proj"),
+        x = nn.Dense(64, name=f"{self.name_prefix}_proj",
                      kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
         x = act(x)
         if self.track_dormant_ratio:
             activations.append(x)
         if self.use_layer_norm:
-            x = nn.LayerNorm(name=get_layer_name(self.name_prefix, nn.LayerNorm, "proj_ln"), epsilon=1e-5)(x)
+            x = nn.LayerNorm(name=f"{self.name_prefix}_proj_ln", epsilon=1e-5)(x)
         return x, activations
 
 
@@ -116,31 +115,31 @@ class ActorCritic(nn.Module):
             critic_emb = jnp.concatenate([critic_emb, task_onehot], axis=-1)
 
         # ─── actor branch ────────────────────────────────────────────────
-        a = nn.Dense(128, name=get_layer_name("actor", nn.Dense, "1"),
+        a = nn.Dense(128, name="actor_dense1",
                      kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(actor_emb)
         a = act_fn(a)
         if self.track_dormant_ratio:
             all_activations.append(a)
         if self.use_layer_norm:
-            a = nn.LayerNorm(name=get_layer_name("actor", nn.LayerNorm, "fcl_1"), epsilon=1e-5)(a)
+            a = nn.LayerNorm(name="actor_dense1_ln", epsilon=1e-5)(a)
 
         logits_dim = self.action_dim * (self.num_tasks if self.use_multihead else 1)
-        logits_all = nn.Dense(logits_dim, name=get_layer_name("actor", nn.Dense, "head"),
+        logits_all = nn.Dense(logits_dim, name="actor_head",
                               kernel_init=orthogonal(0.01), bias_init=constant(0.0))(a)
         logits = choose_head(logits_all, self.num_tasks, env_idx) if self.use_multihead else logits_all
         pi = distrax.Categorical(logits=logits)
 
         # ─── critic branch ───────────────────────────────────────────────
-        c = nn.Dense(128, name=get_layer_name("critic", nn.Dense, "1"),
+        c = nn.Dense(128, name="critic_dense1",
                      kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(critic_emb)
         c = act_fn(c)
         if self.track_dormant_ratio:
             all_activations.append(c)
         if self.use_layer_norm:
-            c = nn.LayerNorm(name=get_layer_name("critic", nn.LayerNorm, "fcl_1"), epsilon=1e-5)(c)
+            c = nn.LayerNorm(name="critic_dense1_ln", epsilon=1e-5)(c)
 
         vdim = 1 * (self.num_tasks if self.use_multihead else 1)
-        v_all = nn.Dense(vdim, name=get_layer_name("critic", nn.Dense, "head"),
+        v_all = nn.Dense(vdim, name="critic_head",
                          kernel_init=orthogonal(1.0), bias_init=constant(0.0))(c)
         v = choose_head(v_all, self.num_tasks, env_idx) if self.use_multihead else v_all
         v = jnp.squeeze(v, axis=-1)

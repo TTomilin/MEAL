@@ -10,10 +10,8 @@ from flax.core.frozen_dict import FrozenDict
 from flax.typing import FrozenVariableDict
 from flax.core.frozen_dict import FrozenDict
 from tensorboardX import SummaryWriter
-import numpy as np
 
 from experiments.continual.base import CLState, RegCLState, CLMethod
-from experiments.continual.agem import init_agem_memory
 from experiments.continual.packnet import PacknetState
 from typing import Type, Union
 
