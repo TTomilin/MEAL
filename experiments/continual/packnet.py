@@ -634,8 +634,9 @@ class Packnet(CLMethod):
         # return appropriate mask, based on current task and highest-trained task:
         return jax.lax.cond(
             current_task < state.current_task, # if current task has been trained...
-            self._add_multi_head_mask(current_mask), # return the appropriate mask
-            self._get_full_mask(current_mask) # else... use all parameters instead of masking
+            lambda mask: self._add_multi_head_mask(mask), # return the appropriate mask
+            lambda mask: self._get_full_mask(mask), # else... use all parameters instead of masking
+            current_mask
         )
 
 def debug_packnet_masks(state: PacknetState, params):
