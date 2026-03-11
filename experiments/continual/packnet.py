@@ -600,7 +600,7 @@ class Packnet(CLMethod):
 
         for layer_name, layer_dict in mask.items():
             mask_layer = {}
-            if "head" in layer_name:
+            if "multi_head" in layer_name:
                 # if head layer, mask completely
                 for param_name, param_array in layer_dict.items():
                     new_mask_leaf = jnp.ones_like(param_array, dtype=bool)
