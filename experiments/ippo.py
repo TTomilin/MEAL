@@ -96,7 +96,7 @@ class Config:
     # Packnet specific parameters
     train_epochs: int = 8
     finetune_epochs: int = 2
-    finetune_timesteps: int = 1e6
+    finetune_timesteps: int = 5e7
     re_init_pruned_weights: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
