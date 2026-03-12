@@ -74,7 +74,7 @@ class Config:
     cl_method: Optional[str] = None
     reg_coef: Optional[float] = None
     use_task_id: bool = True
-    use_multihead: bool = False
+    use_multihead: bool = True
     shared_backbone: bool = False
     normalize_importance: bool = False
     regularize_critic: bool = False
