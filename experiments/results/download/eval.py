@@ -236,6 +236,8 @@ def main() -> None:
             cl_method = 'CBP'
         if cl_method == 'EWC' and cfg.get("importance_mode") == "online":
             cl_method = "Online_EWC"
+        elif cl_method == 'MAS' and cfg.get("importance_mode") == "online":
+            cl_method = "Online_MAS"
 
         # Handle partial observability experiments
         if env_name == "overcooked_po":

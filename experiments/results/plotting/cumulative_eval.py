@@ -61,6 +61,7 @@ from experiments.results.plotting.utils import (
     METHOD_COLORS,
     LEVEL_COLORS,
     create_eval_parser,
+    method_display_name,
 )
 
 
@@ -186,7 +187,7 @@ def _collect_curve(
 
     mu, ci = smooth_and_ci(data, sigma, confidence)
     x = np.linspace(0, seq_len * steps_per_task, len(mu))
-    label = method if compare_by == "method" else f"Level {level}"
+    label = method_display_name(method) if compare_by == "method" else f"Level {level}"
     color = (METHOD_COLORS.get(method) if compare_by == "method"
              else LEVEL_COLORS.get(level))
     return x, mu, ci, label, color
@@ -443,13 +444,13 @@ def plot():
     # ── Save ──────────────────────────────────────────────────────────────
     out_dir = Path(__file__).resolve().parent.parent / "plots"
     stem = args.plot_name or (
-            "avg_cumulative_" + ("methods" if args.compare_by == "method" else "levels")
+            "avg_cumulative_new_" + ("methods" if args.compare_by == "method" else "levels")
     )
     stem += f"_seq_{args.seq_len}"
     # Add level suffix if not already present
     if "_level" not in stem:
         stem += f"_level_{args.level}"
-    # save_plot(fig, out_dir, stem)
+    save_plot(fig, out_dir, stem)
 
     if args.vid_segments and curves:
         for idx, seg_str in enumerate(args.vid_segments, 1):

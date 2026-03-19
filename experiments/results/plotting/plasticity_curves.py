@@ -31,7 +31,7 @@ from scipy.ndimage import gaussian_filter1d
 # Try relative import first (when imported as a module)
 from experiments.results.plotting.utils import (
     CRIT, METHOD_COLORS, collect_plasticity_runs, setup_plasticity_grid, save_plot,
-    create_plasticity_parser
+    create_plasticity_parser, method_display_name
 )
 
 
@@ -80,7 +80,7 @@ def main():
             ci = CRIT[args.confidence] * sd / np.sqrt(curves.shape[0])
 
             x = np.linspace(0, args.steps_per_task * args.repeat_sequence, len(mu))
-            (line,) = ax.plot(x, mu, color=color, label=method)
+            (line,) = ax.plot(x, mu, color=color, label=method_display_name(method))
             ax.fill_between(x, mu - ci, mu + ci, color=color, alpha=0.2)
 
             ax.set_title(f"Task {idx + 1}")
@@ -89,7 +89,7 @@ def main():
 
             if idx == 0:
                 method_lines.append(line)
-                method_names.append(method)
+                method_names.append(method_display_name(method))
 
     # labels & legend --------------------------------------------------------
     fig.text(0.5, 0.04, "Environment steps", ha="center", va="center", fontsize=14)

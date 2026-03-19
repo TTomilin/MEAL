@@ -20,7 +20,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter1d
 
 from experiments.results.plotting.utils import (
-    CRIT, METHOD_COLORS, collect_training_data, save_plot, create_plasticity_parser
+    CRIT, METHOD_COLORS, collect_training_data, save_plot, create_plasticity_parser, method_display_name
 )
 
 
@@ -158,11 +158,11 @@ def main():
 
         # plot curves
         baseline_line, = ax.plot(x_base, mu_base, color="crimson", lw=1.5, label="IPPO")
-        method_line, = ax.plot(x_cl, mu_cl, color=color, lw=1.5, label=method)
+        method_line, = ax.plot(x_cl, mu_cl, color=color, lw=1.5, label=method_display_name(method))
 
         # Collect legend handles and labels (method first, baseline last)
         legend_handles.append(method_line)
-        legend_labels.append(method)
+        legend_labels.append(method_display_name(method))
         if row == 0:
             legend_handles.append(baseline_line)
             legend_labels.append("IPPO")
@@ -234,8 +234,7 @@ def main():
 
         # Add legend directly on the plot where there is space
         # Replace underscores with spaces in legend labels
-        formatted_legend_labels = [label.replace('_', ' ') for label in legend_labels]
-        axes[0].legend(legend_handles, formatted_legend_labels, loc='best', frameon=True, fontsize=12)
+        axes[0].legend(legend_handles, legend_labels, loc='best', frameon=True, fontsize=12)
 
     y_offset = 0.06 if len(args.methods) == 1 else 0.01
     fig.text(0.5, y_offset, "Environment steps", ha="center", fontsize=14)

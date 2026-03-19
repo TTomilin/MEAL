@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from experiments.results.plotting.utils import METHOD_COLORS, get_output_path
+from experiments.results.plotting.utils import METHOD_COLORS, METHOD_DISPLAY_NAMES, get_output_path, method_display_name
 
 
 def load_series(fp: Path) -> np.ndarray:
@@ -289,8 +289,8 @@ def main():
             level=level,
         )
 
-        # Pretty-print method names (same as in results_table.py)
-        df["Method"] = df["Method"].replace({"Online_EWC": "Online EWC"})
+        # Pretty-print method names
+        df["Method"] = df["Method"].replace(METHOD_DISPLAY_NAMES)
         df["Level"] = level  # Add level information to the dataframe
         all_dfs.append(df)
 
@@ -308,13 +308,9 @@ def main():
                 print(f"Warning: Skipping {method} level {level} due to NaN values (FT: {ft}, F: {forgetting})")
                 continue
 
-            # Get color for the method
-            # Handle special case for Online EWC to match METHOD_COLORS key
-            if method == "Online EWC":
-                color_key = "Online_EWC"
-            else:
-                color_key = method.upper().replace(" ", "_")
-            color = METHOD_COLORS.get(color_key, '#333333')
+            # Get color for the method (look up by internal name)
+            _display_to_internal = {v: k for k, v in METHOD_DISPLAY_NAMES.items()}
+            color = METHOD_COLORS.get(_display_to_internal.get(method, method), '#333333')
 
             # Track unique methods for legend
             unique_methods.add(method)
@@ -340,12 +336,9 @@ def main():
         # Create legend handles for methods (colors)
         method_handles = []
         for method in sorted(unique_methods):
-            # Get color for the method
-            if method == "Online EWC":
-                color_key = "Online_EWC"
-            else:
-                color_key = method.upper().replace(" ", "_")
-            color = METHOD_COLORS.get(color_key, '#333333')
+            # Get color for the method (look up by internal name)
+            _display_to_internal = {v: k for k, v in METHOD_DISPLAY_NAMES.items()}
+            color = METHOD_COLORS.get(_display_to_internal.get(method, method), '#333333')
 
             # Create a dummy scatter point for the legend
             handle = ax.scatter([], [], color=color, s=150, alpha=0.8, 

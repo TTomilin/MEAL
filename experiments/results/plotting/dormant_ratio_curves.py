@@ -34,7 +34,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter1d
 
 from experiments.results.plotting.utils import (
-    create_plasticity_parser, load_series, smooth_and_ci, METHOD_COLORS, save_plot
+    create_plasticity_parser, load_series, smooth_and_ci, METHOD_COLORS, save_plot, method_display_name
 )
 
 
@@ -178,11 +178,11 @@ def main():
         color = METHOD_COLORS.get(method, '#1f77b4')  # Default blue if method not in colors
 
         # Plot the curve
-        line, = ax.plot(x, mu, color=color, label=method, linewidth=2)
+        line, = ax.plot(x, mu, color=color, label=method_display_name(method), linewidth=2)
         ax.fill_between(x, mu - ci, mu + ci, color=color, alpha=0.2)
 
         method_lines.append(line)
-        method_names.append(method)
+        method_names.append(method_display_name(method))
 
         print(f"Plotted {method}: mean range {np.nanmin(mu):.3f}-{np.nanmax(mu):.3f}")
 

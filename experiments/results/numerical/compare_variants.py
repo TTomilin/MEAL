@@ -8,6 +8,8 @@ from typing import List
 import numpy as np
 import pandas as pd
 
+from experiments.results.plotting.utils import METHOD_DISPLAY_NAMES
+
 # -----------------------------------------------------------------------------
 # I/O helpers
 # -----------------------------------------------------------------------------
@@ -262,7 +264,7 @@ if __name__ == "__main__":
                 variant=variant,
             )
             # Pretty‑print method names
-            level_df["Method"] = level_df["Method"].replace({"Online_EWC": "Online EWC"})
+            level_df["Method"] = level_df["Method"].replace(METHOD_DISPLAY_NAMES)
             if level_df.empty:
                 print(f"[warn] no data for {args.method}, variant {variant}, level {level}")
                 level_means[level] = np.nan

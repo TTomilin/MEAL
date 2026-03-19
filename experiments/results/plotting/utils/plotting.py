@@ -12,7 +12,7 @@ from typing import List, Tuple, Dict, Optional
 import matplotlib.pyplot as plt
 import numpy as np
 
-from .common import METHOD_COLORS, smooth_and_ci
+from .common import METHOD_COLORS, smooth_and_ci, method_display_name
 
 
 def setup_figure(width: float = 10, height: float = 4) -> Tuple[plt.Figure, plt.Axes]:
@@ -98,7 +98,7 @@ def plot_method_curves(ax: plt.Axes, methods: List[str], data_dict: Dict[str, np
         mu, ci = smooth_and_ci(data, sigma, confidence)
 
         color = METHOD_COLORS.get(method)
-        ax.plot(x_values, mu, label=method, color=color)
+        ax.plot(x_values, mu, label=method_display_name(method), color=color)
         ax.fill_between(x_values, mu - ci, mu + ci, color=color, alpha=0.2)
 
 

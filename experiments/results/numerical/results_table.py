@@ -8,6 +8,8 @@ from typing import List
 import numpy as np
 import pandas as pd
 
+from experiments.results.plotting.utils import METHOD_DISPLAY_NAMES
+
 # -----------------------------------------------------------------------------
 # I/O helpers
 # -----------------------------------------------------------------------------
@@ -433,7 +435,7 @@ if __name__ == "__main__":
             agents=args.agents,
         )
         # Pretty‑print method names
-        df["Method"] = df["Method"].replace({"Online_EWC": "Online EWC"})
+        df["Method"] = df["Method"].replace(METHOD_DISPLAY_NAMES)
     else:
         # All levels case (new behavior) - pivot so each method is one row with columns for each level
         level_data = {}
@@ -449,7 +451,7 @@ if __name__ == "__main__":
                 level=level,
             )
             # Pretty‑print method names
-            level_df["Method"] = level_df["Method"].replace({"Online_EWC": "Online EWC"})
+            level_df["Method"] = level_df["Method"].replace(METHOD_DISPLAY_NAMES)
             level_data[level] = level_df
 
         # Create pivoted structure: one row per method, columns for each level

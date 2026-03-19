@@ -8,6 +8,8 @@ from typing import List, Optional, Dict, Tuple
 import numpy as np
 import pandas as pd
 
+from experiments.results.plotting.utils import METHOD_DISPLAY_NAMES
+
 ConfInt = Tuple[float, float]
 
 
@@ -415,7 +417,7 @@ if __name__ == "__main__":
         )
 
         # Pretty‑print method names
-        df["Method"] = df["Method"].replace({"Online_EWC": "Online EWC"})
+        df["Method"] = df["Method"].replace(METHOD_DISPLAY_NAMES)
 
         # Identify best means (ignoring CI)
         best_A = df["AveragePerformance"].max()

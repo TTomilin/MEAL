@@ -26,7 +26,7 @@ from scipy.ndimage import gaussian_filter1d
 from experiments.results.plotting.utils import (
     setup_figure, add_task_boundaries,
     finalize_plot, save_plot, CRIT, METHOD_COLORS, collect_training_data,
-    create_plasticity_parser
+    create_plasticity_parser, method_display_name
 )
 
 
@@ -76,7 +76,7 @@ def main():
             # Plot the method curve
             x = np.linspace(0, total_steps, len(mu))
             color = METHOD_COLORS.get(method)
-            ax.plot(x, mu, label=method, color=color)
+            ax.plot(x, mu, label=method_display_name(method), color=color)
             ax.fill_between(x, mu - ci, mu + ci, color=color, alpha=0.2)
 
         except Exception as e:

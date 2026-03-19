@@ -21,7 +21,7 @@ import seaborn as sns
 
 from experiments.results.plotting.utils import (
     collect_env_curves, smooth_and_ci, add_task_boundaries,
-    save_plot, create_eval_parser
+    save_plot, create_eval_parser, method_display_name
 )
 
 
@@ -45,6 +45,7 @@ def plot():
     """
     args = parse_args()
     data_root = Path(__file__).resolve().parent.parent / args.data_root
+    method_names = ""
 
     # Calculate total steps and set up boundaries
     total_steps = args.seq_len * args.steps_per_task
@@ -62,6 +63,7 @@ def plot():
     # Create one subplot per method
     for m_idx, method in enumerate(methods):
         ax = axes[m_idx]
+        display_name = method_display_name(method)
 
         # Collect data for this method
         envs, curves = collect_env_curves(
@@ -80,16 +82,17 @@ def plot():
         for i, curve in enumerate(curves):
             mean, ci = smooth_and_ci(curve, args.sigma, args.confidence)
             x = np.linspace(0, total_steps, len(mean))
-            ax.plot(x, mean, color=task_colors[i])
+            ax.plot(x, mean, color=task_colors[i], label=display_name)
             ax.fill_between(x, mean - ci, mean + ci, alpha=0.2, color=task_colors[i])
 
         # Set axis limits and labels
         ax.set_xlim(0, total_steps)
-        ax.set_ylim(0, 1)
+        ax.set_ylim(0, None)
         ax.set_ylabel(f"Normalized Score")
         # Only set title if there are multiple methods
         if len(methods) > 1:
-            ax.set_title(method, fontsize=11)
+            ax.set_title(display_name, fontsize=11)
+        method_names += "_" + method
 
         # Set up secondary x-axis with task labels
         twin = ax.twiny()
@@ -111,8 +114,8 @@ def plot():
     out_dir = Path(__file__).resolve().parent.parent / 'plots'
     name = args.plot_name or f"per_task_norm_score"
     # Add method name to filename if only a single method is given
-    if len(methods) == 1:
-        name += f"_{methods[0]}"
+    if len(methods) < 3:
+        name += method_names
     name += f"_seq_{args.seq_len}"
     # Add level suffix if not already present
     if "_level" not in name:

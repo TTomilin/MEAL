@@ -22,6 +22,7 @@ from experiments.results.plotting.utils import (
     finalize_plot,
     create_base_parser,
     CRIT,
+    method_display_name,
 )
 
 
@@ -265,7 +266,7 @@ def _plot_comparison_bars(
             bar_width,
             yerr=cis,
             capsize=5,
-            label=method,
+            label=method_display_name(method),
             color=method_colors.get(method, f"C{i}"),
             edgecolor="black",
             linewidth=0.5
