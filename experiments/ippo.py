@@ -581,99 +581,114 @@ def main():
                     # call the grad_fn function to get the total loss and the gradients
                     total_loss, grads = grad_fn(train_state.params, traj_batch, advantages, targets)
 
-                    # For AGEM, we need to project the gradients
+                    # For AGEM, project the *optimizer update* (not the raw gradient).
+                    # Projecting the raw gradient is insufficient: Adam then transforms it
+                    # per-parameter with adaptive scaling, destroying the AGEM constraint.
+                    # Projecting the actual parameter delta (Adam update) ensures the real
+                    # parameter change satisfies dot(Δθ, mem_update) >= 0.
                     agem_stats = {}
 
-                    def apply_agem_projection(agem_rng, past_sizes):
-                        # Compute per-task gradients with the env_idx for each past task, then sum.
-                        # Masks empty and current-task slots to zero.
-                        max_tasks = cl_state.obs.shape[0]
-                        samples_per_task = max(cfg.agem_sample_size // max_tasks, 1)
-
-                        grads_mem = None
-                        ppo_stats_sum = {
-                            "agem/ppo_total_loss": jnp.array(0.0),
-                            "agem/ppo_value_loss": jnp.array(0.0),
-                            "agem/ppo_actor_loss": jnp.array(0.0),
-                            "agem/ppo_entropy": jnp.array(0.0),
-                        }
-
-                        for t in range(max_tasks):  # Python loop — unrolled at trace time
-                            agem_rng, task_rng = jax.random.split(agem_rng)
-                            t_obs, t_actions, t_logp, t_advs, t_targets, t_values = sample_task_slot(
-                                cl_state, t, samples_per_task, task_rng
-                            )
-                            t_grads, t_stats = compute_memory_gradient(
-                                network, train_state.params,
-                                cfg.clip_eps, cfg.vf_coef, cfg.ent_coef,
-                                t_obs, t_actions, t_advs, t_logp,
-                                t_targets, t_values,
-                                env_idx=t,
-                            )
-                            # Mask: zero gradient contribution from empty or current task
-                            mask = (past_sizes[t] > 0).astype(jnp.float32)
-                            t_grads = jax.tree_util.tree_map(lambda g: g * mask, t_grads)
-                            grads_mem = t_grads if grads_mem is None else jax.tree_util.tree_map(
-                                lambda a, b: a + b, grads_mem, t_grads
-                            )
-                            for k in ppo_stats_sum:
-                                ppo_stats_sum[k] = ppo_stats_sum[k] + t_stats[k] * mask
-
-                        # Average ppo stats over active past tasks
-                        n_active = jnp.sum((past_sizes > 0).astype(jnp.float32)) + 1e-8
-                        ppo_stats = {k: v / n_active for k, v in ppo_stats_sum.items()}
-
-                        # Project PPO gradients onto the past-task feasible cone.
-                        # We do NOT rescale grads_mem to match the PPO gradient norm: that
-                        # rescaling is mathematically irrelevant (scaling g_mem does not
-                        # change the projection result) but is harmful when the memory
-                        # gradient is near-zero — it amplifies floating-point noise into a
-                        # unit-norm random vector that then drives the projection.
-                        projected_grads, proj_stats = agem_project(grads, grads_mem)
-
-                        # Combine stats for logging
-                        combined_stats = {**ppo_stats, **proj_stats}
-                        mem_norm = jnp.linalg.norm(ravel_pytree(grads_mem)[0])
-                        combined_stats["agem/mem_grad_norm_raw"] = mem_norm
-                        total_used = jnp.sum(cl_state.sizes)
-                        total_capacity = cl_state.obs.shape[0] * cl_state.max_size_per_task
-                        combined_stats["agem/memory_fullness_pct"] = (total_used / total_capacity) * 100.0
-
-                        return projected_grads, combined_stats
-
-                    def no_agem_projection():
-                        # Return zeros with the same structure as apply_agem_projection
-                        empty_stats = {
-                            "agem/agem_alpha": jnp.array(0.0),
-                            "agem/agem_dot_g": jnp.array(0.0),
-                            "agem/agem_final_grad_norm": jnp.array(0.0),
-                            "agem/agem_is_proj": jnp.array(False),
-                            "agem/agem_mem_grad_norm": jnp.array(0.0),
-                            "agem/agem_ppo_grad_norm": jnp.array(0.0),
-                            "agem/agem_projected_grad_norm": jnp.array(0.0),
-                            "agem/mem_grad_norm_raw": jnp.array(0.0),
-                            "agem/memory_fullness_pct": jnp.array(0.0),
-                            "agem/ppo_actor_loss": jnp.array(0.0),
-                            "agem/ppo_entropy": jnp.array(0.0),
-                            "agem/ppo_total_loss": jnp.array(0.0),
-                            "agem/ppo_value_loss": jnp.array(0.0)
-                        }
-                        return grads, empty_stats
-
-                    # Gradient projection for AGEM
                     if cfg.cl_method.lower() == "agem" and cl_state is not None:
-                        # Exclude the current task from the reference set
+                        # Compute Adam update for the PPO gradient (don't apply yet)
+                        ppo_updates, new_opt_state = train_state.tx.update(
+                            grads, train_state.opt_state, train_state.params
+                        )
+
                         past_sizes = cl_state.sizes.at[env_idx].set(0)
-                        grads, agem_stats = jax.lax.cond(
-                            jnp.sum(past_sizes) > 0,  # only project when past tasks have data
+
+                        def apply_agem_projection(agem_rng, past_sizes):
+                            # Compute per-task BC gradients and sum (masked by active tasks)
+                            max_tasks = cl_state.obs.shape[0]
+                            samples_per_task = max(cfg.agem_sample_size // max_tasks, 1)
+
+                            grads_mem = None
+                            ppo_stats_sum = {
+                                "agem/ppo_total_loss": jnp.array(0.0),
+                                "agem/ppo_value_loss": jnp.array(0.0),
+                                "agem/ppo_actor_loss": jnp.array(0.0),
+                                "agem/ppo_entropy": jnp.array(0.0),
+                            }
+
+                            for t in range(max_tasks):  # Python loop — unrolled at trace time
+                                agem_rng, task_rng = jax.random.split(agem_rng)
+                                t_obs, t_actions, t_logp, t_advs, t_targets, t_values = sample_task_slot(
+                                    cl_state, t, samples_per_task, task_rng
+                                )
+                                t_grads, t_stats = compute_memory_gradient(
+                                    network, train_state.params,
+                                    cfg.clip_eps, cfg.vf_coef, cfg.ent_coef,
+                                    t_obs, t_actions, t_advs, t_logp,
+                                    t_targets, t_values,
+                                    env_idx=t,
+                                )
+                                mask = (past_sizes[t] > 0).astype(jnp.float32)
+                                t_grads = jax.tree_util.tree_map(lambda g: g * mask, t_grads)
+                                grads_mem = t_grads if grads_mem is None else jax.tree_util.tree_map(
+                                    lambda a, b: a + b, grads_mem, t_grads
+                                )
+                                for k in ppo_stats_sum:
+                                    ppo_stats_sum[k] = ppo_stats_sum[k] + t_stats[k] * mask
+
+                            n_active = jnp.sum((past_sizes > 0).astype(jnp.float32)) + 1e-8
+                            ppo_stats = {k: v / n_active for k, v in ppo_stats_sum.items()}
+
+                            # Convert memory gradient into an Adam update using the SAME
+                            # opt_state as the PPO update.  Projecting update-vs-update
+                            # (rather than raw-grad-vs-raw-grad) means the constraint
+                            # dot(Δθ_ppo, Δθ_mem) >= 0 holds for the actual parameter
+                            # changes, which is what AGEM requires.
+                            mem_updates, _ = train_state.tx.update(
+                                grads_mem, train_state.opt_state, train_state.params
+                            )
+
+                            projected_updates, proj_stats = agem_project(ppo_updates, mem_updates)
+
+                            combined_stats = {**ppo_stats, **proj_stats}
+                            mem_norm = jnp.linalg.norm(ravel_pytree(mem_updates)[0])
+                            combined_stats["agem/mem_grad_norm_raw"] = mem_norm
+                            total_used = jnp.sum(cl_state.sizes)
+                            total_capacity = cl_state.obs.shape[0] * cl_state.max_size_per_task
+                            combined_stats["agem/memory_fullness_pct"] = (total_used / total_capacity) * 100.0
+
+                            return projected_updates, combined_stats
+
+                        def no_agem_projection():
+                            empty_stats = {
+                                "agem/agem_alpha": jnp.array(0.0),
+                                "agem/agem_dot_g": jnp.array(0.0),
+                                "agem/agem_final_grad_norm": jnp.array(0.0),
+                                "agem/agem_is_proj": jnp.array(False),
+                                "agem/agem_mem_grad_norm": jnp.array(0.0),
+                                "agem/agem_ppo_grad_norm": jnp.array(0.0),
+                                "agem/agem_projected_grad_norm": jnp.array(0.0),
+                                "agem/mem_grad_norm_raw": jnp.array(0.0),
+                                "agem/memory_fullness_pct": jnp.array(0.0),
+                                "agem/ppo_actor_loss": jnp.array(0.0),
+                                "agem/ppo_entropy": jnp.array(0.0),
+                                "agem/ppo_total_loss": jnp.array(0.0),
+                                "agem/ppo_value_loss": jnp.array(0.0)
+                            }
+                            return ppo_updates, empty_stats
+
+                        final_updates, agem_stats = jax.lax.cond(
+                            jnp.sum(past_sizes) > 0,
                             lambda: apply_agem_projection(agem_rng, past_sizes),
                             lambda: no_agem_projection()
                         )
 
-                    loss_information = total_loss, grads, agem_stats
+                        # Apply the (possibly projected) optimizer update directly,
+                        # bypassing apply_gradients to avoid a second Adam call.
+                        new_params = optax.apply_updates(train_state.params, final_updates)
+                        train_state = train_state.replace(
+                            step=train_state.step + 1,
+                            params=new_params,
+                            opt_state=new_opt_state,
+                        )
+                    else:
+                        # Non-AGEM methods: standard apply_gradients
+                        train_state = train_state.apply_gradients(grads=grads)
 
-                    # Apply the gradients to the network
-                    train_state = train_state.apply_gradients(grads=grads)
+                    loss_information = total_loss, grads, agem_stats
 
                     # Return updated rng in carry for next minibatch
                     return (train_state, cl_state, rng), loss_information
