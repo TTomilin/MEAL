@@ -65,7 +65,7 @@ def init_agem_memory(max_size: int, obs_shape: tuple, max_tasks: int = 20):
     zeros_int = lambda *shape: jnp.zeros(shape, dtype=jnp.int32)
     return AGEMMemory(
         obs=zeros(max_tasks, max_size_per_task, *obs_shape),
-        actions=zeros(max_tasks, max_size_per_task),
+        actions=zeros_int(max_tasks, max_size_per_task),
         log_probs=zeros(max_tasks, max_size_per_task),
         advantages=zeros(max_tasks, max_size_per_task),
         targets=zeros(max_tasks, max_size_per_task),
@@ -437,21 +437,15 @@ def compute_memory_gradient(network, params,
         pi, value, _ = network.apply(params, mem_obs, env_idx=env_idx)  # shapes: [B]
         log_prob = pi.log_prob(mem_actions)
 
-        ratio = jnp.exp(log_prob - mem_log_probs)
-        # standard advantage normalization
-        adv_std = jnp.std(mem_advs) + 1e-8
-        adv_mean = jnp.mean(mem_advs)
-        normalized_adv = (mem_advs - adv_mean) / adv_std
+        # Behavioural-cloning actor loss: maximise log-prob of the remembered actions
+        # directly, with no importance weighting.  Importance weights (ratio = exp(new -
+        # old)) become vanishingly small after policy drift across tasks, making all
+        # PPO-clipped contributions zero and the memory gradient meaningless.  BC avoids
+        # this by providing a stable, non-zero gradient regardless of policy drift.
+        actor_loss = -jnp.mean(log_prob)
 
-        unclipped = ratio * normalized_adv
-        clipped = jnp.clip(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * normalized_adv
-        actor_loss = -jnp.mean(jnp.minimum(unclipped, clipped))
-
-        # Critic Loss (same as normal PPO)
-        value_pred_clipped = mem_values + (value - mem_values).clip(-clip_eps, clip_eps)
-        value_losses = (value - mem_targets) ** 2
-        value_losses_clipped = (value_pred_clipped - mem_targets) ** 2
-        critic_loss = 0.5 * jnp.mean(jnp.maximum(value_losses, value_losses_clipped))
+        # Critic loss against stored value targets (no clipping needed without IS weights)
+        critic_loss = 0.5 * jnp.mean((value - mem_targets) ** 2)
 
         entropy = jnp.mean(pi.entropy())
 
