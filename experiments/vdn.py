@@ -132,6 +132,7 @@ class Config:
     record_video: bool = False
     video_length: int = 250
     log_interval: int = 5
+    renderer_version: str = "v2"  # "v1" for original spritesheets, "v2" for dynamic colours
 
     # ═══════════════════════════════════════════════════════════════════════════
     # LOGGING PARAMETERS
@@ -921,7 +922,7 @@ def main():
             # Optional video recording
             if cfg.record_video:
                 if visualizer is None:
-                    visualizer = create_visualizer(num_agents, cfg.env_name)
+                    visualizer = create_visualizer(num_agents, cfg.env_name, cfg.renderer_version)
                 states = rollout_for_video_vdn(
                     rng, cfg, train_state, env, network, task_idx, cfg.video_length
                 )

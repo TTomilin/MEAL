@@ -14,13 +14,13 @@ def flat_idx(x, y, W):
 
 def test_make_soup_and_render_gif(tmp_path: Path = None, num_steps: int = 150):
     """
-    Render a short episode of 3 agents taking random actions and save a GIF.
+    Render a short episode of 4 agents taking random actions and save a GIF.
 
     Layout (W=7, H=7):
       - Counter strip on y=3
       - Onion pile at (1,3); Pot at (3,3); Plate pile at (5,3)
       - Serve tile at (3,1)
-      - Agents: A0 at (1,2), A1 at (3,2), A2 at (5,4)
+      - Agents: A0 at (1,2), A1 at (3,2), A2 at (5,4), A3 at (2,5)
     """
     W, H = 7, 7
 
@@ -34,6 +34,7 @@ def test_make_soup_and_render_gif(tmp_path: Path = None, num_steps: int = 150):
             flat_idx(1, 2, W),  # A0
             flat_idx(3, 2, W),  # A1
             flat_idx(5, 4, W),  # A2
+            flat_idx(2, 5, W),  # A3
         ], dtype=jnp.uint32),
         "goal_idx":      jnp.array([flat_idx(3, 1, W)], dtype=jnp.uint32),
         "onion_pile_idx": jnp.array([flat_idx(1, 3, W)], dtype=jnp.uint32),
@@ -43,11 +44,11 @@ def test_make_soup_and_render_gif(tmp_path: Path = None, num_steps: int = 150):
 
     env = Overcooked(
         layout=layout,
-        layout_name="test_3_agents_render",
+        layout_name="test_4_agents_render",
         random_reset=False,
         random_agent_start=False,
         max_steps=num_steps,
-        num_agents=3,
+        num_agents=4,
         task_id=0,
         cook_time=5,
     )
@@ -71,8 +72,8 @@ def test_make_soup_and_render_gif(tmp_path: Path = None, num_steps: int = 150):
     out_dir = Path("gifs")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    viz = OvercookedVisualizer(num_agents=3)
-    gif_path = out_dir / "3_agents_render.gif"
+    viz = OvercookedVisualizer(num_agents=4)
+    gif_path = out_dir / "4_agents_render.gif"
     viz.animate(states, out_path=str(gif_path))
 
     print(f"✓ GIF saved to: {gif_path}  ({len(states)} frames)")

@@ -121,6 +121,7 @@ class Config:
     record_video: bool = False
     video_length: int = 250
     log_interval: int = 5
+    renderer_version: str = "v2"  # "v1" for original spritesheets, "v2" for dynamic colours
 
     # ═══════════════════════════════════════════════════════════════════════════
     # LOGGING PARAMETERS
@@ -622,21 +623,18 @@ def main():
                         n_active = jnp.sum((past_sizes > 0).astype(jnp.float32)) + 1e-8
                         ppo_stats = {k: v / n_active for k, v in ppo_stats_sum.items()}
 
-                        # Scale memory gradient to match current gradient magnitude
-                        g_ppo, _ = ravel_pytree(grads)
-                        g_mem, _ = ravel_pytree(grads_mem)
-                        norm_ppo = jnp.linalg.norm(g_ppo) + 1e-12
-                        norm_mem = jnp.linalg.norm(g_mem) + 1e-12
-                        scale = norm_ppo / norm_mem * cfg.agem_gradient_scale
-                        grads_mem_scaled = jax.tree_util.tree_map(lambda g: g * scale, grads_mem)
-
-                        # Project PPO gradients onto the past-task feasible cone
-                        projected_grads, proj_stats = agem_project(grads, grads_mem_scaled)
+                        # Project PPO gradients onto the past-task feasible cone.
+                        # We do NOT rescale grads_mem to match the PPO gradient norm: that
+                        # rescaling is mathematically irrelevant (scaling g_mem does not
+                        # change the projection result) but is harmful when the memory
+                        # gradient is near-zero — it amplifies floating-point noise into a
+                        # unit-norm random vector that then drives the projection.
+                        projected_grads, proj_stats = agem_project(grads, grads_mem)
 
                         # Combine stats for logging
                         combined_stats = {**ppo_stats, **proj_stats}
-                        scaled_norm = jnp.linalg.norm(ravel_pytree(grads_mem_scaled)[0])
-                        combined_stats["agem/mem_grad_norm_scaled"] = scaled_norm
+                        mem_norm = jnp.linalg.norm(ravel_pytree(grads_mem)[0])
+                        combined_stats["agem/mem_grad_norm_raw"] = mem_norm
                         total_used = jnp.sum(cl_state.sizes)
                         total_capacity = cl_state.obs.shape[0] * cl_state.max_size_per_task
                         combined_stats["agem/memory_fullness_pct"] = (total_used / total_capacity) * 100.0
@@ -653,7 +651,7 @@ def main():
                             "agem/agem_mem_grad_norm": jnp.array(0.0),
                             "agem/agem_ppo_grad_norm": jnp.array(0.0),
                             "agem/agem_projected_grad_norm": jnp.array(0.0),
-                            "agem/mem_grad_norm_scaled": jnp.array(0.0),
+                            "agem/mem_grad_norm_raw": jnp.array(0.0),
                             "agem/memory_fullness_pct": jnp.array(0.0),
                             "agem/ppo_actor_loss": jnp.array(0.0),
                             "agem/ppo_entropy": jnp.array(0.0),
@@ -909,7 +907,7 @@ def main():
             # Video Recording
             if cfg.record_video:
                 if visualizer is None:
-                    visualizer = create_visualizer(num_agents, cfg.env_name)
+                    visualizer = create_visualizer(num_agents, cfg.env_name, cfg.renderer_version)
                 # Record a video after finishing training on a task
                 env_name = env.layout_name
                 start_time = time.time()

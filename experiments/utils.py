@@ -251,8 +251,8 @@ def rollout_for_video(rng, config, train_state, env, network, env_idx=0, max_ste
     return states
 
 
-def create_visualizer(num_agents, env_name):
+def create_visualizer(num_agents, env_name, renderer_version=None):
     from meal.visualization.visualizer import OvercookedVisualizer
     from meal.visualization.visualizer_po import OvercookedVisualizerPO
-    # Create appropriate visualizer based on environment type
-    return OvercookedVisualizerPO(num_agents) if env_name == "overcooked_po" else OvercookedVisualizer(num_agents)
+    kwargs = dict(num_agents=num_agents, renderer_version=renderer_version)
+    return OvercookedVisualizerPO(**kwargs) if env_name == "overcooked_po" else OvercookedVisualizer(**kwargs)

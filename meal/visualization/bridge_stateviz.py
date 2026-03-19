@@ -3,22 +3,29 @@ from __future__ import annotations
 from collections import namedtuple
 
 from meal.visualization.rendering.actions import Direction
-from meal.visualization.rendering.state_visualizer import StateVisualizer, EMPTY, COUNTER, \
-    ONION_DISPENSER, TOMATO_DISPENSER, POT, DISH_DISPENSER, SERVING_LOC
 from meal.visualization.types import (
     DrawableState, Tile, Obj, Player as DPlayer, PotState, Dir
 )
 
+# Tile character constants (same values used by both v1 and v2 renderers)
+EMPTY = " "
+COUNTER = "X"
+ONION_DISPENSER = "O"
+TOMATO_DISPENSER = "T"
+POT = "P"
+DISH_DISPENSER = "D"
+SERVING_LOC = "S"
+
 # --- helpers ---------------------------------------------------------------
 
 _TILE_TO_CHAR = {
-    Tile.EMPTY: EMPTY,  # " "
-    Tile.COUNTER: COUNTER,  # "X"
-    Tile.ONION_DISPENSER: ONION_DISPENSER,  # "O"
-    Tile.TOMATO_DISPENSER: TOMATO_DISPENSER,  # "T"
-    Tile.POT: POT,  # "P"
-    Tile.DISH_DISPENSER: DISH_DISPENSER,  # "D"
-    Tile.SERVE: SERVING_LOC,  # "S"
+    Tile.EMPTY: EMPTY,
+    Tile.COUNTER: COUNTER,
+    Tile.ONION_DISPENSER: ONION_DISPENSER,
+    Tile.TOMATO_DISPENSER: TOMATO_DISPENSER,
+    Tile.POT: POT,
+    Tile.DISH_DISPENSER: DISH_DISPENSER,
+    Tile.SERVE: SERVING_LOC,
 }
 
 _DIR_TO_VIZ = {

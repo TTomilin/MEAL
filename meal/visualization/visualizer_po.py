@@ -32,8 +32,21 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
         viz.animate(state_seq, out_path="x.gif", env=env, task_idx=i)
     """
 
-    def __init__(self, num_agents: int = 2, pot_full: int = 20, pot_empty: int = 23, tile_px: int = 64):
-        super().__init__(num_agents=num_agents, pot_full=pot_full, pot_empty=pot_empty, tile_px=tile_px)
+    def __init__(
+        self,
+        num_agents: int = 2,
+        pot_full: int = 20,
+        pot_empty: int = 23,
+        tile_px: int = 64,
+        renderer_version=None,
+    ):
+        super().__init__(
+            num_agents=num_agents,
+            pot_full=pot_full,
+            pot_empty=pot_empty,
+            tile_px=tile_px,
+            renderer_version=renderer_version,
+        )
         self._init_view_colors()  # semi-transparent
 
     def _init_view_colors(self, alpha: int = 90):
@@ -53,16 +66,25 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
             "pink": (255, 165, 210),
         }
 
-        # Pull the configured order directly from the StateVisualizer
-        # (defaults to ["red","green","orange","blue","purple"] unless you changed it)
+        # Pull the configured order directly from the StateVisualizer.
+        # With the v2 renderer player_colors defaults to [], so we fall back to
+        # auto-generated colours (same golden-ratio hues used for the hats).
+        from meal.visualization.rendering.sprite_loader import agent_color as _agent_color
         palette = []
         for name in self.state_visualizer.player_colors:
             rgb = name_to_rgb.get(name, (200, 200, 200))  # sane fallback for unknown names
             palette.append(np.array([rgb[0], rgb[1], rgb[2], alpha], dtype=np.uint8))
-        # keep at least num_agents colors by cycling
-        if len(palette) < self.num_agents:
+
+        if not palette:
+            # v2 renderer (empty player_colors): generate per-agent colours automatically
+            for i in range(self.num_agents):
+                rgb = _agent_color(i)
+                palette.append(np.array([rgb[0], rgb[1], rgb[2], alpha], dtype=np.uint8))
+        elif len(palette) < self.num_agents:
+            # cycle through the supplied palette if there are more agents than colours
             extra = [palette[i % len(palette)] for i in range(self.num_agents)]
             palette = extra
+
         self.view_colors = palette
 
     # --- internal: build an RGBA overlay (H*tile_px, W*tile_px, 4) from boolean masks ---
@@ -94,42 +116,17 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
             if key not in masks:
                 continue
             mask = np.asarray(masks[key], dtype=np.uint8)  # (H,W) {0,1}
-            big = np.kron(mask, ones)  # (Hp, Wp)
+            big = np.kron(mask, ones).astype(bool)  # (Hp, Wp)
 
             color = self.view_colors[agent_idx % len(self.view_colors)]
-            layer = np.zeros_like(overlay)
-            # paint only where mask is 1
-            layer[..., 0] = big * color[0]
-            layer[..., 1] = big * color[1]
-            layer[..., 2] = big * color[2]
-            layer[..., 3] = big * color[3]
-
-            # composite this agent layer over the running overlay (source-over)
-            overlay = self._alpha_over_rgba(overlay, layer)
+            # Direct paint: each visible tile gets this agent's color.
+            # Using assignment (not alpha-over stacking) means the alpha stays
+            # constant at the configured value regardless of how many agents
+            # share the same tile.  Agents with higher indices paint over lower
+            # ones in overlapping areas, which is fine for visualization.
+            overlay[big] = color
 
         return overlay
-
-    @staticmethod
-    def _alpha_over_rgba(dst_rgba: np.ndarray, src_rgba: np.ndarray) -> np.ndarray:
-        """
-        Source-over for two RGBA uint8 images; returns RGBA uint8.
-        """
-        if src_rgba is None:
-            return dst_rgba
-        dst = dst_rgba.astype(np.float32) / 255.0
-        src = src_rgba.astype(np.float32) / 255.0
-        sa = src[..., 3:4]
-        da = dst[..., 3:4]
-
-        out_a = sa + da * (1.0 - sa)
-        # avoid div-by-zero when out_a == 0
-        out_rgb = np.where(
-            out_a > 0,
-            (src[..., :3] * sa + dst[..., :3] * da * (1.0 - sa)) / out_a,
-            0.0,
-        )
-        out = np.concatenate([out_rgb, out_a], axis=-1)
-        return np.clip(out * 255.0, 0, 255).astype(np.uint8)
 
     # --- public API: mirrors base, but adds `env` and overlays when provided ---
 
@@ -157,32 +154,20 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
         """
         Same as base animate, but if `env` is given we overlay PO windows on every frame.
         """
-        # 1) drawable conversion + (optional) pad — reuse parent logic
-        #    but we’ll just render frames directly since parent already batches conversion internally.
+        import os
+        import wandb
+
         frames = []
         for s in state_seq:
             frame = self.render(s, show=False, env=env)
             frames.append(frame)
 
-        # 2) write GIF (reuse parent’s writer for consistency)
-        from PIL import Image
-        import os, wandb
-
         os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-        pil_frames = [Image.fromarray(f, mode="RGB") for f in frames]
-        duration_ms = int(1000 / fps)
-
-        pil_frames[0].save(
-            out_path,
-            save_all=True,
-            append_images=pil_frames[1:],
-            optimize=False,
-            duration=duration_ms,
-            loop=0,
-            disposal=2,
-        )
+        self._save_frames(np.stack(frames, axis=0), out_path, fps)
 
         if wandb.run is not None:
-            wandb.log({f"task_{task_idx}": wandb.Video(out_path, format="gif")})
+            ext = os.path.splitext(out_path)[1].lower()
+            fmt = "gif" if ext == ".gif" else "mp4"
+            wandb.log({f"task_{task_idx}": wandb.Video(out_path, format=fmt)})
 
         return out_path
