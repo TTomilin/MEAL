@@ -13,4 +13,4 @@ Change RENDERER_VERSION to switch between:
             Sprites live in meal/visualization/data/sprites/.
 """
 
-RENDERER_VERSION: str = "v2"
+RENDERER_VERSION: str = "v1"

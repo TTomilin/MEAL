@@ -121,7 +121,7 @@ class Config:
     record_video: bool = False
     video_length: int = 250
     log_interval: int = 5
-    renderer_version: str = "v2"  # "v1" for original spritesheets, "v2" for dynamic colours
+    renderer_version: str = "v1"  # "v1" for original spritesheets, "v2" for dynamic colours
 
     # ═══════════════════════════════════════════════════════════════════════════
     # LOGGING PARAMETERS
