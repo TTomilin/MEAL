@@ -48,7 +48,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from jaxmarl.environments.mpe.default_params import (
+from meal.env.mpe.default_params import (
     AGENT_COLOUR,
     CONTACT_FORCE,
     CONTACT_MARGIN,
@@ -57,8 +57,8 @@ from jaxmarl.environments.mpe.default_params import (
     DT,
     OBS_COLOUR,
 )
-from jaxmarl.environments.mpe.simple import SimpleMPE, State
-from jaxmarl.environments.spaces import Box, Discrete
+from meal.env.mpe.simple import SimpleMPE, State
+from meal.env.mpe.spaces import Box, Discrete
 
 # Gray colour for obstacles (distinct from green agents and dark landmarks)
 OBSTACLE_COLOUR = (160, 160, 160)
