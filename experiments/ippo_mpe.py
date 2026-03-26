@@ -116,6 +116,7 @@ class Config:
     local_ratio: float = 0.5     # 0=fully global reward, 1=fully local
     seq_length: int = 10
     single_task_idx: Optional[int] = None
+    strategy: str = "generate"
 
     # ═══════════════════════════════════════════════════════════════════════
     # EVALUATION
