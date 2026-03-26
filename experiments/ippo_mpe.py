@@ -122,6 +122,7 @@ class Config:
     # EVALUATION
     # ═══════════════════════════════════════════════════════════════════════
     evaluation: bool = True
+    save_checkpoints: bool = False
     record_video: bool = False
     video_length: int = 100
     log_interval: int = 5
@@ -533,12 +534,12 @@ def main():
 
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
-                        avg_rewards, avg_coverage, avg_covered = evaluate_all_envs(
+                        avg_rewards, avg_coverage_fraction, avg_covered = evaluate_all_envs(
                             eval_rng, train_state.params, seq_length, evaluate_env
                         )
                         for i, env_name in enumerate(env_names):
                             metrics[f"Evaluation/Returns/{i}_{env_name}"] = avg_rewards[i]
-                            metrics[f"Evaluation/Coverage/{i}_{env_name}"] = avg_coverage[i]
+                            metrics[f"Evaluation/CoverageFraction/{i}_{env_name}"] = avg_coverage_fraction[i]
                             metrics[f"Evaluation/NumCovered/{i}_{env_name}"] = avg_covered[i]
 
                     def callback(args):
@@ -606,12 +607,13 @@ def main():
             importance = importance_fn(train_state.params, task_idx, task_rng)
             cl_state = cl.update_state(cl_state, train_state.params, importance)
 
-            repo_root = Path(__file__).resolve().parent.parent
-            path = (
-                f"{repo_root}/checkpoints/mpe/{cfg.cl_method}"
-                f"/{run_name}/model_env_{task_idx + 1}"
-            )
-            save_params(path, train_state, layout_name=env.map_id, config=cfg)
+            if cfg.save_checkpoints:
+                repo_root = Path(__file__).resolve().parent.parent
+                path = (
+                    f"{repo_root}/checkpoints/mpe/{cfg.cl_method}"
+                    f"/{run_name}/model_env_{task_idx + 1}"
+                )
+                save_params(path, train_state, layout_name=env.map_id, config=cfg)
 
             if cfg.single_task_idx is not None:
                 break

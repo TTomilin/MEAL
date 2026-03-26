@@ -2,9 +2,9 @@
 Evaluation helpers for MPE SimpleSpread.
 
 Metrics per task:
-  - avg_rewards      : mean total reward per episode across parallel envs
-  - avg_coverage     : mean coverage_reward (negative sum of min-landmark distances)
-  - avg_num_covered  : mean number of landmarks covered per step
+  - avg_rewards          : mean total reward per episode across parallel envs
+  - avg_coverage_fraction: mean coverage_fraction (num_covered/num_landmarks) per step [0,1]
+  - avg_num_covered      : mean number of landmarks covered per step
 """
 
 import jax
@@ -33,11 +33,11 @@ def make_eval_fn(
         )
 
         total_rewards = jnp.zeros((num_envs,), jnp.float32)
-        total_coverage = jnp.zeros((num_envs,), jnp.float32)
+        total_coverage_fraction = jnp.zeros((num_envs,), jnp.float32)
         total_num_covered = jnp.zeros((num_envs,), jnp.float32)
 
         def one_step(carry, _):
-            env_state, obs, rewards, coverage, num_covered, rng = carry
+            env_state, obs, rewards, coverage_fraction, num_covered, rng = carry
 
             obs_batch = batchify(
                 obs, agents, len(agents) * num_envs, not use_cnn
@@ -55,21 +55,21 @@ def make_eval_fn(
             )(step_rng, env_state, env_act)
 
             rewards += sum(reward[a] for a in agents)
-            coverage += info.get("coverage_reward", jnp.zeros((num_envs,)))
+            coverage_fraction += info.get("coverage_fraction", jnp.zeros((num_envs,)))
             num_covered += info.get("num_covered", jnp.zeros((num_envs,)))
 
-            return (env_state2, obs2, rewards, coverage, num_covered, rng), None
+            return (env_state2, obs2, rewards, coverage_fraction, num_covered, rng), None
 
-        (_, _, total_rewards, total_coverage, total_num_covered, _), _ = jax.lax.scan(
+        (_, _, total_rewards, total_coverage_fraction, total_num_covered, _), _ = jax.lax.scan(
             one_step,
-            (env_state, obs, total_rewards, total_coverage, total_num_covered, rng),
+            (env_state, obs, total_rewards, total_coverage_fraction, total_num_covered, rng),
             xs=None,
             length=num_steps,
         )
 
         return (
             total_rewards.mean(),
-            total_coverage.mean() / num_steps,   # per-step average
+            total_coverage_fraction.mean() / num_steps,  # per-step average [0,1]
             total_num_covered.mean() / num_steps,
         )
 
@@ -80,5 +80,5 @@ def evaluate_all_envs(rng, params, num_envs, evaluate_env):
     env_indices = jnp.arange(num_envs, dtype=jnp.int32)
     rngs = jax.random.split(rng, num_envs)
     eval_vmapped = jax.vmap(evaluate_env, in_axes=(0, None, 0))
-    avg_rewards, avg_coverage, avg_num_covered = eval_vmapped(rngs, params, env_indices)
-    return avg_rewards, avg_coverage, avg_num_covered
+    avg_rewards, avg_coverage_fraction, avg_num_covered = eval_vmapped(rngs, params, env_indices)
+    return avg_rewards, avg_coverage_fraction, avg_num_covered

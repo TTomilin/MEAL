@@ -393,11 +393,14 @@ class MPESpreadEnv(SimpleMPE):
 
         min_dists = jax.vmap(_min_dist)(landmark_pos)        # (L,)
         coverage_reward = -jnp.sum(min_dists)
-        num_covered = jnp.sum(min_dists < 0.15).astype(jnp.float32)
+        # Threshold = agent_radius + landmark_radius (physically touching)
+        num_covered = jnp.sum(min_dists < 0.20).astype(jnp.float32)
+        coverage_fraction = num_covered / self._num_goals   # primary success metric [0,1]
 
         info = {
             "coverage_reward": coverage_reward,
             "num_covered": num_covered,
+            "coverage_fraction": coverage_fraction,
         }
         return obs, state, rewards, dones, info
 
