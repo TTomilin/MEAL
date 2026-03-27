@@ -218,8 +218,13 @@ def experiment_suffix(cfg: dict) -> str:
     return ""
 
 def difficulty_string(cfg: dict) -> str:
-    if cfg.get("env_name") == 'jaxnav':
+    env = cfg.get("env_name", "overcooked")
+    if env == "jaxnav":
         return "jaxnav"
+    if env == "mpe":
+        return "mpe"
+    if env == "smax":
+        return "smax"
     if cfg.get("difficulty") == 'easy':
         return "level_1"
     if cfg.get("difficulty") == 'medium':

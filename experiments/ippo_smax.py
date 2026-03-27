@@ -63,6 +63,7 @@ class Config:
     # TRAINING / PPO PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════
     alg_name: Literal["ippo"] = "ippo"
+    env_name: str = "smax"
     lr: float = 3e-4
     anneal_lr: bool = False
     num_envs: int = 512
