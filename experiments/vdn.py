@@ -528,7 +528,7 @@ def main():
 
         # Reset optimizer and update counter for this task
         new_opt_state = tx.init(train_state.params)
-        train_state = train_state.replace(tx=tx, opt_state=new_opt_state, n_updates=0)
+        train_state = train_state.replace(tx=tx, opt_state=new_opt_state, n_updates=0, grad_steps=0)
 
         def _update_step(runner_state, _):
             train_state, expl_state, rng = runner_state
