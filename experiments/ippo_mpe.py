@@ -620,7 +620,7 @@ def main():
                 break
 
     rng, train_rng = jax.random.split(rng)
-    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads, cl, cfg)
+    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads)
 
     if cfg.cl_method.lower() == "agem":
         obs_shape = temp_env.observation_space().shape
