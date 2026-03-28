@@ -39,7 +39,7 @@ def _mean_ci(series: List[float]) -> ConfInt:
     return mean, float(ci)
 
 
-def _calculate_curve_based_forgetting(task_curve: np.ndarray, training_end_idx: int = None) -> float:
+def _calculate_curve_based_forgetting(task_curve: np.ndarray, training_end_idx: int = None, lambda_decay: float = 2.0) -> float:
     """
     Calculate normalized forgetting where 0 = no forgetting and 1 = complete forgetting.
 
@@ -81,7 +81,7 @@ def _calculate_curve_based_forgetting(task_curve: np.ndarray, training_end_idx: 
 
     # Weight forgetting by how early it occurs (earlier forgetting gets higher weight)
     # Use exponential decay: weight = exp(-λ * (t / T)) where t is time step, T is total time
-    lambda_decay = 2.0  # Higher values penalize early forgetting more
+    # lambda_decay: Higher values penalize early forgetting more (passed as parameter)
     time_steps = np.arange(len(post_training_curve))
     total_time = len(post_training_curve) - 1
 
@@ -116,6 +116,7 @@ def compute_metrics(
         end_window_evals: int = 10,
         level: int = 1,
         agents: int = 2,
+        lambda_decay: float = 2.0,
 ) -> pd.DataFrame:
     rows: list[dict[str, float]] = []
 
@@ -271,7 +272,7 @@ def compute_metrics(
 
                 # Calculate curve-based forgetting using end-of-training performance
                 if any(task_curve > 0.0):  # If end-of-training performance is 0 or negative, no meaningful forgetting can be calculated
-                    curve_forgetting = _calculate_curve_based_forgetting(task_curve, training_end_idx)
+                    curve_forgetting = _calculate_curve_based_forgetting(task_curve, training_end_idx, lambda_decay=lambda_decay)
                     f_vals.append(curve_forgetting)
 
             F_seeds.append(float(np.nanmean(f_vals)))
