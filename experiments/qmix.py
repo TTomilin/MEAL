@@ -1012,7 +1012,7 @@ def main():
         )
     else:
         # CL state tracks Q-network params only
-        cl_state = init_cl_state(q_network_params, False, cfg.regularize_heads, cl, cfg)
+        cl_state = init_cl_state(q_network_params, False, cfg.regularize_heads)
 
     rng, train_rng = jax.random.split(rng)
     loop_over_envs(train_rng, train_state, cl_state)

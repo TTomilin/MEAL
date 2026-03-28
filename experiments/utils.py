@@ -103,7 +103,7 @@ def build_reg_weights(params, regularize_critic: bool, regularize_heads: bool) -
     return jax.tree_util.tree_map_with_path(_mark, params)
 
 
-def init_cl_state(params: FrozenDict, regularize_critic: bool, regularize_heads: bool, cl=None, cfg=None) -> CLState:
+def init_cl_state(params: FrozenDict, regularize_critic: bool, regularize_heads: bool) -> CLState:
     mask = build_reg_weights(params, regularize_critic, regularize_heads)
     return CLState(
         old_params=jax.tree.map(lambda x: x.copy(), params),

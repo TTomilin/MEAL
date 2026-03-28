@@ -1020,7 +1020,7 @@ def main():
 
     # Run the model
     rng, train_rng = jax.random.split(rng)
-    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads, cl, cfg)
+    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads)
 
     # Initialize AGEM memory if using AGEM and this is the first environment
     if cfg.cl_method.lower() == "agem":
