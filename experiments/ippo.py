@@ -854,10 +854,11 @@ def main():
 
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
-                        avg_rewards, avg_soups = evaluate_all_envs(
+                        avg_rewards, avg_soups, avg_het = evaluate_all_envs(
                             eval_rng, train_state.params, seq_length, evaluate_env
                         )
                         metrics = add_eval_metrics(avg_rewards, avg_soups, env_names, max_soup_vals, metrics)
+                        metrics = add_het_metrics(avg_het, env_names, metrics)
 
                     def callback(args):
                         metrics, update_step, env_counter = args

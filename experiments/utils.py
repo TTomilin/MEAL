@@ -83,6 +83,13 @@ def copy_params(params):
     return jax.tree_util.tree_map(lambda x: x.copy(), params)
 
 
+def add_het_metrics(avg_het, layout_names, metrics):
+    """Add per-task role-heterogeneity (JSD) to the metrics dict."""
+    for i, layout_name in enumerate(layout_names):
+        metrics[f"Evaluation/Heterogeneity/{i}_{layout_name}"] = avg_het[i]
+    return metrics
+
+
 def add_eval_metrics(avg_rewards, avg_soups, layout_names, max_soup_dict, metrics):
     for i, layout_name in enumerate(layout_names):
         metrics[f"Evaluation/Returns/{i}_{layout_name}"] = avg_rewards[i]
