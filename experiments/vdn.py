@@ -951,7 +951,7 @@ def main():
             max_tasks=seq_length,
         )
     else:
-        cl_state = init_cl_state(train_state.params, False, cfg.regularize_heads)
+        cl_state = init_cl_state(train_state.params, False, cfg.regularize_heads, cl, cfg)
 
     rng, train_rng = jax.random.split(rng)
     loop_over_envs(train_rng, train_state, cl_state)
