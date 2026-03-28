@@ -182,11 +182,16 @@ def compute_vdn_memory_gradient(network, params, target_params, gamma,
     mem_next_obs_T = mem_next_obs.transpose(1, 0, 2)
     mem_actions_T = mem_actions.T  # (A, B)
 
-    # Fresh TD targets from current target network
-    q_next = jax.vmap(
+    # Double-DQN targets: online network selects action, target network evaluates
+    q_next_online = jax.vmap(
+        lambda o: network.apply(params, o, env_idx=env_idx), in_axes=0
+    )(mem_next_obs_T)  # (A, B, action_dim)
+    q_next_target = jax.vmap(
         lambda o: network.apply(target_params, o, env_idx=env_idx), in_axes=0
     )(mem_next_obs_T)  # (A, B, action_dim)
-    q_next_max_sum = q_next.max(-1).sum(0)  # (B,) — max per agent, sum over agents
+    best_actions = jnp.argmax(q_next_online, axis=-1, keepdims=True)  # (A, B, 1)
+    q_next_sel = jnp.take_along_axis(q_next_target, best_actions, axis=-1).squeeze(-1)  # (A, B)
+    q_next_max_sum = q_next_sel.sum(0)  # (B,) — sum over agents
 
     vdn_target = jax.lax.stop_gradient(
         mem_rewards + gamma * (1.0 - mem_dones) * q_next_max_sum
@@ -298,11 +303,16 @@ def compute_qmix_memory_gradient(network, mixing_network, combined_params, targe
     tgt_q_params = target_combined_params["q"]
     tgt_mix_params = target_combined_params["mix"]
 
-    # Target Q_total: greedy Q-values per agent through target mixing network
-    q_next = jax.vmap(
+    # Double-DQN: online network selects action, target network evaluates
+    online_q_params = combined_params["q"]
+    q_next_online = jax.vmap(
+        lambda o: network.apply(online_q_params, o, env_idx=env_idx), in_axes=0
+    )(mem_next_obs_T)  # (A, B, action_dim)
+    q_next_tgt_vals = jax.vmap(
         lambda o: network.apply(tgt_q_params, o, env_idx=env_idx), in_axes=0
     )(mem_next_obs_T)  # (A, B, action_dim)
-    q_next_max = q_next.max(-1)  # (A, B)
+    best_actions = jnp.argmax(q_next_online, axis=-1, keepdims=True)  # (A, B, 1)
+    q_next_max = jnp.take_along_axis(q_next_tgt_vals, best_actions, axis=-1).squeeze(-1)  # (A, B)
     q_next_max_T = q_next_max.T  # (B, A)
     q_total_next = mixing_network.apply(tgt_mix_params, q_next_max_T, mem_next_global_state)  # (B,)
 
