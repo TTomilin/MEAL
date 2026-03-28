@@ -45,49 +45,53 @@ def compute_metrics(
     """Compute metrics for a single algorithm/method/num_agents combination."""
     AP_seeds, F_seeds, FT_seeds = [], [], []
 
-    eval_suffix = "success" if env == "jaxnav" else "soup"
-    training_metric = "return" if env == "jaxnav" else "soup"
-    level_string = "jaxnav" if env == "jaxnav" else f"level_{level}"
+    _eval_suffixes = {"jaxnav": "success", "mpe": "coverage_fraction", "smax": "return"}
+    eval_suffix = _eval_suffixes.get(env, "soup")
+    _training_metrics = {"jaxnav": "return"}
+    training_metric = _training_metrics.get(env, None if env in ("mpe", "smax") else "soup")
+    _level_strings = {"jaxnav": "jaxnav", "mpe": "mpe", "smax": "smax"}
+    level_string = _level_strings.get(env, f"level_{level}")
 
-    # Load baseline data once for forward transfer calculation
+    # Load baseline data once for forward transfer calculation (only when training metric exists)
     repo_root = Path(__file__).resolve().parent.parent
     baseline_data = {}
-    baseline_folder = (
-        repo_root
-        / data_root
-        / algo
-        / "single"
-        / level_string
-        / f"{strategy}_{seq_len}"
-    )
+    if training_metric is not None:
+        baseline_folder = (
+            repo_root
+            / data_root
+            / algo
+            / "single"
+            / level_string
+            / f"{strategy}_{seq_len}"
+        )
 
-    for seed in seeds:
-        baseline_seed_dir = baseline_folder / f"seed_{seed}"
-        if baseline_seed_dir.exists():
-            # Load baseline training data for each task
-            baseline_training_files = []
-            for i in range(seq_len):
-                baseline_file = baseline_seed_dir / f"{i}_training_{training_metric}.json"
-                if baseline_file.exists():
-                    baseline_series = load_series(baseline_file)
-                    # Validate the loaded data
-                    if len(baseline_series) == 0:
-                        print(f"[warn] empty baseline data for task {i}, seed {seed}")
-                        baseline_training_files.append(None)
-                    elif np.all(np.isnan(baseline_series)):
-                        print(f"[warn] baseline data contains all NaN for task {i}, seed {seed}")
-                        baseline_training_files.append(None)
-                    elif np.all(np.isinf(baseline_series)):
-                        print(f"[warn] baseline data contains all inf/-inf for task {i}, seed {seed}")
-                        baseline_training_files.append(None)
-                    elif np.all(np.isnan(baseline_series) | np.isinf(baseline_series)):
-                        print(f"[warn] baseline data contains all NaN/inf/-inf for task {i}, seed {seed}")
-                        baseline_training_files.append(None)
+        for seed in seeds:
+            baseline_seed_dir = baseline_folder / f"seed_{seed}"
+            if baseline_seed_dir.exists():
+                # Load baseline training data for each task
+                baseline_training_files = []
+                for i in range(seq_len):
+                    baseline_file = baseline_seed_dir / f"{i}_training_{training_metric}.json"
+                    if baseline_file.exists():
+                        baseline_series = load_series(baseline_file)
+                        # Validate the loaded data
+                        if len(baseline_series) == 0:
+                            print(f"[warn] empty baseline data for task {i}, seed {seed}")
+                            baseline_training_files.append(None)
+                        elif np.all(np.isnan(baseline_series)):
+                            print(f"[warn] baseline data contains all NaN for task {i}, seed {seed}")
+                            baseline_training_files.append(None)
+                        elif np.all(np.isinf(baseline_series)):
+                            print(f"[warn] baseline data contains all inf/-inf for task {i}, seed {seed}")
+                            baseline_training_files.append(None)
+                        elif np.all(np.isnan(baseline_series) | np.isinf(baseline_series)):
+                            print(f"[warn] baseline data contains all NaN/inf/-inf for task {i}, seed {seed}")
+                            baseline_training_files.append(None)
+                        else:
+                            baseline_training_files.append(baseline_series)
                     else:
-                        baseline_training_files.append(baseline_series)
-                else:
-                    baseline_training_files.append(None)
-            baseline_data[seed] = baseline_training_files
+                        baseline_training_files.append(None)
+                baseline_data[seed] = baseline_training_files
     base_folder = (
             repo_root
             / data_root
@@ -132,97 +136,71 @@ def compute_metrics(
         # Average Performance (AP) – last eval of mean curve
         AP_seeds.append(env_mat.mean(axis=0)[-1])
 
-        # Load training data for forward transfer calculation
-        training_fp = sd / f"training_{training_metric}.json"
-        if not training_fp.exists():
-            print(f"[warn] missing training_{training_metric}.json for {method} {num_agents}agents seed {seed}")
+        # Forward Transfer (FT) – skipped for envs without a training metric
+        if training_metric is None:
             FT_seeds.append(np.nan)
         else:
-            training = load_series(training_fp)
-            n_train = len(training)
-            chunk = max(1, n_train // seq_len)
-
-            # Forward Transfer (FT) – normalized area between CL and baseline curves
-            if seed not in baseline_data:
-                print(f"[warn] missing baseline data for seed {seed}")
+            training_fp = sd / f"training_{training_metric}.json"
+            if not training_fp.exists():
+                print(f"[warn] missing training_{training_metric}.json for {method} {num_agents}agents seed {seed}")
                 FT_seeds.append(np.nan)
             else:
-                ft_vals = []
-                for i in present_task_ids:
-                    # Calculate AUC for CL method (task i)
-                    start_idx = i * chunk
-                    end_idx = (i + 1) * chunk
-                    end_idx = min(end_idx, n_train)  # clamp
-                    cl_task_curve = training[start_idx:end_idx]
+                training = load_series(training_fp)
+                n_train = len(training)
+                chunk = max(1, n_train // seq_len)
 
-                    # AUCi = (1/τ) * ∫ pi(t) dt, where τ is the task duration
-                    # Using trapezoidal rule for numerical integration
-                    if len(cl_task_curve) > 1:
-                        auc_cl = np.trapz(cl_task_curve) / len(cl_task_curve)
-                    else:
-                        auc_cl = cl_task_curve[0] if len(cl_task_curve) == 1 else 0.0
+                if seed not in baseline_data:
+                    print(f"[warn] missing baseline data for seed {seed}")
+                    FT_seeds.append(np.nan)
+                else:
+                    ft_vals = []
+                    for i in present_task_ids:
+                        start_idx = i * chunk
+                        end_idx = min((i + 1) * chunk, n_train)
+                        cl_task_curve = training[start_idx:end_idx]
 
-                    # Check if CL AUC is NaN or inf/-inf
-                    if np.isnan(auc_cl) or np.isinf(auc_cl):
-                        print(f"[warn] CL AUC is NaN/inf/-inf for task {i}, seed {seed}, method {method}")
-                        continue  # Skip this task
+                        if len(cl_task_curve) > 1:
+                            auc_cl = np.trapz(cl_task_curve) / len(cl_task_curve)
+                        else:
+                            auc_cl = cl_task_curve[0] if len(cl_task_curve) == 1 else 0.0
 
-                    # guard index in baseline array
-                    if i >= len(baseline_data[seed]):
-                        print(f"[warn] missing baseline index for task {i}, seed {seed}")
-                        continue
-                    # Calculate AUC for baseline method (task i)
-                    baseline_task_curve = baseline_data[seed][i]
-                    if baseline_task_curve is not None:
-                        # Check if baseline data contains all NaN or inf/-inf values
-                        if np.all(np.isnan(baseline_task_curve)):
-                            print(f"[warn] baseline data contains all NaN for task {i}, seed {seed}")
-                            continue  # Skip this task
-                        elif np.all(np.isinf(baseline_task_curve)):
-                            print(f"[warn] baseline data contains all inf/-inf for task {i}, seed {seed}")
-                            continue  # Skip this task
-                        elif np.all(np.isnan(baseline_task_curve) | np.isinf(baseline_task_curve)):
-                            print(f"[warn] baseline data contains all NaN/inf/-inf for task {i}, seed {seed}")
-                            continue  # Skip this task
+                        if np.isnan(auc_cl) or np.isinf(auc_cl):
+                            print(f"[warn] CL AUC is NaN/inf/-inf for task {i}, seed {seed}, method {method}")
+                            continue
+
+                        if i >= len(baseline_data[seed]):
+                            print(f"[warn] missing baseline index for task {i}, seed {seed}")
+                            continue
+                        baseline_task_curve = baseline_data[seed][i]
+                        if baseline_task_curve is None:
+                            print(f"[warn] missing baseline data for task {i}, seed {seed}")
+                            continue
+
+                        if np.all(np.isnan(baseline_task_curve) | np.isinf(baseline_task_curve)):
+                            print(f"[warn] baseline data contains all NaN/inf for task {i}, seed {seed}")
+                            continue
 
                         if len(baseline_task_curve) > 1:
                             auc_baseline = np.trapz(baseline_task_curve) / len(baseline_task_curve)
                         else:
                             auc_baseline = baseline_task_curve[0] if len(baseline_task_curve) == 1 else 0.0
 
-                        # Check if calculated AUC is NaN or inf/-inf
-                        if np.isnan(auc_baseline):
-                            print(f"[warn] baseline AUC is NaN for task {i}, seed {seed}")
-                            continue  # Skip this task
-                        elif np.isinf(auc_baseline):
-                            print(f"[warn] baseline AUC is inf/-inf for task {i}, seed {seed}")
-                            continue  # Skip this task
+                        if np.isnan(auc_baseline) or np.isinf(auc_baseline):
+                            print(f"[warn] baseline AUC is NaN/inf for task {i}, seed {seed}")
+                            continue
 
-                        # Check if baseline performance is effectively 0
                         if abs(auc_baseline) < 1e-8:
-                            print(f"[info] baseline AUC is effectively 0 ({auc_baseline}) for task {i}, seed {seed}, method {method} - skipping forward transfer calculation")
-                            continue  # Skip this task
+                            print(f"[info] baseline AUC ~0 for task {i}, seed {seed}, method {method} – skipping FT")
+                            continue
 
-                        # Use direct ratio approach for forward transfer calculation
-                        # FT_i = (AUC_CL - AUC_baseline) / max(|AUC_baseline|, ε)
                         epsilon = 1e-8
-                        denominator = max(abs(auc_baseline), epsilon)
-                        ft_i = (auc_cl - auc_baseline) / denominator
-
-                        # Check if the final ft_i is inf/-inf or NaN
+                        ft_i = (auc_cl - auc_baseline) / max(abs(auc_baseline), epsilon)
                         if np.isnan(ft_i) or np.isinf(ft_i):
-                            print(f"[warn] Forward Transfer result is NaN/inf/-inf for task {i}, seed {seed}, method {method}")
-                            # Skip this task - don't append to ft_vals
+                            print(f"[warn] FT result is NaN/inf for task {i}, seed {seed}, method {method}")
                         else:
                             ft_vals.append(ft_i)
-                    else:
-                        print(f"[warn] missing baseline data for task {i}, seed {seed}")
-                        # Don't append anything to ft_vals - skip this task
 
-                if ft_vals:
-                    FT_seeds.append(float(np.nanmean(ft_vals)))
-                else:
-                    FT_seeds.append(np.nan)
+                    FT_seeds.append(float(np.nanmean(ft_vals)) if ft_vals else np.nan)
 
         # Forgetting (F) – drop from best‑ever to final performance
         f_vals = []
@@ -331,13 +309,20 @@ if __name__ == "__main__":
     )
     args = p.parse_args()
 
+    # MPE and SMAX have no difficulty levels and no forward transfer metric
+    NO_LEVELS_ENVS = {"mpe", "smax"}
+    has_levels = args.env not in NO_LEVELS_ENVS
+    has_ft = args.env not in NO_LEVELS_ENVS
+    levels = args.levels if has_levels else [1]
+
     print(f"Comparing num_agents: {args.num_agents}")
     print(f"Algorithm: {args.algorithm}")
     print(f"Method: {args.method}")
     print(f"Strategy: {args.strategy}")
     print(f"Sequence length: {args.seq_len}")
     print(f"Seeds: {args.seeds}")
-    print(f"Levels: {args.levels}")
+    if has_levels:
+        print(f"Levels: {levels}")
 
     # Compute comparison metrics
     df = compare_agents(
@@ -349,105 +334,79 @@ if __name__ == "__main__":
         seq_len=args.seq_len,
         seeds=args.seeds,
         num_agents_list=args.num_agents,
-        levels=args.levels,
+        levels=levels,
         end_window_evals=args.end_window_evals,
     )
 
     # Find best values per column (across all agent configurations)
     best_values = {}
-    for level in args.levels:
-        # Get all values for this level across all agent configurations
-        ap_values = [row[f"LEVEL{level}_AveragePerformance"] for _, row in df.iterrows() 
+    for level in levels:
+        ap_values = [row[f"LEVEL{level}_AveragePerformance"] for _, row in df.iterrows()
                      if not (np.isnan(row[f"LEVEL{level}_AveragePerformance"]) or np.isinf(row[f"LEVEL{level}_AveragePerformance"]))]
-        f_values = [row[f"LEVEL{level}_Forgetting"] for _, row in df.iterrows() 
+        f_values = [row[f"LEVEL{level}_Forgetting"] for _, row in df.iterrows()
                     if not (np.isnan(row[f"LEVEL{level}_Forgetting"]) or np.isinf(row[f"LEVEL{level}_Forgetting"]))]
-        ft_values = [row[f"LEVEL{level}_ForwardTransfer"] for _, row in df.iterrows() 
-                     if not (np.isnan(row[f"LEVEL{level}_ForwardTransfer"]) or np.isinf(row[f"LEVEL{level}_ForwardTransfer"]))]
-
         best_values[f"A_L{level}"] = max(ap_values) if ap_values else np.nan
         best_values[f"F_L{level}"] = min(f_values) if f_values else np.nan
-        best_values[f"FT_L{level}"] = max(ft_values) if ft_values else np.nan
+        if has_ft:
+            ft_values = [row[f"LEVEL{level}_ForwardTransfer"] for _, row in df.iterrows()
+                         if not (np.isnan(row[f"LEVEL{level}_ForwardTransfer"]) or np.isinf(row[f"LEVEL{level}_ForwardTransfer"]))]
+            best_values[f"FT_L{level}"] = max(ft_values) if ft_values else np.nan
 
-    # For each num_agents, format the table
+    # Build formatted rows
     df_out_rows = []
-
     for _, row in df.iterrows():
         num_agents = row["NumAgents"]
-
-        # Extract values for each level
-        levels_values = {}
-        for level in args.levels:
-            levels_values[level] = {
-                'ap': row[f"LEVEL{level}_AveragePerformance"],
-                'ap_ci': row[f"LEVEL{level}_AveragePerformance_CI"],
-                'f': row[f"LEVEL{level}_Forgetting"],
-                'f_ci': row[f"LEVEL{level}_Forgetting_CI"],
-                'ft': row[f"LEVEL{level}_ForwardTransfer"],
-                'ft_ci': row[f"LEVEL{level}_ForwardTransfer_CI"],
-            }
-
-        # Create formatted row
         agent_text = f"{int(num_agents)} Agent" + ("s" if num_agents > 1 else "")
         formatted_row = {"Agents": agent_text}
 
-        # Add formatted columns grouped by level: for each level, add A, F, FT columns
-        for level in args.levels:
-            values = levels_values[level]
+        for level in levels:
+            ap  = row[f"LEVEL{level}_AveragePerformance"]
+            ap_ci = row[f"LEVEL{level}_AveragePerformance_CI"]
+            f   = row[f"LEVEL{level}_Forgetting"]
+            f_ci  = row[f"LEVEL{level}_Forgetting_CI"]
 
-            # Average Performance column for this level
             formatted_row[f"AveragePerformance_L{level}"] = _fmt(
-                values['ap'], 
-                values['ap_ci'], 
-                values['ap'] == best_values[f"A_L{level}"], 
-                "max",
-                args.confidence_intervals
-            )
-
-            # Forgetting column for this level
+                ap, ap_ci, ap == best_values[f"A_L{level}"], "max", args.confidence_intervals)
             formatted_row[f"Forgetting_L{level}"] = _fmt(
-                values['f'], 
-                values['f_ci'], 
-                values['f'] == best_values[f"F_L{level}"], 
-                "min",
-                args.confidence_intervals
-            )
+                f, f_ci, f == best_values[f"F_L{level}"], "min", args.confidence_intervals)
 
-            # Forward Transfer column for this level
-            formatted_row[f"ForwardTransfer_L{level}"] = _fmt(
-                values['ft'], 
-                values['ft_ci'], 
-                values['ft'] == best_values[f"FT_L{level}"], 
-                "max",
-                args.confidence_intervals
-            )
+            if has_ft:
+                ft    = row[f"LEVEL{level}_ForwardTransfer"]
+                ft_ci = row[f"LEVEL{level}_ForwardTransfer_CI"]
+                formatted_row[f"ForwardTransfer_L{level}"] = _fmt(
+                    ft, ft_ci, ft == best_values[f"FT_L{level}"], "max", args.confidence_intervals)
 
         df_out_rows.append(formatted_row)
 
     df_out = pd.DataFrame(df_out_rows)
 
-    # Rename columns to mathy headers grouped by levels
+    # Rename columns
+    metrics_per_level = [rf"$\mathcal{{A}}\!\uparrow$", rf"$\mathcal{{F}}\!\downarrow$"]
+    if has_ft:
+        metrics_per_level.append(rf"$\mathcal{{FT}}\!\uparrow$")
     new_columns = ["Agents"]
-    for level in args.levels:
-        new_columns.extend([
-            rf"$\mathcal{{A}}\!\uparrow$",
-            rf"$\mathcal{{F}}\!\downarrow$", 
-            rf"$\mathcal{{FT}}\!\uparrow$"
-        ])
+    for _ in levels:
+        new_columns.extend(metrics_per_level)
     df_out.columns = new_columns
 
-    # Column format: Agents + levels × 3 metrics
-    column_format = "l" + "c" * (len(args.levels) * 3)
+    n_metrics = len(metrics_per_level)
+    column_format = "l" + "c" * (len(levels) * n_metrics)
 
-    # Generate LaTeX table with proper structure following results_table.py format
-    caption_text = (f"Comparison of {args.method} with {args.algorithm.upper()} across "
-                   f"{' and '.join([f'Level {level}' for level in args.levels])} "
-                   f"for {' and '.join([f'{n} agent' + ('s' if n > 1 else '') for n in args.num_agents])}. "
-                   f"Bold values indicate the best performance for each metric. "
-                   f"$\\mathcal{{A}}$ represents Average Performance (higher is better), "
-                   f"$\\mathcal{{F}}$ represents Forgetting (lower is better), "
-                   f"$\\mathcal{{FT}}$ represents Forward Transfer (higher is better).")
+    # Caption
+    if has_levels:
+        level_str = ' and '.join([f'Level {l}' for l in levels])
+        caption_text = (f"Comparison of {args.method} with {args.algorithm.upper()} across "
+                        f"{level_str} for {args.env}. ")
+    else:
+        caption_text = (f"Comparison of {args.method} with {args.algorithm.upper()} on {args.env.upper()}. ")
+    caption_text += (f"Bold values indicate the best performance for each metric. "
+                     f"$\\mathcal{{A}}$ represents Average Performance (higher is better), "
+                     f"$\\mathcal{{F}}$ represents Forgetting (lower is better)")
+    if has_ft:
+        caption_text += f", $\\mathcal{{FT}}$ represents Forward Transfer (higher is better)"
+    caption_text += "."
 
-    # Build the LaTeX table manually with correct structure
+    # Build LaTeX table
     latex_lines = []
     latex_lines.append("\\begin{table}")
     latex_lines.append("\\centering")
@@ -456,45 +415,34 @@ if __name__ == "__main__":
     latex_lines.append(f"\\begin{{tabular}}{{{column_format}}}")
     latex_lines.append("\\toprule")
 
-    # Create the multicolumn header following the format from results_table.py
-    multicolumn_header = "\\multirow{2}{*}[-0.7ex]{Agents} &"
+    if has_levels:
+        # Two-row header: level multicolumns + metric symbols
+        multicolumn_header = "\\multirow{2}{*}[-0.7ex]{Agents}"
+        for i, level in enumerate(levels):
+            sep = " &" if i < len(levels) - 1 else " \\\\"
+            multicolumn_header += f" & \\multicolumn{{{n_metrics}}}{{c}}{{Level {level}}}{sep}"
+        latex_lines.append(multicolumn_header)
 
-    # Add multicolumn headers for each level
-    for i, level in enumerate(args.levels):
-        level_text = f"Level {level}"
-        if i < len(args.levels) - 1:
-            multicolumn_header += f"\n\\multicolumn{{3}}{{c}}{{{level_text}}} &"
-        else:
-            multicolumn_header += f"\n\\multicolumn{{3}}{{c}}{{{level_text}}} \\\\"
+        cmidrule_parts = []
+        for i in range(len(levels)):
+            start_col = 2 + i * n_metrics
+            end_col = start_col + n_metrics - 1
+            cmidrule_parts.append(f"\\cmidrule(lr){{{start_col}-{end_col}}}")
+        latex_lines.append(" ".join(cmidrule_parts))
 
-    latex_lines.append(multicolumn_header)
+        metric_sym = " & $\\mathcal{A}\\!\\uparrow$ & $\\mathcal{F}\\!\\downarrow$"
+        if has_ft:
+            metric_sym += " & $\\mathcal{FT}\\!\\uparrow$"
+        latex_lines.append((metric_sym * len(levels)).lstrip(" & ").rstrip() + " \\\\")
+    else:
+        # Single-row header: Agents + metric symbols
+        header = "Agents & " + " & ".join(metrics_per_level * len(levels)) + " \\\\"
+        latex_lines.append(header)
 
-    # Add cmidrule parts
-    cmidrule_parts = []
-    for i, _ in enumerate(args.levels):
-        start_col = 2 + i * 3
-        end_col = start_col + 2
-        cmidrule_parts.append(f"\\cmidrule(lr){{{start_col}-{end_col}}}")
-
-    latex_lines.append(" ".join(cmidrule_parts))
-
-    # Add the metric symbols row
-    metric_row = " & "
-    for i, _ in enumerate(args.levels):
-        if i < len(args.levels) - 1:
-            metric_row += "$\\mathcal{A}\\!\\uparrow$ & $\\mathcal{F}\\!\\downarrow$ & $\\mathcal{FT}\\!\\uparrow$ & "
-        else:
-            metric_row += "$\\mathcal{A}\\!\\uparrow$ & $\\mathcal{F}\\!\\downarrow$ & $\\mathcal{FT}\\!\\uparrow$ \\\\"
-
-    latex_lines.append(metric_row)
     latex_lines.append("\\midrule")
 
-    # Add data rows
     for _, row in df_out.iterrows():
-        row_data = []
-        for i in range(len(df_out.columns)):
-            row_data.append(str(row.iloc[i]))
-        latex_lines.append(" & ".join(row_data) + " \\\\")
+        latex_lines.append(" & ".join(str(row.iloc[i]) for i in range(len(df_out.columns))) + " \\\\")
 
     latex_lines.append("\\bottomrule")
     latex_lines.append("\\end{tabular}")

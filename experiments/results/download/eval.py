@@ -68,8 +68,8 @@ ENV_CONFIGS: dict[str, EnvConfig] = {
         training_filename=None,
     ),
     "smax": EnvConfig(
-        eval_pattern=re.compile(r"^Evaluation/WinRate/(\d+)_(.+)$"),
-        metric_name="win_rate",
+        eval_pattern=re.compile(r"^Evaluation/Returns/(\d+)_(.+)$"),
+        metric_name="return",
         training_key=None,
         training_filename=None,
     ),
@@ -220,7 +220,7 @@ def main() -> None:
         strategy   = cfg.get("strategy")
         seq_len    = cfg.get("seq_length")
         seed       = max(cfg.get("seed", 1), 1)
-        num_agents = cfg.get("num_agents", 1)
+        num_agents = cfg.get("num_allies") if env_name == "smax" else cfg.get("num_agents", 1)
         level_string = difficulty_string(cfg)
         experiment   = experiment_suffix(cfg)
 

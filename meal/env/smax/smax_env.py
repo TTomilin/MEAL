@@ -371,11 +371,11 @@ class SMAX(MultiAgentEnv):
         rewards = self.compute_reward(state, health_before, health_after)
         dones["__all__"] = state.terminal
         world_state = self.get_world_state(state)
-        # Track win: all enemies dead and at least one ally alive
-        all_enemies_dead = jnp.all(~state.unit_alive[self.num_allies:])
-        any_ally_alive = jnp.any(state.unit_alive[:self.num_allies])
+        # Fraction of enemies killed: 0.0 (none) → 1.0 (all dead = win).
+        alive_enemies = jnp.sum(state.unit_alive[self.num_allies:]).astype(jnp.float32)
+        kill_fraction = (self.num_enemies - alive_enemies) / self.num_enemies
         infos = {
-            "won": all_enemies_dead & any_ally_alive,
+            "kill_fraction": kill_fraction,
         }
         obs["world_state"] = jax.lax.stop_gradient(world_state)
         if not get_state_sequence:

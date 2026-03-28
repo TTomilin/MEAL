@@ -2,8 +2,9 @@
 Evaluation helpers for SMAX continual learning.
 
 Metrics per task:
-  - avg_returns  : mean total reward per episode
-  - win_rate     : fraction of episodes where allies won (all enemies dead, ≥1 ally alive)
+  - avg_returns        : mean total reward per episode
+  - avg_kill_fraction  : mean fraction of enemies killed per episode [0, 1]
+                         (1.0 = all enemies dead = win; 0.4 = 2/5 enemies killed, etc.)
 """
 
 import jax
@@ -31,12 +32,12 @@ def make_eval_fn(
             reset_rng
         )
 
-        total_returns = jnp.zeros((num_envs,), jnp.float32)
-        total_wins = jnp.zeros((num_envs,), jnp.float32)
-        num_episodes = jnp.zeros((num_envs,), jnp.float32)
+        total_returns     = jnp.zeros((num_envs,), jnp.float32)
+        total_kill_fracs  = jnp.zeros((num_envs,), jnp.float32)
+        num_episodes      = jnp.zeros((num_envs,), jnp.float32)
 
         def one_step(carry, _):
-            env_state, obs, returns, wins, episodes, rng = carry
+            env_state, obs, returns, kill_fracs, episodes, rng = carry
 
             obs_batch = batchify(obs, agents, len(agents) * num_envs, not use_cnn)
             pi, _, _ = network.apply(params, obs_batch, env_idx=env_idx)
@@ -51,28 +52,25 @@ def make_eval_fn(
                 lambda k, s, a: step_switch(k, s, a, jnp.int32(env_idx))
             )(step_rng, env_state, env_act)
 
-            episode_ended = jnp.array([done["__all__"]] if isinstance(done, dict) else done)
-            if isinstance(done, dict):
-                episode_ended = done.get("__all__", jnp.zeros((num_envs,), jnp.bool_))
+            episode_ended = done.get("__all__", jnp.zeros((num_envs,), jnp.bool_))
 
             returns += sum(reward[a] for a in agents)
-            won = info.get("won", jnp.zeros((num_envs,), jnp.bool_))
-            wins += jnp.where(episode_ended, won.astype(jnp.float32), 0.0)
-            episodes += episode_ended.astype(jnp.float32)
+            kf = info.get("kill_fraction", jnp.zeros((num_envs,), jnp.float32))
+            # Accumulate kill_fraction only at episode boundaries
+            kill_fracs += jnp.where(episode_ended, kf, 0.0)
+            episodes   += episode_ended.astype(jnp.float32)
 
-            return (env_state2, obs2, returns, wins, episodes, rng), None
+            return (env_state2, obs2, returns, kill_fracs, episodes, rng), None
 
-        (_, _, total_returns, total_wins, num_episodes, _), _ = jax.lax.scan(
+        (_, _, total_returns, total_kill_fracs, num_episodes, _), _ = jax.lax.scan(
             one_step,
-            (env_state, obs, total_returns, total_wins, num_episodes, rng),
+            (env_state, obs, total_returns, total_kill_fracs, num_episodes, rng),
             xs=None,
             length=num_steps,
         )
 
-        # win_rate = wins / max(episodes, 1)
-        win_rate = total_wins / jnp.maximum(num_episodes, 1.0)
-
-        return total_returns.mean(), win_rate.mean()
+        avg_kill_fraction = total_kill_fracs / jnp.maximum(num_episodes, 1.0)
+        return total_returns.mean(), avg_kill_fraction.mean()
 
     return evaluate_env
 
@@ -81,5 +79,5 @@ def evaluate_all_envs(rng, params, num_envs, evaluate_env):
     env_indices = jnp.arange(num_envs, dtype=jnp.int32)
     rngs = jax.random.split(rng, num_envs)
     eval_vmapped = jax.vmap(evaluate_env, in_axes=(0, None, 0))
-    avg_returns, avg_win_rate = eval_vmapped(rngs, params, env_indices)
-    return avg_returns, avg_win_rate
+    avg_returns, avg_kill_fraction = eval_vmapped(rngs, params, env_indices)
+    return avg_returns, avg_kill_fraction

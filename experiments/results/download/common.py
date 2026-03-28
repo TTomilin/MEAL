@@ -38,6 +38,7 @@ def cli() -> argparse.Namespace:
 
     # Number of agents parameter
     p.add_argument("--num_agents", type=int, default=None, help="Filter by number of agents")
+    p.add_argument("--env", type=str, default=None, help="Environment name (used to route num_agents to the correct config field)")
 
     # Neural activity parameters
     p.add_argument("--include_dormant_ratio", action="store_true", 
@@ -80,7 +81,8 @@ def build_filters(args: argparse.Namespace) -> dict:
         f["config.wall_density"] = args.wall_density
 
     if args.num_agents is not None:
-        f["config.num_agents"] = args.num_agents
+        agents_field = "config.num_allies" if getattr(args, "env", None) == "smax" else "config.num_agents"
+        f[agents_field] = args.num_agents
 
     # reward_settings logic: default / sparse / individual
     if args.reward_settings:
@@ -141,7 +143,9 @@ def want(run: Run, args: argparse.Namespace) -> bool:
     if args.strategy and cfg.get("strategy") != args.strategy: return False
     if args.difficulty and cfg.get("difficulty") not in args.difficulty: return False
     if args.wall_density and cfg.get("wall_density") != args.wall_density: return False
-    if args.num_agents and cfg.get("num_agents") != args.num_agents: return False
+    if args.num_agents:
+        agents_field = "num_allies" if getattr(args, "env", None) == "smax" else "num_agents"
+        if cfg.get(agents_field) != args.num_agents: return False
 
     # Filter by reward settings
     if args.reward_settings:

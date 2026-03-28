@@ -140,17 +140,14 @@ class UniformUnitTypeDistribution(Distribution):
         ).astype(jnp.uint8)
         enemy_unit_types = jnp.zeros((self.n_enemies,), dtype=jnp.uint8)
         min_size = min(self.n_allies, self.n_enemies)
-        enemy_unit_types = enemy_unit_types.at[:min_size].set(ally_unit_types)
+        enemy_unit_types = enemy_unit_types.at[:min_size].set(ally_unit_types[:min_size])
 
-        enemy_unit_types = jax.lax.select(
-            min_size == self.n_enemies,
-            enemy_unit_types,
-            enemy_unit_types.at[min_size:].set(
+        if self.n_enemies > self.n_allies:
+            enemy_unit_types = enemy_unit_types.at[min_size:].set(
                 jax.random.categorical(
                     enemy_key,
                     jnp.log(jnp.ones((self.n_unit_types)) / self.n_unit_types),
                     shape=(self.n_enemies - self.n_allies,),
                 ).astype(jnp.uint8)
-            ),
-        )
+            )
         return jnp.concatenate([ally_unit_types, enemy_unit_types], dtype=jnp.uint8)

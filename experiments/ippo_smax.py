@@ -534,12 +534,12 @@ def main():
 
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
-                        avg_returns, avg_win_rate = evaluate_all_envs(
+                        avg_returns, avg_kill_fraction = evaluate_all_envs(
                             eval_rng, train_state.params, seq_length, evaluate_env
                         )
                         for i, env_name in enumerate(env_names):
                             metrics[f"Evaluation/Returns/{i}_{env_name}"] = avg_returns[i]
-                            metrics[f"Evaluation/WinRate/{i}_{env_name}"] = avg_win_rate[i]
+                            metrics[f"Evaluation/KillFraction/{i}_{env_name}"] = avg_kill_fraction[i]
 
                     def callback(args):
                         metrics, update_step, env_counter = args
@@ -617,7 +617,7 @@ def main():
                 break
 
     rng, train_rng = jax.random.split(rng)
-    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads)
+    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads, cl, cfg)
 
     if cfg.cl_method.lower() == "agem":
         obs_shape = temp_env.observation_space(agents[0]).shape
