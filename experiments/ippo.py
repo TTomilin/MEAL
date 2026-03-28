@@ -13,7 +13,7 @@ from flax.core.frozen_dict import unfreeze
 from flax.training.train_state import TrainState
 from jax._src.flatten_util import ravel_pytree
 
-from experiments.continual.agem import AGEM, init_agem_memory, sample_memory, sample_task_slot, \
+from experiments.continual.agem import AGEM, init_agem_memory, sample_task_slot, \
     compute_memory_gradient, agem_project, update_agem_memory
 from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
