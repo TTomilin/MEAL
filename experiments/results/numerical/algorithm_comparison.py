@@ -14,7 +14,7 @@ ConfInt = tuple[float, float]
 
 def load_series(fp: Path) -> List[float]:
     """Load a JSON series from file."""
-    with open(fp, 'r') as f:
+    with open(fp, "r") as f:
         data = json.load(f)
     return [float(x) for x in data]
 
@@ -31,40 +31,39 @@ def _mean_ci(series: List[float]) -> ConfInt:
 
 
 def compute_metrics(
-        data_root: Path,
-        algo: str,
-        method: str,
-        strategy: str,
-        seq_len: int,
-        seeds: List[int],
-        end_window_evals: int = 10,
-        level: int = 1,
+    data_root: Path,
+    algo: str,
+    method: str,
+    strategy: str,
+    seq_len: int,
+    seeds: List[int],
+    level: int,
+    agents: int,
+    end_window_evals: int = 10,
 ) -> dict:
-    """Compute metrics for a single algorithm/method combination."""
+    """Compute AP and F for a single (algo, method, level) combination."""
     AP_seeds, F_seeds = [], []
 
     base_folder = (
-            data_root
-            / algo
-            / method
-            / f"level_{level}"
-            / f"{strategy}_{seq_len}"
+        data_root
+        / algo
+        / method
+        / f"level_{level}"
+        / f"agents_{agents}"
+        / f"{strategy}_{seq_len}"
     )
 
     for seed in seeds:
         sd = base_folder / f"seed_{seed}"
         if not sd.exists():
-            print(f"[debug] seed directory does not exist: {sd}")
+            print(f"[debug] missing: {sd}")
             continue
 
-        # Per‑environment evaluation curves
-        env_files = sorted([
-            f for f in sd.glob("*_soup.*") if "training" not in f.name
-        ])
+        env_files = sorted([f for f in sd.glob("*_soup.*") if "training" not in f.name])
         if len(env_files) != seq_len:
             print(
                 f"[warn] expected {seq_len} env files, found {len(env_files)} "
-                f"for {algo} {method} seed {seed}"
+                f"for {algo}/{method}/level_{level}/seed_{seed}"
             )
             continue
 
@@ -74,203 +73,207 @@ def compute_metrics(
             np.pad(s, (0, L - len(s)), constant_values=s[-1]) for s in env_series
         ])
 
-        # Average Performance (AP) – last eval of mean curve
-        AP_seeds.append(env_mat.mean(axis=0)[-1])
+        # Average Performance – mean of final value per environment
+        AP_seeds.append(float(env_mat.mean(axis=0)[-1]))
 
-        # Forgetting (F) – drop from best‑ever to final performance
+        # Forgetting – drop from best-ever to final performance
         f_vals = []
         final_idx = env_mat.shape[1] - 1
         fw_start = max(0, final_idx - end_window_evals + 1)
         for i in range(seq_len):
-            final_avg = np.nanmean(env_mat[i, fw_start : final_idx + 1])
-            best_perf = np.nanmax(env_mat[i, : final_idx + 1])
+            final_avg = float(np.nanmean(env_mat[i, fw_start: final_idx + 1]))
+            best_perf = float(np.nanmax(env_mat[i, : final_idx + 1]))
             f_vals.append(max(best_perf - final_avg, 0.0))
         F_seeds.append(float(np.nanmean(f_vals)))
 
-    # Aggregate across seeds
     A_mean, A_ci = _mean_ci(AP_seeds)
     F_mean, F_ci = _mean_ci(F_seeds)
 
     return {
-        "AveragePerformance": A_mean,
-        "AveragePerformance_CI": A_ci,
-        "Forgetting": F_mean,
-        "Forgetting_CI": F_ci,
+        "AP": A_mean,
+        "AP_CI": A_ci,
+        "F": F_mean,
+        "F_CI": F_ci,
     }
 
 
-def compare_algorithms(
-        data_root: Path,
-        algorithms: List[str],
-        method: str,
-        strategy: str,
-        seq_len: int,
-        seeds: List[int],
-        levels: List[int],
-        end_window_evals: int = 10,
+def _fmt(mean: float, ci: float, best: bool) -> str:
+    """Format *mean ±CI* for LaTeX; bold the best value."""
+    if np.isnan(mean) or np.isinf(mean):
+        return "--"
+    main = f"{mean:.3f}"
+    if best:
+        main = rf"\textbf{{{main}}}"
+    ci_part = rf"{{\scriptsize$\pm{ci:.3f}$}}" if not np.isnan(ci) and ci > 0 else ""
+    return main + ci_part
+
+
+def build_table(
+    data_root: Path,
+    algorithms: List[str],
+    methods: List[str],
+    strategy: str,
+    seq_len: int,
+    seeds: List[int],
+    level: int,
+    agents: int,
+    end_window_evals: int = 10,
 ) -> pd.DataFrame:
-    """Compare EWC_partial results between different algorithms."""
-    rows = []
-
-    for level in levels:
-        row_data = {"Level": level}
-
+    """
+    Build a DataFrame for one difficulty level.
+    Rows = CL methods, columns = algorithm × {AP, F}.
+    """
+    # Collect raw values first so we can find column-wise bests
+    raw: dict[str, dict[str, dict]] = {}
+    for method in methods:
+        raw[method] = {}
         for algo in algorithms:
-            # Compute metrics for this algorithm
-            metrics = compute_metrics(
+            raw[method][algo] = compute_metrics(
                 data_root=data_root,
                 algo=algo,
                 method=method,
                 strategy=strategy,
                 seq_len=seq_len,
                 seeds=seeds,
-                end_window_evals=end_window_evals,
                 level=level,
+                agents=agents,
+                end_window_evals=end_window_evals,
             )
 
-            # Add metrics to row with algorithm prefix
-            row_data[f"{algo.upper()}_AveragePerformance"] = metrics["AveragePerformance"]
-            row_data[f"{algo.upper()}_AveragePerformance_CI"] = metrics["AveragePerformance_CI"]
-            row_data[f"{algo.upper()}_Forgetting"] = metrics["Forgetting"]
-            row_data[f"{algo.upper()}_Forgetting_CI"] = metrics["Forgetting_CI"]
+    # Find best AP (max) and best F (min) per algorithm column
+    best_ap: dict[str, float] = {}
+    best_f: dict[str, float] = {}
+    for algo in algorithms:
+        ap_vals = [raw[m][algo]["AP"] for m in methods if not np.isnan(raw[m][algo]["AP"])]
+        f_vals  = [raw[m][algo]["F"]  for m in methods if not np.isnan(raw[m][algo]["F"])]
+        best_ap[algo] = max(ap_vals) if ap_vals else np.nan
+        best_f[algo]  = min(f_vals)  if f_vals  else np.nan
 
-        rows.append(row_data)
+    rows = []
+    for method in methods:
+        row: dict[str, str] = {"Method": method}
+        for algo in algorithms:
+            m = raw[method][algo]
+            row[f"{algo.upper()}_AP"] = _fmt(m["AP"], m["AP_CI"], m["AP"] == best_ap[algo])
+            row[f"{algo.upper()}_F"]  = _fmt(m["F"],  m["F_CI"],  m["F"]  == best_f[algo])
+        rows.append(row)
 
     return pd.DataFrame(rows)
 
 
-def _fmt(mean: float, ci: float, best: bool, better: str = "max") -> str:
-    """Return *mean ±CI* formatted for LaTeX, with CI in \scriptsize."""
-    if np.isnan(mean) or np.isinf(mean):
-        return "--"
-    main = f"{mean:.3f}"
-    if best:
-        main = rf"\textbf{{{main}}}"
-    ci_part = rf"{{\scriptsize$\pm{ci:.2f}$}}" if not np.isnan(ci) and ci > 0 else ""
-    return main + ci_part
+def _latex_table(df: pd.DataFrame, algorithms: List[str], level: int) -> str:
+    """Render the DataFrame as a LaTeX table with multi-column algorithm headers."""
+    algo_uppers = [a.upper() for a in algorithms]
+    n_algos = len(algo_uppers)
+
+    # Build column format: l (method) + for each algo: two c columns
+    col_fmt = "l" + "cc" * n_algos
+
+    # Top header: one multicolumn per algorithm spanning AP and F
+    top_header_cells = [""]
+    for au in algo_uppers:
+        top_header_cells.append(rf"\multicolumn{{2}}{{c}}{{{au}}}")
+    top_header = " & ".join(top_header_cells) + r" \\"
+
+    # Cmidrules under each algorithm header (1-indexed, skip col 0 = Method)
+    cmidrules = []
+    for i, _ in enumerate(algo_uppers):
+        left  = 2 + i * 2
+        right = left + 1
+        cmidrules.append(rf"\cmidrule(lr){{{left}-{right}}}")
+    cmidrule_line = " ".join(cmidrules)
+
+    # Sub-header: Method | AP↑ F↓ | AP↑ F↓ | ...
+    sub_cells = ["Method"]
+    for _ in algo_uppers:
+        sub_cells += [r"$\mathcal{A}\!\uparrow$", r"$\mathcal{F}\!\downarrow$"]
+    sub_header = " & ".join(sub_cells) + r" \\"
+
+    # Data rows
+    data_lines = []
+    for _, row in df.iterrows():
+        cells = [row["Method"]]
+        for au in algo_uppers:
+            cells.append(row[f"{au}_AP"])
+            cells.append(row[f"{au}_F"])
+        data_lines.append("    " + " & ".join(cells) + r" \\")
+
+    lines = [
+        r"\begin{table}[ht]",
+        r"  \centering",
+        rf"  \caption{{Algorithm comparison — Level {level}. "
+        r"$\mathcal{A}$: Average Performance (↑); "
+        r"$\mathcal{F}$: Forgetting (↓). "
+        r"Bold = best per column.}",
+        rf"  \label{{tab:algo_comparison_level{level}}}",
+        rf"  \begin{{tabular}}{{{col_fmt}}}",
+        r"    \toprule",
+        f"    {top_header}",
+        f"    {cmidrule_line}",
+        f"    {sub_header}",
+        r"    \midrule",
+    ] + data_lines + [
+        r"    \bottomrule",
+        r"  \end{tabular}",
+        r"\end{table}",
+    ]
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="Compare EWC_partial results between IPPO and MAPPO algorithms")
+    p = argparse.ArgumentParser(
+        description="Compare MARL algorithms × CL methods. One table per difficulty level."
+    )
     p.add_argument("--data_root", default="results/data", help="Root directory containing the data")
-    p.add_argument("--algorithms", nargs="+", default=["ippo", "mappo"], help="Algorithms to compare")
-    p.add_argument("--method", default="EWC_partial", help="Continual learning method to compare")
+    p.add_argument(
+        "--algorithms",
+        nargs="+",
+        default=["ippo", "mappo", "happo", "vdn", "qmix"],
+        help="MARL algorithms to compare (columns)",
+    )
+    p.add_argument(
+        "--methods",
+        nargs="+",
+        default=["FT", "Online_EWC", "Online_MAS"],
+        help="CL methods to compare (rows)",
+    )
     p.add_argument("--strategy", default="generate", help="Strategy name")
     p.add_argument("--seq_len", type=int, default=20, help="Sequence length")
+    p.add_argument("--num_agents", type=int, default=2, help="Number of agents")
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3], help="Seeds to include")
-    p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3], help="Difficulty levels to compare")
+    p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3], help="Difficulty levels")
     p.add_argument(
         "--end_window_evals",
         type=int,
         default=10,
-        help="How many final eval points to average for F (Forgetting)",
+        help="Number of final eval points to average for Forgetting",
     )
     args = p.parse_args()
 
-    print(f"Comparing algorithms: {args.algorithms}")
-    print(f"Method: {args.method}")
-    print(f"Strategy: {args.strategy}")
-    print(f"Sequence length: {args.seq_len}")
-    print(f"Seeds: {args.seeds}")
-    print(f"Levels: {args.levels}")
+    print(f"Algorithms : {args.algorithms}")
+    print(f"CL methods : {args.methods}")
+    print(f"Strategy   : {args.strategy}")
+    print(f"Seq length : {args.seq_len}")
+    print(f"Seeds      : {args.seeds}")
+    print(f"Levels     : {args.levels}")
 
-    # Compute comparison metrics
-    df = compare_algorithms(
-        data_root=Path(args.data_root),
-        algorithms=args.algorithms,
-        method=args.method,
-        strategy=args.strategy,
-        seq_len=args.seq_len,
-        seeds=args.seeds,
-        levels=args.levels,
-        end_window_evals=args.end_window_evals,
-    )
+    for level in args.levels:
+        print(f"\n{'=' * 70}")
+        print(f"  LEVEL {level}")
+        print(f"{'=' * 70}")
 
-    # For each level, identify best performance and format the table
-    df_out_rows = []
+        df = build_table(
+            data_root=Path(args.data_root),
+            algorithms=args.algorithms,
+            methods=args.methods,
+            strategy=args.strategy,
+            seq_len=args.seq_len,
+            seeds=args.seeds,
+            level=level,
+            agents=args.num_agents,
+            end_window_evals=args.end_window_evals,
+        )
 
-    for _, row in df.iterrows():
-        level = row["Level"]
-
-        # Extract values for each algorithm
-        algo_values = {}
-        for algo in args.algorithms:
-            algo_upper = algo.upper()
-            algo_values[algo] = {
-                'ap': row[f"{algo_upper}_AveragePerformance"],
-                'ap_ci': row[f"{algo_upper}_AveragePerformance_CI"],
-                'f': row[f"{algo_upper}_Forgetting"],
-                'f_ci': row[f"{algo_upper}_Forgetting_CI"],
-            }
-
-        # Find best values across algorithms for this level
-        valid_a_values = [v['ap'] for v in algo_values.values() if not (np.isnan(v['ap']) or np.isinf(v['ap']))]
-        valid_f_values = [v['f'] for v in algo_values.values() if not (np.isnan(v['f']) or np.isinf(v['f']))]
-
-        best_a = max(valid_a_values) if valid_a_values else np.nan
-        best_f = min(valid_f_values) if valid_f_values else np.nan
-
-        # Create formatted row
-        formatted_row = {"Level": f"Level {int(level)}"}
-
-        # First add all average performance columns
-        for algo in args.algorithms:
-            algo_upper = algo.upper()
-            values = algo_values[algo]
-
-            formatted_row[f"{algo_upper}_AveragePerformance"] = _fmt(
-                values['ap'], 
-                values['ap_ci'], 
-                values['ap'] == best_a, 
-                "max"
-            )
-
-        # Then add all forgetting columns
-        for algo in args.algorithms:
-            algo_upper = algo.upper()
-            values = algo_values[algo]
-
-            formatted_row[f"{algo_upper}_Forgetting"] = _fmt(
-                values['f'], 
-                values['f_ci'], 
-                values['f'] == best_f, 
-                "min"
-            )
-
-        df_out_rows.append(formatted_row)
-
-    df_out = pd.DataFrame(df_out_rows)
-
-    # Create column headers - first all average performance, then all forgetting
-    columns = ["Level"]
-    # Add all average performance columns first
-    for algo in args.algorithms:
-        algo_upper = algo.upper()
-        columns.append(rf"$\mathcal{{A}}\!\uparrow$ {algo_upper}")
-    # Then add all forgetting columns
-    for algo in args.algorithms:
-        algo_upper = algo.upper()
-        columns.append(rf"$\mathcal{{F}}\!\downarrow$ {algo_upper}")
-
-    df_out.columns = columns
-
-    # Generate LaTeX table
-    column_format = "l" + "cc" * len(args.algorithms)
-    latex_table = df_out.to_latex(
-        index=False,
-        escape=False,
-        column_format=column_format,
-        label="tab:algorithm_comparison",
-        caption=f"Comparison of {args.method} between {' and '.join([algo.upper() for algo in args.algorithms])} algorithms. "
-                f"Bold values indicate the best performance for each metric. "
-                f"$\\mathcal{{A}}$ represents Average Performance (higher is better), "
-                f"$\\mathcal{{F}}$ represents Forgetting (lower is better).",
-    )
-
-    print("\nComparison Results:")
-    print("=" * 80)
-    print(df_out.to_string(index=False))
-
-    print(f"\nLATEX TABLE:")
-    print("-" * 40)
-    print(latex_table)
+        print(df.to_string(index=False))
+        print()
+        print(_latex_table(df, args.algorithms, level))
