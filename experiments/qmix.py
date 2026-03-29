@@ -72,13 +72,13 @@ class Config:
     eps_finish: float = 0.05
     eps_decay: float = 0.1  # fraction of num_updates over which eps decays
     max_grad_norm: float = 1.0
-    update_epochs: int = 4   # passes over collected data per update
+    update_epochs: int = 8   # passes over collected data per update
     num_minibatches: int = 16  # minibatches per epoch
     lr: float = 1e-3
     anneal_lr: bool = False
     gamma: float = 0.99
     tau: float = 1.0  # target network update rate (1 = hard copy)
-    target_update_interval: int = 10
+    target_update_interval: int = 1
 
     # Reward distribution settings
     sparse_rewards: bool = False  # only shared delivery reward, no shaped rewards
@@ -637,19 +637,15 @@ def main():
             rew_flat  = timesteps.rewards["__all__"].reshape(N)
             don_flat  = timesteps.dones["__all__"].reshape(N).astype(jnp.float32)
 
-            # Compute QMIX TD-targets once (Double-DQN: online selects, target evaluates).
+            # Compute QMIX TD-targets once using the frozen target networks.
             tgt_q_params  = train_state.target_network_params["q"]
             tgt_mix_params = train_state.target_network_params["mix"]
 
             nxt_b = jnp.stack([nxt_flat[a] for a in agents])  # (A, N, obs_dim)
-            q_next_online = jax.vmap(
+            q_next = jax.vmap(
                 lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
-            )(train_state.params["q"], nxt_b)  # (A, N, action_dim) — action selection
-            q_next_target = jax.vmap(
-                lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
-            )(tgt_q_params, nxt_b)  # (A, N, action_dim) — evaluation
-            best_actions = jnp.argmax(q_next_online, axis=-1, keepdims=True)  # (A, N, 1)
-            q_next_max   = jnp.take_along_axis(q_next_target, best_actions, axis=-1).squeeze(-1)  # (A, N)
+            )(tgt_q_params, nxt_b)  # (A, N, action_dim)
+            q_next_max   = jnp.max(q_next, axis=-1)  # (A, N)
             q_next_max_T = q_next_max.T               # (N, A)
 
             q_total_next = mixing_network.apply(tgt_mix_params, q_next_max_T, ngs_flat)  # (N,)
