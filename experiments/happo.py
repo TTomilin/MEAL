@@ -407,7 +407,8 @@ def main():
     cfg.minibatch_size = (cfg.num_envs * cfg.num_steps) // cfg.num_minibatches
 
     def linear_schedule(count):
-        frac = 1.0 - (count // (cfg.num_minibatches * cfg.update_epochs)) / cfg.num_updates
+        # HAPPO updates the actor num_agents times per minibatch (one per agent).
+        frac = 1.0 - (count // (cfg.num_minibatches * cfg.update_epochs * num_agents)) / cfg.num_updates
         return cfg.lr * frac
 
     # ── Network creation ─────────────────────────────────────────────────────
@@ -976,7 +977,11 @@ def main():
             metrics["General/update_step"] = update_step
             metrics["General/steps_for_env"] = steps_for_env
             metrics["General/env_step"]    = update_step * cfg.num_steps * cfg.num_envs
-            metrics["General/learning_rate"] = cfg.lr
+            metrics["General/learning_rate"] = (
+                linear_schedule(
+                    (update_step - 1) * cfg.num_minibatches * cfg.update_epochs * num_agents
+                ) if cfg.anneal_lr else cfg.lr
+            )
             metrics["General/reward_shaping_anneal"] = rew_shaping_anneal(current_timestep)
 
             loss_dict = loss_info
