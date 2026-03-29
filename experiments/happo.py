@@ -905,7 +905,11 @@ def main():
                         ratio_new = jax.lax.stop_gradient(
                             jnp.exp(log_prob_new - logp_i)
                         )
-                        M = M * ratio_new
+                        # Clip the M-factor update to the PPO trust region.
+                        # Without clipping, stale log-probs in later epochs make
+                        # ratio_new extreme → M → 0 kills agent-1's gradient;
+                        # M → ∞ causes gradient explosion.
+                        M = M * jnp.clip(ratio_new, 1.0 - cfg.clip_eps, 1.0 + cfg.clip_eps)
 
                         total_actor_loss = total_actor_loss + al_i
                         total_entropy    = total_entropy    + e_i
