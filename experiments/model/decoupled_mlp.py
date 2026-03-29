@@ -125,7 +125,8 @@ class Actor(nn.Module):
         all_logits = nn.Dense(
             logits_dim,
             kernel_init=orthogonal(0.01),
-            bias_init=constant(0.0)
+            bias_init=constant(0.0),
+            name="actor_head",
         )(x)
 
         logits = choose_head(all_logits, self.num_tasks, env_idx) if self.use_multihead else all_logits
@@ -211,7 +212,8 @@ class Critic(nn.Module):
         all_v = nn.Dense(
             vdim,
             kernel_init=orthogonal(1.0),
-            bias_init=constant(0.0)
+            bias_init=constant(0.0),
+            name="critic_head",
         )(critic)
 
         v = choose_head(all_v, self.num_tasks, env_idx) if self.use_multihead else all_v
