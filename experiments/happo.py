@@ -526,7 +526,7 @@ def main():
         reward_shaping_horizon = cfg.steps_per_task / 2
         rew_shaping_anneal = optax.linear_schedule(
             init_value=1.0,
-            end_value=0.0,
+            end_value=1.0,
             transition_steps=reward_shaping_horizon,
         )
 
