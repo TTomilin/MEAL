@@ -33,23 +33,23 @@ class Config:
     # TRAINING / PPO PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
     alg_name: Literal["ippo", "mappo"] = "mappo"
-    lr: float = 3e-4
+    lr: float = 1e-3
     anneal_lr: bool = False
-    num_envs: int = 256
-    num_steps: int = 128
-    steps_per_task: float = 1e7
+    num_envs: int = 2048
+    num_steps: int = 400
+    steps_per_task: float = 1e8
     update_epochs: int = 8
-    num_minibatches: int = 8
+    num_minibatches: int = 16
     gamma: float = 0.99
-    gae_lambda: float = 0.957
+    gae_lambda: float = 0.95
     clip_eps: float = 0.2
     ent_coef: float = 0.01
     vf_coef: float = 0.5
-    max_grad_norm: float = 0.5
+    max_grad_norm: float = 1.0
 
     # Reward shaping
     reward_shaping: bool = True
-    reward_shaping_horizon: float = 2.5e6
+    reward_shaping_horizon: float = 2.5e7
 
     # Reward distribution settings
     sparse_rewards: bool = False  # Only shared reward for soup delivery
@@ -121,7 +121,7 @@ class Config:
     record_video: bool = False
     video_length: int = 250
     log_interval: int = 75
-    renderer_version: str = "v2"
+    renderer_version: str = "v1"
 
     # ═══════════════════════════════════════════════════════════════════════════
     # LOGGING PARAMETERS
