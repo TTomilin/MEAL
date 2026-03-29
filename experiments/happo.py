@@ -236,7 +236,9 @@ class HAPPOActorWrapper:
 
     def apply(self, params, obs, *, env_idx=0):
         pi, dormant = self._net.apply(params, obs, env_idx=env_idx)
-        return pi, jnp.array(0.0), dormant
+        # Return zeros with shape (batch,) so MAS importance fn can reshape to (batch, 1)
+        value_placeholder = jnp.zeros(obs.shape[0])
+        return pi, value_placeholder, dormant
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +493,7 @@ def main():
 
     # Evaluation and importance functions use actor_wrapper (3-value apply)
     evaluate_env = make_eval_fn(
-        reset_switch, step_switch, actor_wrapper, agents, seq_length, cfg.num_steps, cfg.use_cnn
+        reset_switch, step_switch, actor_wrapper, agents, cfg.num_envs, cfg.num_steps, cfg.use_cnn
     )
 
     importance_fn = cl.make_importance_fn(
