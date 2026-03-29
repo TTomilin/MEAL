@@ -100,7 +100,8 @@ class Actor(nn.Module):
         x = nn.Dense(
             128,
             kernel_init=orthogonal(np.sqrt(2)),
-            bias_init=constant(0.0)
+            bias_init=constant(0.0),
+            name="actor_dense1",
         )(x)
         x = act_fn(x)
         if self.track_dormant_ratio:
@@ -112,7 +113,8 @@ class Actor(nn.Module):
         x = nn.Dense(
             128,
             kernel_init=orthogonal(np.sqrt(2)),
-            bias_init=constant(0.0)
+            bias_init=constant(0.0),
+            name="actor_dense2",
         )(x)
         x = act_fn(x)
         if self.track_dormant_ratio:
@@ -187,7 +189,8 @@ class Critic(nn.Module):
         critic = nn.Dense(
             128,
             kernel_init=orthogonal(np.sqrt(2)),
-            bias_init=constant(0.0)
+            bias_init=constant(0.0),
+            name="critic_dense1",
         )(x)
         critic = activation(critic)
         if self.track_dormant_ratio:
@@ -199,7 +202,8 @@ class Critic(nn.Module):
         critic = nn.Dense(
             128,
             kernel_init=orthogonal(np.sqrt(2)),
-            bias_init=constant(0.0)
+            bias_init=constant(0.0),
+            name="critic_dense2",
         )(critic)
         critic = activation(critic)
         if self.track_dormant_ratio:

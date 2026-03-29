@@ -1176,9 +1176,12 @@ def main():
             cfg.agem_memory_size, obs_dim_for_mem, max_tasks=seq_length
         )
     else:
-        # CL state tracks actor params only (no critic regularisation)
+        # CL state tracks actor params only (no critic regularisation).
+        # With multihead, each task has its own head columns → don't regularize the head.
+        # With a single shared head, regularize it like any other layer.
+        regularize_heads = not cfg.use_multihead
         cl_state = init_cl_state(actor_ts.params, regularize_critic=False,
-                                 regularize_heads=cfg.regularize_heads)
+                                 regularize_heads=regularize_heads)
 
     loop_over_envs(train_rng, actor_ts, critic_ts, cl_state, envs)
 
