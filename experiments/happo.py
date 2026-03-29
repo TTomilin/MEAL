@@ -919,10 +919,13 @@ def main():
                     avg_entropy    = total_entropy    / num_agents
                     avg_cl_penalty = total_cl_penalty / num_agents
 
+                    actor_grad_norm  = optax.global_norm(grads_i)
+                    critic_grad_norm = optax.global_norm(critic_grads)
+
                     loss_information = (
                         (critic_loss_val + avg_actor_loss,
                          (critic_loss_val, avg_actor_loss, avg_entropy, avg_cl_penalty)),
-                        grads_i,   # last agent's gradients (for logging only)
+                        (actor_grad_norm, critic_grad_norm),
                         agem_stats,
                     )
                     return (actor_ts, critic_ts, cl_state, rng), loss_information
@@ -935,8 +938,8 @@ def main():
                     xs,
                 )
 
-                total_loss, grads, agem_stats = loss_information
-                loss_dict = {"total_loss": total_loss}
+                total_loss, grad_norms, agem_stats = loss_information
+                loss_dict = {"total_loss": total_loss, "grad_norms": grad_norms}
                 if cfg.cl_method.lower() == "agem":
                     loss_dict["agem_stats"] = agem_stats
 
@@ -980,12 +983,15 @@ def main():
             total_loss = loss_dict["total_loss"]
             critic_loss_val, avg_actor_loss, avg_entropy, avg_cl_penalty = total_loss[1]
             total_loss_scalar = total_loss[0]
+            actor_grad_norm, critic_grad_norm = loss_dict["grad_norms"]
 
             metrics["Losses/total_loss"]  = total_loss_scalar.mean()
             metrics["Losses/critic_loss"] = critic_loss_val.mean()
             metrics["Losses/actor_loss"]  = avg_actor_loss.mean()
             metrics["Losses/entropy"]     = avg_entropy.mean()
             metrics["Losses/reg_loss"]    = avg_cl_penalty.mean()
+            metrics["Gradients/actor_grad_norm"]  = actor_grad_norm.mean()
+            metrics["Gradients/critic_grad_norm"] = critic_grad_norm.mean()
 
             if "agem_stats" in loss_dict:
                 for k, v in loss_dict["agem_stats"].items():
@@ -1022,8 +1028,9 @@ def main():
                 )
             metrics.pop("shaped_reward", None)
 
-            metrics["Advantage_Targets/advantages"] = advantages.mean()
-            metrics["Advantage_Targets/targets"]    = targets.mean()
+            metrics["Advantage_Targets/advantages"]     = advantages.mean()
+            metrics["Advantage_Targets/advantages_std"] = advantages.std()
+            metrics["Advantage_Targets/targets"]        = targets.mean()
 
             # Dormant neuron ratio
             obs_batch_last = batchify(last_obs, agents, cfg.num_actors, not cfg.use_cnn)
