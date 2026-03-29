@@ -179,9 +179,9 @@ def compute_metrics_for_task_range(
                     task_sd = task_base_folder / f"seed_{seed}"
 
                     if task_sd.exists():
-                        matching_files = list(task_sd.glob(f"{i}_*_soup.*"))
-                        if matching_files:
-                            env_files.append(matching_files[0])  # Take the first match
+                        fp = task_sd / f"{i}_soup.json"
+                        if fp.exists():
+                            env_files.append(fp)
                         else:
                             print(f"[warn] missing evaluation file for task {i} in {method} seed {seed} from {task_experiment_folder}")
                             env_files.append(None)
@@ -290,9 +290,9 @@ def compute_metrics_for_task_range(
                 # 2) Per‑environment evaluation curves - only load files for the specified task range
                 env_files = []
                 for i in task_indices:
-                    matching_files = list(sd.glob(f"{i}_*_soup.*"))
-                    if matching_files:
-                        env_files.append(matching_files[0])  # Take the first match
+                    fp = sd / f"{i}_soup.json"
+                    if fp.exists():
+                        env_files.append(fp)
                     else:
                         print(f"[warn] missing evaluation file for task {i} in {method} seed {seed}")
 

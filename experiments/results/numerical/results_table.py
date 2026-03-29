@@ -192,25 +192,13 @@ def compute_metrics(
             env_series = []
             missing_files = []
             for i in range(seq_len):
-                expected_file = sd / f"{i}_gen_soup.json"
-                if expected_file.exists():
-                    env_series.append(load_series(expected_file))
+                fp = sd / f"{i}_soup.json"
+                if fp.exists():
+                    env_series.append(load_series(fp))
                 else:
-                    # Try an alternative naming pattern
-                    alt_file = sd / f"{i}_soup.json"
-                    if alt_file.exists():
-                        env_series.append(load_series(alt_file))
-                    else:
-                        # Try yet another alternative naming pattern
-                        difficulty = "easy" if level == 1 else "medium" if level == 2 else "hard"
-                        alt_file = sd / f"{i}_{difficulty}_gen_soup.json"
-                        if alt_file.exists():
-                            env_series.append(load_series(alt_file))
-                        else:
-                            print(f"[warn] missing env file for task {i}, seed {seed}, method {method}, using zeros")
-                            missing_files.append(i)
-                            # Create a default array of zeros with reasonable length
-                            env_series.append(np.zeros(100))
+                    print(f"[warn] missing env file for task {i}, seed {seed}, method {method}, using zeros")
+                    missing_files.append(i)
+                    env_series.append(np.zeros(100))
 
             # Replace NaN and inf/-inf values with zeros in env_series
             processed_env_series = []

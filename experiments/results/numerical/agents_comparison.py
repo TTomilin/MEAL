@@ -113,10 +113,12 @@ def compute_metrics(
         present_task_ids: List[int] = []
         for i in range(seq_len):
             # find eval file for task i; ignore training files
-            cand = sorted([p for p in sd.glob(f"{i}_*_{eval_suffix}.json") if "training" not in p.name])
-            if not cand:
-                # try a looser pattern (older dumps)
-                cand = sorted([p for p in sd.glob(f"{i}_*{eval_suffix}.*") if "training" not in p.name])
+            direct = sd / f"{i}_{eval_suffix}.json"
+            if direct.exists():
+                cand = [direct]
+            else:
+                # fallback: glob for older naming conventions
+                cand = sorted([p for p in sd.glob(f"{i}_*_{eval_suffix}.*") if "training" not in p.name])
             if not cand:
                 # no eval file for this task; skip it
                 print(f"[info] missing eval for task {i}, seed {seed} — skipping this task")

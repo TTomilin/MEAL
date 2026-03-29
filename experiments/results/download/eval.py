@@ -84,8 +84,13 @@ TRAINING_RETURNS_KEY = "Train/Ego_returned_episode_returns"
 # Helpers
 # ---------------------------------------------------------------------------
 
-def discover_eval_keys(run: Run, env_cfg: EnvConfig, include_dormant_ratio: bool = False) -> List[str]:
-    """Return sorted eval keys + optional training/dormant-ratio keys."""
+def discover_eval_keys(
+    run: Run,
+    env_cfg: EnvConfig,
+    include_dormant_ratio: bool = False,
+    extra_metric_prefixes: List[str] | None = None,
+) -> List[str]:
+    """Return sorted eval keys + optional training/dormant-ratio/extra keys."""
     df = run.history(samples=500)
     keys = [k for k in df.columns if env_cfg.eval_pattern.match(k)]
 
@@ -94,6 +99,10 @@ def discover_eval_keys(run: Run, env_cfg: EnvConfig, include_dormant_ratio: bool
 
     if include_dormant_ratio and DORMANT_RATIO_KEY in df.columns:
         keys.append(DORMANT_RATIO_KEY)
+
+    for prefix in (extra_metric_prefixes or []):
+        prefix_slash = prefix.rstrip("/") + "/"
+        keys += [k for k in df.columns if k.startswith(prefix_slash)]
 
     def sort_key(k: str) -> int:
         m = env_cfg.eval_pattern.match(k)
@@ -109,10 +118,22 @@ def discover_eval_keys(run: Run, env_cfg: EnvConfig, include_dormant_ratio: bool
 
 
 def eval_filename(key: str, env_cfg: EnvConfig, ext: str) -> str:
-    """Map a W&B key to the output filename."""
+    """Map a W&B key to the output filename — just {idx}_{metric}.{ext}."""
     m = env_cfg.eval_pattern.match(key)
-    idx, name = m.group(1), m.group(2)
-    return f"{idx}_{name}_{env_cfg.metric_name}.{ext}"
+    idx = m.group(1)
+    return f"{idx}_{env_cfg.metric_name}.{ext}"
+
+
+def extra_metric_filename(key: str, prefix: str, ext: str) -> str:
+    """Map an extra-metric W&B key to an output filename — just {idx}_{suffix}.{ext}.
+
+    e.g. key='Evaluation/Heterogeneity/17_medium_gen_17', prefix='Evaluation/Heterogeneity'
+         → '17_heterogeneity.{ext}'
+    """
+    suffix_label = prefix.rstrip("/").split("/")[-1].lower()
+    rest = key[len(prefix.rstrip("/")) :].lstrip("/")
+    idx = rest.split("_")[0]
+    return f"{idx}_{suffix_label}.{ext}"
 
 
 def fetch_full_series(run: Run, key: str, cfg: dict) -> List[float]:
@@ -267,7 +288,11 @@ def main() -> None:
             print(f"[warn] {run.name}: unknown env_name={env_name!r}, skipping")
             continue
 
-        eval_keys = discover_eval_keys(run, env_cfg, include_dormant_ratio=args.include_dormant_ratio)
+        eval_keys = discover_eval_keys(
+            run, env_cfg,
+            include_dormant_ratio=args.include_dormant_ratio,
+            extra_metric_prefixes=args.extra_metrics,
+        )
         if not eval_keys:
             print(f"[warn] {run.name} has no matched eval keys")
             continue
@@ -278,7 +303,7 @@ def main() -> None:
             if repeat_sequence is not None:
                 sequence += f"_rep_{repeat_sequence}"
 
-        agents_string = f"agents_{num_agents}" if args.num_agents else ""
+        agents_string = f"agents_{num_agents}" if num_agents else ""
         out_base = (
             base_workspace / args.output / algo / cl_method
             / level_string / agents_string / sequence / experiment / f"seed_{seed}"
@@ -286,12 +311,22 @@ def main() -> None:
 
         print(f"[info] {run.name}  env={env_name}  →  {out_base}")
 
+        # Build a quick lookup: key → prefix for extra metrics
+        extra_key_to_prefix = {}
+        for prefix in args.extra_metrics:
+            prefix_slash = prefix.rstrip("/") + "/"
+            for k in eval_keys:
+                if k.startswith(prefix_slash):
+                    extra_key_to_prefix[k] = prefix
+
         for key in eval_keys:
             # Determine filename
             if key == env_cfg.training_key:
                 filename = f"{env_cfg.training_filename}.{ext}"
             elif key == DORMANT_RATIO_KEY:
                 filename = f"dormant_ratio.{ext}"
+            elif key in extra_key_to_prefix:
+                filename = extra_metric_filename(key, extra_key_to_prefix[key], ext)
             else:
                 filename = eval_filename(key, env_cfg, ext)
 

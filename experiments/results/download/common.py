@@ -41,8 +41,20 @@ def cli() -> argparse.Namespace:
     p.add_argument("--env", type=str, default=None, help="Environment name (used to route num_agents to the correct config field)")
 
     # Neural activity parameters
-    p.add_argument("--include_dormant_ratio", action="store_true", 
+    p.add_argument("--include_dormant_ratio", action="store_true",
                    help="Also download Neural_Activity/dormant_ratio data")
+
+    # Generic extra metrics
+    p.add_argument(
+        "--extra_metric", nargs="+", default=[], dest="extra_metrics",
+        metavar="PREFIX",
+        help=(
+            "Additional W&B key prefixes to download alongside the main eval metric. "
+            "Each prefix of the form 'A/B' will match any logged key 'A/B/{idx}_{name}' "
+            "and save it as '{idx}_{name}_{b_lower}.{ext}'. "
+            "Example: --extra_metric Evaluation/Heterogeneity"
+        ),
+    )
 
     return p.parse_args()
 

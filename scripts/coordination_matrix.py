@@ -356,53 +356,300 @@ def print_latex(matrix: np.ndarray, layout_names: list[str], label: str):
 
 
 # ---------------------------------------------------------------------------
+# Batch discovery helpers
+# ---------------------------------------------------------------------------
+
+def parse_group(spec: str) -> tuple[str, str, str]:
+    """Parse a group spec 'label:method_folder[:timestamp_prefix]'."""
+    parts = spec.split(":", 2)
+    label     = parts[0]
+    folder    = parts[1]
+    ts_prefix = parts[2] if len(parts) > 2 else ""
+    return label, folder, ts_prefix
+
+
+def discover_runs(
+    checkpoint_root: Path,
+    method_folder: str,
+    difficulty: str,
+    ts_prefix: str = "",
+) -> List[Path]:
+    """Return all run directories matching folder / difficulty / timestamp prefix."""
+    base = checkpoint_root / method_folder
+    if not base.exists():
+        return []
+    runs = []
+    for d in sorted(base.iterdir()):
+        if not d.is_dir():
+            continue
+        name = d.name
+        if difficulty.lower() not in name.lower():
+            continue
+        if ts_prefix and ts_prefix not in name:
+            continue
+        if (d / "model_env_1").exists():
+            runs.append(d)
+    return runs
+
+
+# ---------------------------------------------------------------------------
+# Seed aggregation
+# ---------------------------------------------------------------------------
+
+def aggregate_matrices(
+    run_dirs: List[Path],
+    num_envs: int,
+    num_steps: int,
+    seed: int,
+    num_agents: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
+    """
+    Compute coordination matrix for each seed run, then return
+    (mean_norm, std_norm, mean_raw, layout_names).
+    """
+    matrices, layout_names_ref = [], None
+    for rd in run_dirs:
+        try:
+            m_norm, _, layout_names = compute_matrix(
+                run_dir=rd, num_envs=num_envs, num_steps=num_steps,
+                seed=seed, num_agents=num_agents,
+            )
+            matrices.append(m_norm)
+            if layout_names_ref is None:
+                layout_names_ref = layout_names
+        except Exception as e:
+            print(f"[warn] {rd.name}: {e}")
+
+    if not matrices:
+        raise RuntimeError("No matrices computed — all runs failed.")
+
+    stack = np.stack(matrices, axis=0)           # (n_seeds, N, N)
+    return stack.mean(axis=0), stack.std(axis=0), layout_names_ref or []
+
+
+# ---------------------------------------------------------------------------
+# Summary table helpers
+# ---------------------------------------------------------------------------
+
+def _fmt_cell(mean: float, ci: float, bold: bool) -> str:
+    if np.isnan(mean):
+        return "--"
+    s = f"{mean:.3f}"
+    if bold:
+        s = rf"\textbf{{{s}}}"
+    if ci > 0:
+        s += rf"{{\scriptsize$\pm{ci:.3f}$}}"
+    return s
+
+
+def print_summary_table(results: dict, difficulties: List[str], latex: bool) -> None:
+    """
+    results: {label: {difficulty: {"cf": (mean, ci), "diag": (mean, ci), "upper": (mean, ci)}}}
+    """
+    labels = list(results.keys())
+
+    print("\n" + "=" * 70)
+    print("SUMMARY — Coordination Forgetting (CF) per method × difficulty")
+    print("=" * 70)
+    header = f"{'Method':<18}" + "".join(f"  {d.capitalize():<12}" for d in difficulties)
+    print(header)
+    for label in labels:
+        row = f"{label:<18}"
+        for diff in difficulties:
+            cell = results[label].get(diff)
+            if cell is None:
+                row += "  --          "
+            else:
+                m, ci = cell["cf"]
+                row += f"  {m:.3f}±{ci:.3f}   "
+        print(row)
+
+    if not latex:
+        return
+
+    n_diff = len(difficulties)
+    col_fmt = "l" + "c" * n_diff
+    diff_header = " & ".join(d.capitalize() for d in difficulties)
+
+    lines = [
+        r"\begin{table}[h]", r"\centering",
+        r"\caption{Coordination forgetting (CF $= 1 - $ upper-triangle mean / diagonal mean) "
+        r"of the coordination compatibility matrix, averaged over seeds. "
+        r"Higher CF means later checkpoints coordinate less well with earlier partners.}",
+        r"\label{tab:coord_forgetting_batch}",
+        rf"\begin{{tabular}}{{{col_fmt}}}",
+        r"\toprule",
+        r"Method & " + diff_header + r" \\",
+        r"\midrule",
+    ]
+    # best (lowest CF) per difficulty
+    best = {}
+    for diff in difficulties:
+        vals = [results[l][diff]["cf"][0] for l in labels if diff in results[l] and not np.isnan(results[l][diff]["cf"][0])]
+        best[diff] = min(vals) if vals else np.nan
+
+    for label in labels:
+        cells = [label]
+        for diff in difficulties:
+            cell = results[label].get(diff)
+            if cell is None:
+                cells.append("--")
+            else:
+                m, ci = cell["cf"]
+                is_best = not np.isnan(m) and np.isclose(m, best.get(diff, np.nan))
+                cells.append(_fmt_cell(m, ci, is_best))
+        lines.append(" & ".join(cells) + r" \\")
+
+    lines += [r"\bottomrule", r"\end{tabular}", r"\end{table}"]
+    print("\nLaTeX:\n" + "\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="Coordination compatibility matrix")
-    p.add_argument("--run_dir", nargs="+", required=True,
-                   help="One or more checkpoint run directories")
-    p.add_argument("--labels", nargs="+", default=None,
-                   help="Display labels for each run (defaults to directory names)")
+    p = argparse.ArgumentParser(
+        description="Coordination compatibility matrix — single run or batch mode",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Single run
+  python scripts/coordination_matrix.py --run_dir checkpoints/overcooked/EWC/run_A
+
+  # Batch: aggregate over seeds, all methods × difficulties
+  python scripts/coordination_matrix.py \\
+      --checkpoint_root checkpoints/overcooked \\
+      --groups "EWC:EWC:2026-03-28_20-29" "Online_EWC:EWC:2026-03-28_20-31" "FT:FT" "L2:L2" "MAS:MAS" \\
+      --difficulties easy medium hard \\
+      --latex
+""")
+
+    # Single-run mode
+    p.add_argument("--run_dir", nargs="+", default=None,
+                   help="One or more checkpoint run directories (single-run mode)")
+    p.add_argument("--labels", nargs="+", default=None)
+
+    # Batch mode
+    p.add_argument("--checkpoint_root", type=Path, default=None,
+                   help="Root of the checkpoints tree (enables batch mode)")
+    p.add_argument("--groups", nargs="+", default=None,
+                   help="Group specs 'label:method_folder[:timestamp_prefix]'")
+    p.add_argument("--difficulties", nargs="+", default=["easy", "medium", "hard"],
+                   help="Difficulty keywords to match in run directory names")
+
+    # Shared
     p.add_argument("--num_envs",  type=int, default=64)
     p.add_argument("--num_steps", type=int, default=400)
     p.add_argument("--num_agents", type=int, default=2)
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--out_dir", type=Path, default=Path("runs/coordination"),
-                   help="Directory to save heatmap PNGs")
-    p.add_argument("--latex", action="store_true",
-                   help="Print LaTeX tables")
+    p.add_argument("--out_dir", type=Path, default=Path("runs/coordination"))
+    p.add_argument("--latex", action="store_true")
     args = p.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    run_dirs = [Path(d) for d in args.run_dir]
-    labels   = args.labels or [d.name for d in run_dirs]
+    # ----------------------------------------------------------------
+    # Batch mode
+    # ----------------------------------------------------------------
+    if args.checkpoint_root is not None:
+        if not args.groups:
+            p.error("--groups is required with --checkpoint_root")
 
-    for run_dir, label in zip(run_dirs, labels):
-        print(f"\n{'='*60}")
-        print(f"Run: {label}  ({run_dir})")
-        print(f"{'='*60}")
+        groups = [parse_group(g) for g in args.groups]
+        summary_results: dict = {}
 
-        matrix_norm, matrix_raw, layout_names = compute_matrix(
-            run_dir    = run_dir,
-            num_envs   = args.num_envs,
-            num_steps  = args.num_steps,
-            seed       = args.seed,
-            num_agents = args.num_agents,
-        )
+        for label, method_folder, ts_prefix in groups:
+            summary_results[label] = {}
+            for difficulty in args.difficulties:
+                run_dirs = discover_runs(
+                    args.checkpoint_root, method_folder, difficulty, ts_prefix
+                )
+                if not run_dirs:
+                    print(f"[warn] No runs found for {label} / {difficulty}")
+                    continue
 
-        metrics = coordination_retention(matrix_norm)
-        print(f"\nCoordination metrics:")
-        print(f"  diagonal mean (standard eval):  {metrics['diagonal_mean']:.3f}")
-        print(f"  upper-triangle mean:             {metrics['upper_tri_mean']:.3f}")
-        print(f"  retention ratio:                 {metrics['retention_ratio']:.3f}")
-        print(f"  coordination forgetting (CF):    {metrics['coord_forgetting']:.3f}")
+                print(f"\n{'='*60}")
+                print(f"{label}  |  {difficulty}  ({len(run_dirs)} seeds)")
+                for rd in run_dirs:
+                    print(f"  {rd.name}")
+                print(f"{'='*60}")
 
-        out_path = args.out_dir / f"coord_matrix_{label.replace(' ', '_')}.png"
-        plot_matrix(matrix_norm, layout_names, title=f"Coordination matrix — {label}", out_path=out_path)
+                try:
+                    mean_norm, std_norm, layout_names = aggregate_matrices(
+                        run_dirs, args.num_envs, args.num_steps,
+                        args.seed, args.num_agents,
+                    )
+                except Exception as e:
+                    print(f"[error] {label}/{difficulty}: {e}")
+                    continue
 
-        if args.latex:
-            print("\nLaTeX table:")
-            print_latex(matrix_norm, layout_names, label)
+                metrics = coordination_retention(mean_norm)
+                n_seeds = len(run_dirs)
+                # Compute per-seed CF for CI
+                per_seed_cf = []
+                for rd in run_dirs:
+                    try:
+                        m, _, _ = compute_matrix(rd, args.num_envs, args.num_steps, args.seed, args.num_agents)
+                        per_seed_cf.append(coordination_retention(m)["coord_forgetting"])
+                    except Exception:
+                        pass
+                cf_mean = float(np.mean(per_seed_cf)) if per_seed_cf else np.nan
+                cf_ci   = (1.96 * np.std(per_seed_cf, ddof=1) / np.sqrt(len(per_seed_cf))
+                           if len(per_seed_cf) > 1 else 0.0)
+
+                summary_results[label][difficulty] = {
+                    "cf":    (cf_mean, cf_ci),
+                    "diag":  (metrics["diagonal_mean"], 0.0),
+                    "upper": (metrics["upper_tri_mean"], 0.0),
+                }
+
+                print(f"  diagonal mean:      {metrics['diagonal_mean']:.3f}")
+                print(f"  upper-triangle:     {metrics['upper_tri_mean']:.3f}")
+                print(f"  coord forgetting:   {cf_mean:.3f} ± {cf_ci:.3f}  (n={n_seeds})")
+
+                slug = f"{label.replace(' ', '_')}_{difficulty}"
+                out_path = args.out_dir / f"coord_matrix_{slug}.png"
+                plot_matrix(
+                    mean_norm, layout_names,
+                    title=f"Coordination matrix — {label} / {difficulty}  (mean over {n_seeds} seeds)",
+                    out_path=out_path,
+                )
+                if args.latex:
+                    print_latex(mean_norm, layout_names, label=f"{label} {difficulty}")
+
+        print_summary_table(summary_results, args.difficulties, latex=args.latex)
+
+    # ----------------------------------------------------------------
+    # Single-run mode (original behaviour)
+    # ----------------------------------------------------------------
+    else:
+        if not args.run_dir:
+            p.error("Either --run_dir or --checkpoint_root is required")
+
+        run_dirs = [Path(d) for d in args.run_dir]
+        labels   = args.labels or [d.name for d in run_dirs]
+
+        for run_dir, label in zip(run_dirs, labels):
+            print(f"\n{'='*60}")
+            print(f"Run: {label}  ({run_dir})")
+            print(f"{'='*60}")
+
+            matrix_norm, matrix_raw, layout_names = compute_matrix(
+                run_dir=run_dir, num_envs=args.num_envs, num_steps=args.num_steps,
+                seed=args.seed, num_agents=args.num_agents,
+            )
+
+            metrics = coordination_retention(matrix_norm)
+            print(f"\nCoordination metrics:")
+            print(f"  diagonal mean (standard eval):  {metrics['diagonal_mean']:.3f}")
+            print(f"  upper-triangle mean:             {metrics['upper_tri_mean']:.3f}")
+            print(f"  retention ratio:                 {metrics['retention_ratio']:.3f}")
+            print(f"  coordination forgetting (CF):    {metrics['coord_forgetting']:.3f}")
+
+            out_path = args.out_dir / f"coord_matrix_{label.replace(' ', '_')}.png"
+            plot_matrix(matrix_norm, layout_names, title=f"Coordination matrix — {label}", out_path=out_path)
+
+            if args.latex:
+                print("\nLaTeX table:")
+                print_latex(matrix_norm, layout_names, label)
