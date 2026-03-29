@@ -35,7 +35,7 @@ class Config:
     alg_name: Literal["ippo", "mappo"] = "mappo"
     lr: float = 3e-4
     anneal_lr: bool = False
-    num_envs: int = 16
+    num_envs: int = 256
     num_steps: int = 128
     steps_per_task: float = 1e7
     update_epochs: int = 8
@@ -359,10 +359,6 @@ def main():
 
     network = DecoupledNetworkWrapper()
 
-    # JIT compile
-    actor_network.apply = jax.jit(actor_network.apply)
-    critic_network.apply = jax.jit(critic_network.apply)
-
     tx = optax.chain(
         optax.clip_by_global_norm(cfg.max_grad_norm),
         optax.adam(learning_rate=linear_schedule if cfg.anneal_lr else cfg.lr, eps=1e-5),
@@ -419,9 +415,11 @@ def main():
                 value_per_env, _critic_dormant = critic_network.apply(
                     train_state.params['critic'], global_state, env_idx=env_idx
                 )
-                # Tile value: one shared value per env → repeat for each agent
-                value = jnp.repeat(value_per_env, len(agents), axis=0)
-                global_state_batch = jnp.repeat(global_state, len(agents), axis=0)
+                # Tile value/global_state: blocked layout to match batchify
+                # batchify gives [agent0_env0..N, agent1_env0..N] (blocked, not interleaved)
+                # jnp.tile gives [env0..N, env0..N] which aligns correctly
+                value = jnp.tile(value_per_env, len(agents))
+                global_state_batch = jnp.tile(global_state, (len(agents), 1))
 
                 action = pi.sample(seed=_rng)
                 log_prob = pi.log_prob(action)
@@ -475,7 +473,7 @@ def main():
             last_val_per_env, _ = critic_network.apply(
                 train_state.params['critic'], last_global_state, env_idx=env_idx
             )
-            last_val = jnp.repeat(last_val_per_env, len(agents), axis=0)
+            last_val = jnp.tile(last_val_per_env, len(agents))
 
             def _calculate_gae(traj_batch, last_val):
                 def _get_advantages(gae_and_next_value, transition):
