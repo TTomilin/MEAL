@@ -234,7 +234,7 @@ if __name__ == "__main__":
     p.add_argument(
         "--methods",
         nargs="+",
-        default=["FT", "Online_EWC", "Online_MAS"],
+        default=["FT", "Online_EWC", "Online_MAS", "packnet"],
         help="CL methods to compare (rows)",
     )
     p.add_argument("--strategy", default="generate", help="Strategy name")
