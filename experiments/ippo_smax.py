@@ -14,24 +14,17 @@ Usage:
 """
 
 import json
-import os
-import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
 from pathlib import Path
-from typing import List, Literal, Optional, Sequence
+from typing import List, Literal, Optional
 
 import flax
-import jax
-import jax.numpy as jnp
 import numpy as np
 import optax
 import tyro
 import wandb
-from flax.core.frozen_dict import unfreeze
 from flax.training.train_state import TrainState
 from jax._src.flatten_util import ravel_pytree
-from tensorboardX import SummaryWriter
 
 from experiments.continual.agem import (
     AGEM,
@@ -49,7 +42,7 @@ from experiments.evaluation_smax import evaluate_all_envs, make_eval_fn
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.model.mlp import ActorCritic as MLPActorCritic
 from experiments.utils import *
-from meal.env.smax import HeuristicEnemySMAX, make_smax_sequence
+from meal.env.smax import make_smax_sequence
 from meal.wrappers.logging import LogWrapper
 
 
@@ -67,7 +60,7 @@ class Config:
     lr: float = 3e-4
     anneal_lr: bool = False
     num_envs: int = 512
-    num_steps: int = 100        # episode length (must match max_steps)
+    num_steps: int = 100  # episode length (must match max_steps)
     steps_per_task: float = 5e7
     update_epochs: int = 4
     num_minibatches: int = 8
@@ -114,7 +107,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════
     num_allies: int = 5
     num_enemies: int = 5
-    max_steps: int = 100         # episode length; keep in sync with num_steps
+    max_steps: int = 100  # episode length; keep in sync with num_steps
     seq_length: int = 10
     single_task_idx: Optional[int] = None
     enemy_shoots: bool = True
@@ -223,8 +216,8 @@ def main():
         env_names.append(envs[i].map_id)
 
     temp_env = envs[0]
-    num_agents = temp_env.num_agents   # = num_allies for HeuristicEnemySMAX
-    agents = temp_env.agents           # ["ally_0", ..., "ally_{n-1}"]
+    num_agents = temp_env.num_agents  # = num_allies for HeuristicEnemySMAX
+    agents = temp_env.agents  # ["ally_0", ..., "ally_{n-1}"]
 
     cfg.num_actors = num_agents * cfg.num_envs
     cfg.num_updates = int(cfg.steps_per_task // cfg.num_steps // cfg.num_envs)
@@ -320,6 +313,8 @@ def main():
                     lambda k, s, a: step_switch(k, s, a, jnp.int32(env_idx))
                 )(rng_step, env_state, env_act)
 
+                info["episode_done"] = done["__all__"]
+
                 transition = Transition(
                     batchify(done, agents, cfg.num_actors, not cfg.use_cnn).squeeze(),
                     action,
@@ -379,17 +374,17 @@ def main():
                         gae = (gae - gae.mean()) / (gae.std() + 1e-8)
                         loss_actor_unclipped = ratio * gae
                         loss_actor_clipped = (
-                            jnp.clip(ratio, 1.0 - cfg.clip_eps, 1.0 + cfg.clip_eps) * gae
+                                jnp.clip(ratio, 1.0 - cfg.clip_eps, 1.0 + cfg.clip_eps) * gae
                         )
                         loss_actor = -jnp.minimum(loss_actor_unclipped, loss_actor_clipped).mean()
                         entropy = pi.entropy().mean()
 
                         cl_penalty = cl.penalty(params, cl_state, cfg.reg_coef)
                         total_loss = (
-                            loss_actor
-                            + cfg.vf_coef * value_loss
-                            - cfg.ent_coef * entropy
-                            + cl_penalty
+                                loss_actor
+                                + cfg.vf_coef * value_loss
+                                - cfg.ent_coef * entropy
+                                + cl_penalty
                         )
                         return total_loss, (value_loss, loss_actor, entropy, cl_penalty)
 
@@ -490,8 +485,19 @@ def main():
             )
             train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state = update_state
 
-            current_timestep = update_step * cfg.num_steps * cfg.num_envs
+            # kill_fraction must be averaged only at episode boundaries (mirrors eval logic).
+            # Averaging over all timesteps gives a misleading low value because kill_fraction
+            # starts at 0 each episode and grows as enemies die.
+            kill_fraction_traj = info.pop("kill_fraction", None)  # [num_steps, num_envs]
+            episode_done_traj = info.pop("episode_done", None)  # [num_steps, num_envs]
             metrics = jax.tree_util.tree_map(lambda x: x.mean(), info)
+            if kill_fraction_traj is not None and episode_done_traj is not None:
+                n_eps = episode_done_traj.sum()
+                metrics["kill_fraction"] = jnp.where(
+                    n_eps > 0,
+                    (kill_fraction_traj * episode_done_traj).sum() / n_eps,
+                    0.0,
+                )
 
             if cfg.cl_method.lower() == "agem" and cl_state is not None:
                 cl_state, rng = update_agem_memory(
