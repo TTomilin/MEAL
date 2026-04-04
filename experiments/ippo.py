@@ -175,7 +175,7 @@ def main():
         )
 
     if cfg.single_task_idx is not None:  # single-task baseline
-        cfg.cl_method = "ft"
+        cfg.cl_method = "FT"
     if cfg.cl_method is None:
         raise ValueError(
             "cl_method is required. Please specify a continual learning method (e.g., ewc, mas, l2, ft, agem).")
@@ -910,6 +910,8 @@ def main():
 
         visualizer = None
         for task_idx, (rng, env) in enumerate(zip(env_rngs, envs)):
+            if cfg.single_task_idx is not None and task_idx != cfg.single_task_idx:
+                continue
             # --- Task Training ---
             print(f"Training on environment: {task_idx} - {env.layout_name}")
             runner_state, metrics = train_on_environment(rng, train_state, cl_state, task_idx)

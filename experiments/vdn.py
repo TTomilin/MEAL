@@ -338,7 +338,7 @@ def main():
         )
 
     if cfg.single_task_idx is not None:
-        cfg.cl_method = "ft"
+        cfg.cl_method = "FT"
     if cfg.cl_method is None:
         raise ValueError(
             "cl_method is required (e.g., ewc, mas, l2, ft, agem)."
@@ -909,6 +909,8 @@ def main():
         for task_idx, (env_rng, train_env, env) in enumerate(
                 zip(env_rngs, train_envs, envs)
         ):
+            if cfg.single_task_idx is not None and task_idx != cfg.single_task_idx:
+                continue
             print(f"Training on task {task_idx + 1}/{seq_length}: {env.layout_name}")
 
             rng, train_state, cl_state = train_on_environment(

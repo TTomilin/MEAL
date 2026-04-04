@@ -162,7 +162,7 @@ def main():
     cfg = tyro.cli(Config)
 
     if cfg.single_task_idx is not None:
-        cfg.cl_method = "ft"
+        cfg.cl_method = "FT"
     if cfg.cl_method is None:
         raise ValueError("cl_method is required. Choose: ewc, mas, l2, ft, agem")
 
@@ -600,6 +600,8 @@ def main():
     def loop_over_envs(rng, train_state, cl_state, envs):
         rng, *env_rngs = jax.random.split(rng, seq_length + 1)
         for task_idx, (task_rng, env) in enumerate(zip(env_rngs, envs)):
+            if cfg.single_task_idx is not None and task_idx != cfg.single_task_idx:
+                continue
             print(f"Training on task {task_idx}: {env.map_id}")
             runner_state, _ = train_on_environment(task_rng, train_state, cl_state, task_idx)
             train_state = runner_state[0]
