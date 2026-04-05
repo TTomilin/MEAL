@@ -47,12 +47,19 @@ def compute_metrics(
 
     _eval_suffixes = {"jaxnav": "success", "mpe": "coverage_fraction", "smax": "return"}
     eval_suffix = _eval_suffixes.get(env, "soup")
-    _training_metrics = {"jaxnav": "return"}
-    training_metric = _training_metrics.get(env, None if env in ("mpe", "smax") else "soup")
+    _training_metrics = {"jaxnav": "return", "smax": "kill_fraction", "mpe": "coverage_fraction"}
+    training_metric = _training_metrics.get(env, "soup")
     _level_strings = {"jaxnav": "jaxnav", "mpe": "mpe", "smax": "smax"}
     level_string = _level_strings.get(env, f"level_{level}")
+    # Temporary hack because I forgot to log all the necessary data for the initial runs.
+    # For SMAX and MPE, the single-task baseline training files and the CL method training files
+    # are the same (both in single/), so comparing them gives FT=0. Instead, use the CL eval
+    # curves from env_mat as the CL curve, normalised to [0,1] where needed.
+    # SMAX: eval=returns (needs normalisation), baseline=kill_fraction [0,1]
+    # MPE:  eval=coverage_fraction [0,1],        baseline=coverage_fraction [0,1] (no normalisation needed)
+    ft_use_eval_normalised = env in {"smax", "mpe"}
 
-    # Load baseline data once for forward transfer calculation (only when training metric exists)
+    # Load baseline data once for forward transfer calculation
     repo_root = Path(__file__).resolve().parent.parent
     baseline_data = {}
     if training_metric is not None:
@@ -62,6 +69,7 @@ def compute_metrics(
             / algo
             / "single"
             / level_string
+            / f"agents_{num_agents}"
             / f"{strategy}_{seq_len}"
         )
 
@@ -138,71 +146,76 @@ def compute_metrics(
         # Average Performance (AP) – last eval of mean curve
         AP_seeds.append(env_mat.mean(axis=0)[-1])
 
-        # Forward Transfer (FT) – skipped for envs without a training metric
+        # Forward Transfer (FT)
         if training_metric is None:
             FT_seeds.append(np.nan)
+        elif seed not in baseline_data:
+            print(f"[warn] missing baseline data for seed {seed}")
+            FT_seeds.append(np.nan)
         else:
-            training_fp = sd / f"training_{training_metric}.json"
-            if not training_fp.exists():
-                print(f"[warn] missing training_{training_metric}.json for {method} {num_agents}agents seed {seed}")
-                FT_seeds.append(np.nan)
-            else:
-                training = load_series(training_fp)
-                n_train = len(training)
-                chunk = max(1, n_train // seq_len)
-
-                if seed not in baseline_data:
-                    print(f"[warn] missing baseline data for seed {seed}")
-                    FT_seeds.append(np.nan)
+            ft_vals = []
+            baseline_seed_dir = baseline_folder / f"seed_{seed}"
+            # HACK: for SMAX, use eval returns from env_mat (normalised to [0,1]) as the CL
+            # curve so that it is comparable to the kill_fraction baseline in [0,1].
+            n_eval = env_mat.shape[1]
+            eval_chunk = max(1, n_eval // seq_len)
+            eval_max = env_mat.max() if ft_use_eval_normalised else 1.0
+            if ft_use_eval_normalised and eval_max < 1e-8:
+                eval_max = 1.0
+            for task_pos, i in enumerate(present_task_ids):
+                if ft_use_eval_normalised:
+                    start_idx = i * eval_chunk
+                    end_idx = min((i + 1) * eval_chunk, n_eval)
+                    cl_task_curve = env_mat[task_pos, start_idx:end_idx] / eval_max
                 else:
-                    ft_vals = []
-                    for i in present_task_ids:
-                        start_idx = i * chunk
-                        end_idx = min((i + 1) * chunk, n_train)
-                        cl_task_curve = training[start_idx:end_idx]
+                    task_fp = baseline_seed_dir / f"{i}_training_{training_metric}.json"
+                    if not task_fp.exists():
+                        print(f"[warn] missing {i}_training_{training_metric}.json for seed {seed} in single/ folder")
+                        continue
+                    cl_task_curve = load_series(task_fp)
 
-                        if len(cl_task_curve) > 1:
-                            auc_cl = np.trapz(cl_task_curve) / len(cl_task_curve)
-                        else:
-                            auc_cl = cl_task_curve[0] if len(cl_task_curve) == 1 else 0.0
+                if len(cl_task_curve) > 1:
+                    auc_cl = np.trapz(cl_task_curve) / len(cl_task_curve)
+                else:
+                    auc_cl = cl_task_curve[0] if len(cl_task_curve) == 1 else 0.0
 
-                        if np.isnan(auc_cl) or np.isinf(auc_cl):
-                            print(f"[warn] CL AUC is NaN/inf/-inf for task {i}, seed {seed}, method {method}")
-                            continue
+                if np.isnan(auc_cl) or np.isinf(auc_cl):
+                    print(f"[warn] CL AUC is NaN/inf for task {i}, seed {seed}, method {method}")
+                    continue
 
-                        if i >= len(baseline_data[seed]):
-                            print(f"[warn] missing baseline index for task {i}, seed {seed}")
-                            continue
-                        baseline_task_curve = baseline_data[seed][i]
-                        if baseline_task_curve is None:
-                            print(f"[warn] missing baseline data for task {i}, seed {seed}")
-                            continue
+                if i >= len(baseline_data[seed]):
+                    print(f"[warn] missing baseline index for task {i}, seed {seed}")
+                    continue
+                baseline_task_curve = baseline_data[seed][i]
+                if baseline_task_curve is None:
+                    print(f"[warn] missing baseline data for task {i}, seed {seed}")
+                    continue
 
-                        if np.all(np.isnan(baseline_task_curve) | np.isinf(baseline_task_curve)):
-                            print(f"[warn] baseline data contains all NaN/inf for task {i}, seed {seed}")
-                            continue
+                if np.all(np.isnan(baseline_task_curve) | np.isinf(baseline_task_curve)):
+                    print(f"[warn] baseline data contains all NaN/inf for task {i}, seed {seed}")
+                    continue
 
-                        if len(baseline_task_curve) > 1:
-                            auc_baseline = np.trapz(baseline_task_curve) / len(baseline_task_curve)
-                        else:
-                            auc_baseline = baseline_task_curve[0] if len(baseline_task_curve) == 1 else 0.0
+                if len(baseline_task_curve) > 1:
+                    auc_baseline = np.trapz(baseline_task_curve) / len(baseline_task_curve)
+                else:
+                    auc_baseline = baseline_task_curve[0] if len(baseline_task_curve) == 1 else 0.0
 
-                        if np.isnan(auc_baseline) or np.isinf(auc_baseline):
-                            print(f"[warn] baseline AUC is NaN/inf for task {i}, seed {seed}")
-                            continue
+                if np.isnan(auc_baseline) or np.isinf(auc_baseline):
+                    print(f"[warn] baseline AUC is NaN/inf for task {i}, seed {seed}")
+                    continue
 
-                        if abs(auc_baseline) < 1e-8:
-                            print(f"[info] baseline AUC ~0 for task {i}, seed {seed}, method {method} – skipping FT")
-                            continue
+                if abs(auc_baseline) < 1e-8:
+                    print(f"[info] baseline AUC ~0 for task {i}, seed {seed}, method {method} – skipping FT")
+                    continue
 
-                        epsilon = 1e-8
-                        ft_i = (auc_cl - auc_baseline) / max(abs(auc_baseline), epsilon)
-                        if np.isnan(ft_i) or np.isinf(ft_i):
-                            print(f"[warn] FT result is NaN/inf for task {i}, seed {seed}, method {method}")
-                        else:
-                            ft_vals.append(ft_i)
+                epsilon = 1e-8
+                ft_i = (auc_cl - auc_baseline) / max(abs(auc_baseline), epsilon)
+                if np.isnan(ft_i) or np.isinf(ft_i):
+                    print(f"[warn] FT result is NaN/inf for task {i}, seed {seed}, method {method}")
+                else:
+                    ft_vals.append(ft_i)
 
-                    FT_seeds.append(float(np.nanmean(ft_vals)) if ft_vals else np.nan)
+            FT_seeds.append(float(np.nanmean(ft_vals)) if ft_vals else np.nan)
 
         # Forgetting (F) – drop from best‑ever to final performance
         f_vals = []
@@ -311,10 +324,10 @@ if __name__ == "__main__":
     )
     args = p.parse_args()
 
-    # MPE and SMAX have no difficulty levels and no forward transfer metric
+    # MPE and SMAX have no difficulty levels, but do support forward transfer
     NO_LEVELS_ENVS = {"mpe", "smax"}
     has_levels = args.env not in NO_LEVELS_ENVS
-    has_ft = args.env not in NO_LEVELS_ENVS
+    has_ft = True
     levels = args.levels if has_levels else [1]
 
     print(f"Comparing num_agents: {args.num_agents}")
