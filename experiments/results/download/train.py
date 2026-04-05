@@ -14,16 +14,15 @@ Folder structure (mirrors eval.py exactly):
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 import numpy as np
 import wandb
 from wandb.apis.public import Run
 
-from experiments.results.download.common import cli, want, experiment_suffix, difficulty_string
+from experiments.results.download.common import cli, build_filters, experiment_suffix, difficulty_string, unwrap_wandb_config
 from experiments.results.download.eval import ENV_CONFIGS
 
 # ---------------------------------------------------------------------------
@@ -48,16 +47,6 @@ def store(arr: List[float], path: Path, fmt: str) -> None:
         np.savez_compressed(path.with_suffix(".npz"), data=np.asarray(arr, dtype=np.float32))
 
 
-def find_eval_key_for_task(run: Run, pattern: re.Pattern, task_idx: int) -> Optional[str]:
-    """Return the first W&B key matching *pattern* whose index group equals task_idx."""
-    df = run.history(samples=500)
-    for col in df.columns:
-        m = pattern.match(col)
-        if m and int(m.group(1)) == task_idx:
-            return col
-    return None
-
-
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -68,11 +57,11 @@ def main() -> None:
     base = Path(__file__).resolve().parent.parent
     ext = "json" if args.format == "json" else "npz"
 
-    for run in api.runs(args.project):
-        if not want(run, args):
-            continue
-
+    filters = build_filters(args)
+    for run in api.runs(args.project, filters=filters, per_page=200):
         cfg = run.config
+        if not isinstance(cfg, dict):
+            cfg = unwrap_wandb_config(json.loads(cfg))
         algo = cfg.get("alg_name") or "ippo"
         if algo == "ippo_cbp":
             algo = "ippo"
@@ -114,27 +103,15 @@ def main() -> None:
         # ----------------------------------------------------------------
         # Determine which W&B key to fetch and what to call the output file
         # ----------------------------------------------------------------
-        if env_cfg.training_key is not None:
-            # overcooked: dense training signal exists
-            key = env_cfg.training_key
-            if task_idx is not None:
-                filename = f"{task_idx}_{env_cfg.training_filename}.{ext}"
-            else:
-                filename = f"{env_cfg.training_filename}.{ext}"
-
-        elif task_idx is not None:
-            # SMAX / MPE single-task run: use the periodic eval metric for this task
-            key = find_eval_key_for_task(run, env_cfg.eval_pattern, task_idx)
-            if key is None:
-                print(f"[warn] {run.name}: no eval key for task {task_idx}, skipping")
-                continue
-            filename = f"{task_idx}_{env_cfg.metric_name}.{ext}"
-
-        else:
-            # SMAX / MPE full CL run: no training key and no single task — nothing to do here
-            # (eval.py handles per-task eval curves for full CL runs)
-            print(f"[skip] {run.name}: {env_name} full CL run has no training key — use eval.py")
+        if env_cfg.training_key is None:
+            print(f"[skip] {run.name}: {env_name} has no training key configured")
             continue
+
+        key = env_cfg.training_key
+        if task_idx is not None:
+            filename = f"{task_idx}_{env_cfg.training_filename}.{ext}"
+        else:
+            filename = f"{env_cfg.training_filename}.{ext}"
 
         out_file = out_dir / filename
         if out_file.exists() and not args.overwrite:
