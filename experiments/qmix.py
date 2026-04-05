@@ -690,9 +690,10 @@ def main():
                 if cfg.cl_method.lower() == "agem":
                     # AGEM gradient projection over combined (Q + mixing) params
                     past_sizes = cl_state.sizes.at[env_idx].set(0)
-                    samples_per_task = max(1, cfg.agem_sample_size // cl_state.max_tasks)
+                    _max_tasks = cl_state.obs.shape[0]
+                    samples_per_task = max(1, cfg.agem_sample_size // _max_tasks)
                     g_mem = jax.tree.map(jnp.zeros_like, grads)
-                    for _t in range(cl_state.max_tasks):
+                    for _t in range(_max_tasks):
                         _t_rng = jax.random.fold_in(rng, _t)
                         (
                             _t_obs, _t_global, _t_acts, _t_rews,

@@ -31,9 +31,10 @@ from experiments.continual.agem import (
     agem_project,
     compute_memory_gradient,
     init_agem_memory,
-    sample_memory,
+    sample_task_slot,
     update_agem_memory,
 )
+from experiments.continual.er_ace import ERACE, compute_er_ace_gradient
 from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
@@ -101,6 +102,7 @@ class Config:
     agem_memory_size: int = 100000
     agem_sample_size: int = 1024
     agem_gradient_scale: float = 1.0
+    er_ace_coef: float = 1.0
 
     # ═══════════════════════════════════════════════════════════════════════
     # ENVIRONMENT
@@ -172,6 +174,7 @@ def main():
         l2=L2(),
         ft=FT(),
         agem=AGEM(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
+        er_ace=ERACE(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
     )
     cl = method_map[cfg.cl_method.lower()]
 
@@ -356,7 +359,8 @@ def main():
 
             def _update_epoch(update_state, _):
                 def _update_minbatch(carry, batch_info):
-                    train_state, cl_state = carry
+                    train_state, cl_state, rng = carry
+                    rng, agem_rng = jax.random.split(rng)
                     traj_batch, advantages, targets = batch_info
 
                     def _loss_fn(params, traj_batch, gae, targets):
@@ -393,62 +397,96 @@ def main():
 
                     agem_stats = {}
 
-                    def apply_agem_projection():
-                        rng_1, sample_rng = jax.random.split(rng)
-                        mem_obs, mem_actions, mem_log_probs, mem_advs, mem_targets, mem_values = sample_memory(
-                            cl_state, cfg.agem_sample_size, sample_rng
-                        )
-                        grads_mem, grads_stats = compute_memory_gradient(
-                            network, train_state.params,
-                            cfg.clip_eps, cfg.vf_coef, cfg.ent_coef,
-                            mem_obs, mem_actions, mem_advs, mem_log_probs,
-                            mem_targets, mem_values,
-                            env_idx=env_idx,
-                        )
-                        g_ppo, _ = ravel_pytree(grads)
-                        g_mem, _ = ravel_pytree(grads_mem)
-                        norm_ppo = jnp.linalg.norm(g_ppo) + 1e-12
-                        norm_mem = jnp.linalg.norm(g_mem) + 1e-12
-                        scale = norm_ppo / norm_mem * cfg.agem_gradient_scale
-                        grads_mem_scaled = jax.tree_util.tree_map(lambda g: g * scale, grads_mem)
-                        projected_grads, proj_stats = agem_project(grads, grads_mem_scaled)
-                        combined_stats = {**grads_stats, **proj_stats}
-                        combined_stats["agem/mem_grad_norm_scaled"] = jnp.linalg.norm(
-                            ravel_pytree(grads_mem_scaled)[0]
-                        )
-                        total_used = jnp.sum(cl_state.sizes)
-                        total_capacity = cl_state.max_tasks * cl_state.max_size_per_task
-                        combined_stats["agem/memory_fullness_pct"] = (total_used / total_capacity) * 100.0
-                        return projected_grads, combined_stats
-
-                    def no_agem_projection():
-                        empty_stats = {
-                            "agem/agem_alpha": jnp.array(0.0),
-                            "agem/agem_dot_g": jnp.array(0.0),
-                            "agem/agem_final_grad_norm": jnp.array(0.0),
-                            "agem/agem_is_proj": jnp.array(False),
-                            "agem/agem_mem_grad_norm": jnp.array(0.0),
-                            "agem/agem_ppo_grad_norm": jnp.array(0.0),
-                            "agem/agem_projected_grad_norm": jnp.array(0.0),
-                            "agem/mem_grad_norm_scaled": jnp.array(0.0),
-                            "agem/memory_fullness_pct": jnp.array(0.0),
-                            "agem/ppo_actor_loss": jnp.array(0.0),
-                            "agem/ppo_entropy": jnp.array(0.0),
-                            "agem/ppo_total_loss": jnp.array(0.0),
-                            "agem/ppo_value_loss": jnp.array(0.0),
-                        }
-                        return grads, empty_stats
-
                     if cfg.cl_method.lower() == "agem" and cl_state is not None:
-                        grads, agem_stats = jax.lax.cond(
-                            jnp.sum(cl_state.sizes) > 0,
-                            lambda: apply_agem_projection(),
+                        past_sizes = cl_state.sizes.at[env_idx].set(0)
+
+                        def apply_agem_projection(agem_rng, past_sizes):
+                            max_tasks = cl_state.obs.shape[0]
+                            samples_per_task = max(cfg.agem_sample_size // max_tasks, 1)
+
+                            grads_mem = None
+                            ppo_stats_sum = {
+                                "agem/ppo_total_loss": jnp.array(0.0),
+                                "agem/ppo_value_loss": jnp.array(0.0),
+                                "agem/ppo_actor_loss": jnp.array(0.0),
+                                "agem/ppo_entropy": jnp.array(0.0),
+                            }
+
+                            for t in range(max_tasks):
+                                agem_rng, task_rng = jax.random.split(agem_rng)
+                                t_obs, t_actions, t_logp, t_advs, t_targets, t_values = sample_task_slot(
+                                    cl_state, t, samples_per_task, task_rng
+                                )
+                                t_grads, t_stats = compute_memory_gradient(
+                                    network, train_state.params,
+                                    cfg.clip_eps, cfg.vf_coef, cfg.ent_coef,
+                                    t_obs, t_actions, t_advs, t_logp,
+                                    t_targets, t_values,
+                                    env_idx=t,
+                                )
+                                mask = (past_sizes[t] > 0).astype(jnp.float32)
+                                t_grads = jax.tree_util.tree_map(lambda g: g * mask, t_grads)
+                                grads_mem = t_grads if grads_mem is None else jax.tree_util.tree_map(
+                                    lambda a, b: a + b, grads_mem, t_grads
+                                )
+                                for k in ppo_stats_sum:
+                                    ppo_stats_sum[k] = ppo_stats_sum[k] + t_stats[k] * mask
+
+                            n_active = jnp.sum((past_sizes > 0).astype(jnp.float32)) + 1e-8
+                            ppo_stats = {k: v / n_active for k, v in ppo_stats_sum.items()}
+
+                            projected_grads, proj_stats = agem_project(grads, grads_mem)
+
+                            combined_stats = {**ppo_stats, **proj_stats}
+                            mem_norm = jnp.linalg.norm(ravel_pytree(grads_mem)[0])
+                            combined_stats["agem/mem_grad_norm_raw"] = mem_norm
+                            total_used = jnp.sum(cl_state.sizes)
+                            total_capacity = cl_state.obs.shape[0] * cl_state.max_size_per_task
+                            combined_stats["agem/memory_fullness_pct"] = (total_used / total_capacity) * 100.0
+
+                            return projected_grads, combined_stats
+
+                        def no_agem_projection():
+                            empty_stats = {
+                                "agem/agem_alpha": jnp.array(0.0),
+                                "agem/agem_dot_g": jnp.array(0.0),
+                                "agem/agem_final_grad_norm": jnp.array(0.0),
+                                "agem/agem_is_proj": jnp.array(False),
+                                "agem/agem_mem_grad_norm": jnp.array(0.0),
+                                "agem/agem_ppo_grad_norm": jnp.array(0.0),
+                                "agem/agem_projected_grad_norm": jnp.array(0.0),
+                                "agem/mem_grad_norm_raw": jnp.array(0.0),
+                                "agem/memory_fullness_pct": jnp.array(0.0),
+                                "agem/ppo_actor_loss": jnp.array(0.0),
+                                "agem/ppo_entropy": jnp.array(0.0),
+                                "agem/ppo_total_loss": jnp.array(0.0),
+                                "agem/ppo_value_loss": jnp.array(0.0),
+                            }
+                            return grads, empty_stats
+
+                        final_grads, agem_stats = jax.lax.cond(
+                            jnp.sum(past_sizes) > 0,
+                            lambda: apply_agem_projection(agem_rng, past_sizes),
                             lambda: no_agem_projection(),
                         )
 
+                        train_state = train_state.apply_gradients(grads=final_grads)
+                    elif cfg.cl_method.lower() == "er_ace" and cl_state is not None:
+                        past_sizes = cl_state.sizes.at[env_idx].set(0)
+                        er_ace_grads, er_ace_stats = compute_er_ace_gradient(
+                            network, train_state.params, cl_state,
+                            cfg.agem_sample_size, agem_rng, past_sizes,
+                        )
+                        grads = jax.tree_util.tree_map(
+                            lambda g, eg: g + cfg.er_ace_coef * eg, grads, er_ace_grads
+                        )
+                        train_state = train_state.apply_gradients(grads=grads)
+                        agem_stats = er_ace_stats
+                    else:
+                        train_state = train_state.apply_gradients(grads=grads)
+
                     loss_information = total_loss, grads, agem_stats
-                    train_state = train_state.apply_gradients(grads=grads)
-                    return (train_state, cl_state), loss_information
+                    return (train_state, cl_state, rng), loss_information
 
                 train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state = update_state
 
@@ -467,13 +505,13 @@ def main():
                     shuffled_batch,
                 )
 
-                (train_state, cl_state), loss_information = jax.lax.scan(
-                    _update_minbatch, (train_state, cl_state), minibatches
+                (train_state, cl_state, rng), loss_information = jax.lax.scan(
+                    _update_minbatch, (train_state, cl_state, rng), minibatches
                 )
 
                 total_loss, grads, agem_stats = loss_information
                 loss_dict = {"total_loss": total_loss}
-                if cfg.cl_method.lower() == "agem":
+                if cfg.cl_method.lower() in ("agem", "er_ace"):
                     loss_dict["agem_stats"] = agem_stats
 
                 update_state = (train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state)
@@ -499,7 +537,7 @@ def main():
                     0.0,
                 )
 
-            if cfg.cl_method.lower() == "agem" and cl_state is not None:
+            if cfg.cl_method.lower() in ("agem", "er_ace") and cl_state is not None:
                 cl_state, rng = update_agem_memory(
                     cfg.agem_sample_size, env_idx, advantages, cl_state, rng, targets, traj_batch
                 )
@@ -627,7 +665,7 @@ def main():
     rng, train_rng = jax.random.split(rng)
     cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads)
 
-    if cfg.cl_method.lower() == "agem":
+    if cfg.cl_method.lower() in ("agem", "er_ace"):
         obs_shape = temp_env.observation_space(agents[0]).shape
         if not cfg.use_cnn:
             obs_shape = (int(np.prod(obs_shape)),)

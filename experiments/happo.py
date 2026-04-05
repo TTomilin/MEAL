@@ -42,6 +42,7 @@ from experiments.continual.agem import (
     AGEM, init_agem_memory, sample_task_slot,
     compute_memory_gradient, agem_project, update_agem_memory,
 )
+from experiments.continual.er_ace import ERACE, compute_er_ace_gradient
 from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
@@ -146,6 +147,9 @@ class Config:
     agem_memory_size: int = 100000
     agem_sample_size: int = 1024
     agem_gradient_scale: float = 1.0
+
+    # ER-ACE specific parameters
+    er_ace_coef: float = 1.0
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
@@ -329,6 +333,7 @@ def main():
         l2=L2(),
         ft=FT(),
         agem=AGEM(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
+        er_ace=ERACE(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
     )
     cl = method_map[cfg.cl_method.lower()]
 
@@ -799,13 +804,8 @@ def main():
                             happo_actor_loss, has_aux=True
                         )(actor_ts.params)
 
-                        # ── Apply gradient (with AGEM projection if enabled) ──
+                        # ── Apply gradient (with AGEM projection / ER-ACE if enabled) ──
                         if cfg.cl_method.lower() == "agem" and cl_state is not None:
-                            # Convert PPO gradient → Adam update (before applying)
-                            ppo_updates_i, new_opt_state_i = actor_ts.tx.update(
-                                grads_i, actor_ts.opt_state, actor_ts.params
-                            )
-
                             past_sizes = cl_state.sizes.at[env_idx].set(0)
 
                             def apply_agem_proj(agem_rng_i, past_sizes):
@@ -847,18 +847,15 @@ def main():
                                 n_active = jnp.sum((past_sizes > 0).astype(jnp.float32)) + 1e-8
                                 ppo_stats = {k: v / n_active for k, v in ppo_stats_sum.items()}
 
-                                mem_updates, _ = actor_ts.tx.update(
-                                    grads_mem, actor_ts.opt_state, actor_ts.params
-                                )
-                                projected, proj_stats = agem_project(ppo_updates_i, mem_updates)
+                                projected, proj_stats = agem_project(grads_i, grads_mem)
 
-                                mem_norm = jnp.linalg.norm(ravel_pytree(mem_updates)[0])
+                                mem_norm = jnp.linalg.norm(ravel_pytree(grads_mem)[0])
                                 total_used = jnp.sum(cl_state.sizes)
                                 total_cap  = (
                                     cl_state.obs.shape[0] * cl_state.max_size_per_task
                                 )
-                                proj_stats["agem/mem_grad_norm_raw"]     = mem_norm
-                                proj_stats["agem/memory_fullness_pct"]   = (
+                                proj_stats["agem/mem_grad_norm_raw"]   = mem_norm
+                                proj_stats["agem/memory_fullness_pct"] = (
                                     total_used / total_cap
                                 ) * 100.0
                                 return projected, {**ppo_stats, **proj_stats}
@@ -879,21 +876,49 @@ def main():
                                     "agem/ppo_total_loss":           jnp.array(0.0),
                                     "agem/ppo_value_loss":           jnp.array(0.0),
                                 }
-                                return ppo_updates_i, empty
+                                return grads_i, empty
 
                             agem_rng, agem_rng_i = jax.random.split(agem_rng)
-                            final_updates_i, agem_stats = jax.lax.cond(
+                            final_grads_i, agem_stats = jax.lax.cond(
                                 jnp.sum(past_sizes) > 0,
                                 lambda: apply_agem_proj(agem_rng_i, past_sizes),
                                 lambda: no_agem_proj(),
                             )
+                            actor_ts = actor_ts.apply_gradients(grads=final_grads_i)
 
-                            new_params = optax.apply_updates(actor_ts.params, final_updates_i)
-                            actor_ts = actor_ts.replace(
-                                step=actor_ts.step + 1,
-                                params=new_params,
-                                opt_state=new_opt_state_i,
+                        elif cfg.cl_method.lower() == "er_ace" and cl_state is not None:
+                            past_sizes = cl_state.sizes.at[env_idx].set(0)
+                            max_tasks = cl_state.obs.shape[0]
+                            spt = max(cfg.agem_sample_size // max_tasks, 1)
+                            er_ace_grads = None
+                            for t in range(max_tasks):
+                                agem_rng, task_rng = jax.random.split(agem_rng)
+                                t_obs, t_acts, _, _, _, _ = sample_task_slot(cl_state, t, spt, task_rng)
+                                t_obs  = jax.lax.stop_gradient(t_obs)
+                                t_acts = jax.lax.stop_gradient(t_acts)
+
+                                def bc_loss(p, obs=t_obs, acts=t_acts, task=t):
+                                    pi_m, _ = actor_network.apply(p, obs, env_idx=task)
+                                    return -jnp.mean(pi_m.log_prob(acts))
+
+                                t_grads = jax.grad(bc_loss)(actor_ts.params)
+                                mask = (past_sizes[t] > 0).astype(jnp.float32)
+                                t_grads = jax.tree_util.tree_map(lambda g: g * mask, t_grads)
+                                er_ace_grads = (
+                                    t_grads if er_ace_grads is None
+                                    else jax.tree_util.tree_map(lambda a, b: a + b, er_ace_grads, t_grads)
+                                )
+                            er_ace_grads = jax.lax.cond(
+                                jnp.sum(past_sizes) > 0,
+                                lambda: er_ace_grads,
+                                lambda: jax.tree_util.tree_map(jnp.zeros_like, er_ace_grads),
                             )
+                            merged = jax.tree_util.tree_map(
+                                lambda g, eg: g + cfg.er_ace_coef * eg, grads_i, er_ace_grads
+                            )
+                            actor_ts = actor_ts.apply_gradients(grads=merged)
+                            agem_stats = {"er_ace/total_past_samples": jnp.sum(past_sizes).astype(jnp.float32)}
+
                         else:
                             actor_ts = actor_ts.apply_gradients(grads=grads_i)
 
@@ -941,7 +966,7 @@ def main():
 
                 total_loss, grad_norms, agem_stats = loss_information
                 loss_dict = {"total_loss": total_loss, "grad_norms": grad_norms}
-                if cfg.cl_method.lower() == "agem":
+                if cfg.cl_method.lower() in ("agem", "er_ace"):
                     loss_dict["agem_stats"] = agem_stats
 
                 update_state = (
@@ -964,8 +989,8 @@ def main():
             current_timestep = update_step * cfg.num_steps * cfg.num_envs
             metrics = jax.tree_util.tree_map(lambda x: x.mean(), info)
 
-            # AGEM memory update (after epoch)
-            if cfg.cl_method.lower() == "agem" and cl_state is not None:
+            # AGEM / ER-ACE memory update (after epoch)
+            if cfg.cl_method.lower() in ("agem", "er_ace") and cl_state is not None:
                 cl_state, rng = update_agem_memory(
                     cfg.agem_sample_size, env_idx, advantages, cl_state, rng, targets, traj_batch
                 )
@@ -1184,7 +1209,7 @@ def main():
 
     rng, train_rng = jax.random.split(rng)
 
-    if cfg.cl_method.lower() == "agem":
+    if cfg.cl_method.lower() in ("agem", "er_ace"):
         obs_dim_for_mem = envs[0].observation_space().shape
         if not cfg.use_cnn:
             obs_dim_for_mem = (int(np.prod(obs_dim_for_mem)),)
