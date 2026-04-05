@@ -64,14 +64,14 @@ ENV_CONFIGS: dict[str, EnvConfig] = {
     "mpe": EnvConfig(
         eval_pattern=re.compile(r"^Evaluation/CoverageFraction/(\d+)_(.+)$"),
         metric_name="coverage_fraction",
-        training_key=None,
-        training_filename=None,
+        training_key="coverage_fraction",
+        training_filename="training_coverage_fraction",
     ),
     "smax": EnvConfig(
         eval_pattern=re.compile(r"^Evaluation/Returns/(\d+)_(.+)$"),
         metric_name="return",
-        training_key=None,
-        training_filename=None,
+        training_key="kill_fraction",
+        training_filename="training_kill_fraction",
     ),
 }
 
