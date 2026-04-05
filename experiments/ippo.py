@@ -15,6 +15,7 @@ from jax._src.flatten_util import ravel_pytree
 
 from experiments.continual.agem import AGEM, init_agem_memory, sample_task_slot, \
     compute_memory_gradient, agem_project, update_agem_memory
+from experiments.continual.er_ace import ERACE, compute_er_ace_gradient
 from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
@@ -88,6 +89,9 @@ class Config:
     agem_memory_size: int = 100000
     agem_sample_size: int = 1024
     agem_gradient_scale: float = 1.0
+
+    # ER-ACE specific parameters
+    er_ace_coef: float = 1.0
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
@@ -198,7 +202,8 @@ def main():
                       mas=MAS(mode=cfg.importance_mode, decay=cfg.importance_decay),
                       l2=L2(),
                       ft=FT(),
-                      agem=AGEM(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size))
+                      agem=AGEM(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
+                      er_ace=ERACE(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size))
 
     cl = method_map[cfg.cl_method.lower()]
 
@@ -684,6 +689,19 @@ def main():
                             params=new_params,
                             opt_state=new_opt_state,
                         )
+                    elif cfg.cl_method.lower() == "er_ace" and cl_state is not None:
+                        past_sizes = cl_state.sizes.at[env_idx].set(0)
+                        er_ace_grads, er_ace_stats = compute_er_ace_gradient(
+                            network, train_state.params, cl_state,
+                            cfg.agem_sample_size, agem_rng, past_sizes,
+                            env_idx=env_idx,
+                        )
+                        # Add scaled BC gradient to PPO gradient
+                        grads = jax.tree_util.tree_map(
+                            lambda g, eg: g + cfg.er_ace_coef * eg, grads, er_ace_grads
+                        )
+                        train_state = train_state.apply_gradients(grads=grads)
+                        agem_stats = er_ace_stats
                     else:
                         # Non-AGEM methods: standard apply_gradients
                         train_state = train_state.apply_gradients(grads=grads)
@@ -735,7 +753,7 @@ def main():
                 loss_dict = {
                     "total_loss": total_loss
                 }
-                if cfg.cl_method.lower() == "agem":
+                if cfg.cl_method.lower() in ("agem", "er_ace"):
                     loss_dict["agem_stats"] = agem_stats
 
                 update_state = (train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state)
@@ -756,7 +774,7 @@ def main():
             current_timestep = update_step * cfg.num_steps * cfg.num_envs
             metrics = jax.tree_util.tree_map(lambda x: x.mean(), info)
 
-            if cfg.cl_method.lower() == "agem" and cl_state is not None:
+            if cfg.cl_method.lower() in ("agem", "er_ace") and cl_state is not None:
                 cl_state, rng = update_agem_memory(cfg.agem_sample_size, env_idx, advantages, cl_state, rng, targets,
                                                    traj_batch)
 
@@ -1025,8 +1043,8 @@ def main():
     rng, train_rng = jax.random.split(rng)
     cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads)
 
-    # Initialize AGEM memory if using AGEM and this is the first environment
-    if cfg.cl_method.lower() == "agem":
+    # Initialize AGEM/ER-ACE memory if required
+    if cfg.cl_method.lower() in ("agem", "er_ace"):
         # Get observation dimension
         obs_dim = envs[0].observation_space().shape
         if not cfg.use_cnn:

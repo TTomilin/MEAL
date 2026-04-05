@@ -385,12 +385,12 @@ def sample_memory(mem: AGEMMemory, sample_size: int, rng):
 
     def no_data_case():
         return (
-            jnp.zeros((sample_size, *obs_shape)),
-            jnp.zeros((sample_size,)),
-            jnp.zeros((sample_size,)),
-            jnp.zeros((sample_size,)),
-            jnp.zeros((sample_size,)),
-            jnp.zeros((sample_size,))
+            jnp.zeros((sample_size, *obs_shape), dtype=jnp.float32),
+            jnp.zeros((sample_size,), dtype=jnp.int32),    # actions — must match int32
+            jnp.zeros((sample_size,), dtype=jnp.float32),
+            jnp.zeros((sample_size,), dtype=jnp.float32),
+            jnp.zeros((sample_size,), dtype=jnp.float32),
+            jnp.zeros((sample_size,), dtype=jnp.float32),
         )
 
     def sample_from_tasks():
