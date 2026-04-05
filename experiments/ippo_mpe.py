@@ -321,6 +321,8 @@ def main():
                     lambda k, s, a: step_switch(k, s, a, jnp.int32(env_idx))
                 )(rng_step, env_state, env_act)
 
+                info["episode_done"] = done["__all__"]
+
                 transition = Transition(
                     batchify(done, agents, cfg.num_actors, not cfg.use_cnn).squeeze(),
                     action,
@@ -492,7 +494,18 @@ def main():
             train_state, traj_batch, advantages, targets, steps_for_env, rng, cl_state = update_state
 
             current_timestep = update_step * cfg.num_steps * cfg.num_envs
+
+            # coverage_fraction must be averaged only at episode boundaries (mirrors eval logic).
+            coverage_fraction_traj = info.pop("coverage_fraction", None)  # [num_steps, num_envs]
+            episode_done_traj      = info.pop("episode_done",       None)  # [num_steps, num_envs]
             metrics = jax.tree_util.tree_map(lambda x: x.mean(), info)
+            if coverage_fraction_traj is not None and episode_done_traj is not None:
+                n_eps = episode_done_traj.sum()
+                metrics["coverage_fraction"] = jnp.where(
+                    n_eps > 0,
+                    (coverage_fraction_traj * episode_done_traj).sum() / n_eps,
+                    0.0,
+                )
 
             if cfg.cl_method.lower() == "agem" and cl_state is not None:
                 cl_state, rng = update_agem_memory(
