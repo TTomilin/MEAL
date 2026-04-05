@@ -25,6 +25,9 @@ def cli() -> argparse.Namespace:
     p.add_argument("--wandb_tags", nargs="+", default=[], help="Require at least one tag")
     p.add_argument("--include_runs", nargs="+", default=[], help="Include runs by substring")
     p.add_argument("--overwrite", action="store_true", help="Overwrite existing files")
+    p.add_argument("--num_agents", type=int, default=None, help="Filter by number of agents")
+    p.add_argument("--env_name", type=str, default=None, help="Environment name")
+    p.add_argument("--importance_mode", type=str, default=None, choices=["online", "multi", "last"], help="Importance mode")
 
     # Reward settings arguments
     p.add_argument("--reward_settings", nargs="+", choices=["default", "sparse", "individual"], 
@@ -35,10 +38,6 @@ def cli() -> argparse.Namespace:
     # Complementary restrictions arguments
     p.add_argument("--complementary_restrictions", action="store_true", 
                    help="Filter by complementary restrictions experiments")
-
-    # Number of agents parameter
-    p.add_argument("--num_agents", type=int, default=None, help="Filter by number of agents")
-    p.add_argument("--env", type=str, default=None, help="Environment name (used to route num_agents to the correct config field)")
 
     # Neural activity parameters
     p.add_argument("--include_dormant_ratio", action="store_true",
@@ -92,8 +91,14 @@ def build_filters(args: argparse.Namespace) -> dict:
     if args.wall_density is not None:
         f["config.wall_density"] = args.wall_density
 
+    if args.env_name is not None:
+        f["config.env_name"] = args.env_name
+
+    if args.importance_mode is not None:
+        f["config.importance_mode"] = args.importance_mode
+
     if args.num_agents is not None:
-        agents_field = "config.num_allies" if getattr(args, "env", None) == "smax" else "config.num_agents"
+        agents_field = "config.num_allies" if getattr(args, "env_name", None) == "smax" else "config.num_agents"
         f[agents_field] = args.num_agents
 
     # reward_settings logic: default / sparse / individual
