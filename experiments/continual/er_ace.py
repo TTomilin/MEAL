@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 from flax.core import FrozenDict
 
-from experiments.continual.agem import AGEMMemory, sample_memory
+from experiments.continual.agem import AGEMMemory, sample_task_slot
 from experiments.continual.base import RegCLMethod
 
 
@@ -10,8 +10,9 @@ class ERACE(RegCLMethod):
     """
     ER-ACE (Experience Replay with Asymmetric Cross-Entropy) continual learning method.
 
-    Adds a behavioural-cloning loss on stored past-task samples directly to the PPO
-    loss, without gradient projection.  Simpler than AGEM and often more stable.
+    Adds a per-task behavioural-cloning (BC) loss on stored past-task samples directly
+    to the PPO loss, without gradient projection.  Simpler than AGEM and often more
+    stable.
 
     Memory management reuses the AGEMMemory buffer and update functions.
     """
@@ -36,39 +37,42 @@ class ERACE(RegCLMethod):
 
 
 def compute_er_ace_gradient(network, params, mem: AGEMMemory, sample_size: int,
-                             rng, past_sizes, env_idx: int = 0):
+                             rng, past_sizes):
     """
-    Sample from all past tasks (current task masked out) and compute a
-    behavioural-cloning (BC) gradient: -E[log π(a_mem | s_mem)].
+    Loop over all task slots (like AGEM), sample from each past task, and compute
+    a BC gradient -E[log π_t(a|s)] using the CORRECT task head (env_idx=t).
 
-    Returns the raw gradient (not yet scaled by er_ace_coef) and a stats dict.
-    If no past data exists, returns zero gradients.
+    Summed gradients are masked so only tasks with stored data contribute.
+    Returns zero gradients when no past data exists (first task).
     """
-    # Build a temporary memory view that zeroes the current task's size so
-    # sample_memory only draws from previously seen tasks.
-    mem_past = mem.replace(sizes=past_sizes)
+    max_tasks = mem.obs.shape[0]       # static Python int (shapes are concrete at trace time)
+    samples_per_task = max(sample_size // max_tasks, 1)
 
-    total_past = jnp.sum(past_sizes)
+    total_grads = None
+    for t in range(max_tasks):   # unrolled at JAX trace time
+        rng, task_rng = jax.random.split(rng)
+        t_obs, t_actions, _, _, _, _ = sample_task_slot(mem, t, samples_per_task, task_rng)
+        t_obs     = jax.lax.stop_gradient(t_obs)
+        t_actions = jax.lax.stop_gradient(t_actions)
 
-    mem_obs, mem_actions, _, _, _, _ = sample_memory(mem_past, sample_size, rng)
-    mem_obs = jax.lax.stop_gradient(mem_obs)
-    mem_actions = jax.lax.stop_gradient(mem_actions)
+        def bc_loss(p, obs=t_obs, acts=t_actions, task=t):
+            pi, _, _ = network.apply(p, obs, env_idx=task)
+            return -jnp.mean(pi.log_prob(acts))
 
-    def bc_loss_fn(p):
-        pi, _, _ = network.apply(p, mem_obs, env_idx=env_idx)
-        return -jnp.mean(pi.log_prob(mem_actions))
+        t_grads = jax.grad(bc_loss)(params)
+        mask = (past_sizes[t] > 0).astype(jnp.float32)
+        t_grads = jax.tree_util.tree_map(lambda g: g * mask, t_grads)
+        total_grads = (
+            t_grads if total_grads is None
+            else jax.tree_util.tree_map(lambda a, b: a + b, total_grads, t_grads)
+        )
 
-    grads = jax.grad(bc_loss_fn)(params)
-
-    # Zero out the gradient when there is no past data so the first task is
-    # unaffected (avoids learning from the zeroed-out dummy samples).
-    grads = jax.lax.cond(
-        total_past > 0,
-        lambda: grads,
-        lambda: jax.tree_util.tree_map(jnp.zeros_like, grads),
+    # Zero out gradients when there is no past data (first task).
+    total_grads = jax.lax.cond(
+        jnp.sum(past_sizes) > 0,
+        lambda: total_grads,
+        lambda: jax.tree_util.tree_map(jnp.zeros_like, total_grads),
     )
 
-    stats = {
-        "er_ace/total_past_samples": total_past,
-    }
-    return grads, stats
+    stats = {"er_ace/total_past_samples": jnp.sum(past_sizes).astype(jnp.float32)}
+    return total_grads, stats

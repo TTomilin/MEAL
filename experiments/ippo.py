@@ -594,11 +594,14 @@ def main():
                     agem_stats = {}
 
                     if cfg.cl_method.lower() == "agem" and cl_state is not None:
-                        # Compute Adam update for the PPO gradient (don't apply yet)
-                        ppo_updates, new_opt_state = train_state.tx.update(
-                            grads, train_state.opt_state, train_state.params
-                        )
-
+                        # Project raw PPO gradients against the memory gradient so that
+                        # dot(g_ppo_projected, g_mem) >= 0.  We project at the gradient
+                        # level (original AGEM paper) and then let the optimizer (Adam)
+                        # handle scaling.  The previous approach of projecting Adam updates
+                        # using PPO's optimizer state for the memory gradient was wrong:
+                        # Adam's momentum/variance estimates are accumulated from PPO
+                        # gradients, so applying them to g_mem produces a corrupted
+                        # direction that breaks the projection.
                         past_sizes = cl_state.sizes.at[env_idx].set(0)
 
                         def apply_agem_projection(agem_rng, past_sizes):
@@ -637,25 +640,17 @@ def main():
                             n_active = jnp.sum((past_sizes > 0).astype(jnp.float32)) + 1e-8
                             ppo_stats = {k: v / n_active for k, v in ppo_stats_sum.items()}
 
-                            # Convert memory gradient into an Adam update using the SAME
-                            # opt_state as the PPO update.  Projecting update-vs-update
-                            # (rather than raw-grad-vs-raw-grad) means the constraint
-                            # dot(Δθ_ppo, Δθ_mem) >= 0 holds for the actual parameter
-                            # changes, which is what AGEM requires.
-                            mem_updates, _ = train_state.tx.update(
-                                grads_mem, train_state.opt_state, train_state.params
-                            )
-
-                            projected_updates, proj_stats = agem_project(ppo_updates, mem_updates)
+                            # Project PPO raw gradients against summed memory gradient.
+                            projected_grads, proj_stats = agem_project(grads, grads_mem)
 
                             combined_stats = {**ppo_stats, **proj_stats}
-                            mem_norm = jnp.linalg.norm(ravel_pytree(mem_updates)[0])
+                            mem_norm = jnp.linalg.norm(ravel_pytree(grads_mem)[0])
                             combined_stats["agem/mem_grad_norm_raw"] = mem_norm
                             total_used = jnp.sum(cl_state.sizes)
                             total_capacity = cl_state.obs.shape[0] * cl_state.max_size_per_task
                             combined_stats["agem/memory_fullness_pct"] = (total_used / total_capacity) * 100.0
 
-                            return projected_updates, combined_stats
+                            return projected_grads, combined_stats
 
                         def no_agem_projection():
                             empty_stats = {
@@ -673,28 +668,22 @@ def main():
                                 "agem/ppo_total_loss": jnp.array(0.0),
                                 "agem/ppo_value_loss": jnp.array(0.0)
                             }
-                            return ppo_updates, empty_stats
+                            return grads, empty_stats
 
-                        final_updates, agem_stats = jax.lax.cond(
+                        final_grads, agem_stats = jax.lax.cond(
                             jnp.sum(past_sizes) > 0,
                             lambda: apply_agem_projection(agem_rng, past_sizes),
                             lambda: no_agem_projection()
                         )
 
-                        # Apply the (possibly projected) optimizer update directly,
-                        # bypassing apply_gradients to avoid a second Adam call.
-                        new_params = optax.apply_updates(train_state.params, final_updates)
-                        train_state = train_state.replace(
-                            step=train_state.step + 1,
-                            params=new_params,
-                            opt_state=new_opt_state,
-                        )
+                        # Apply the (possibly projected) gradients through the normal
+                        # optimizer (Adam with clip), same as every other method.
+                        train_state = train_state.apply_gradients(grads=final_grads)
                     elif cfg.cl_method.lower() == "er_ace" and cl_state is not None:
                         past_sizes = cl_state.sizes.at[env_idx].set(0)
                         er_ace_grads, er_ace_stats = compute_er_ace_gradient(
                             network, train_state.params, cl_state,
                             cfg.agem_sample_size, agem_rng, past_sizes,
-                            env_idx=env_idx,
                         )
                         # Add scaled BC gradient to PPO gradient
                         grads = jax.tree_util.tree_map(

@@ -483,14 +483,22 @@ def update_agem_memory(agem_sample_size, env_idx, advantages, mem, rng, targets,
     """
 
     rng, mem_rng = jax.random.split(rng)
-    perm = jax.random.permutation(mem_rng, advantages.shape[0])  # length = traj_len
-    idx = perm[: agem_sample_size]
-    new_obs = traj_batch.obs[idx].reshape(-1, traj_batch.obs.shape[-1])
-    new_actions = traj_batch.action[idx].reshape(-1)
-    new_log_probs = traj_batch.log_prob[idx].reshape(-1)
-    new_adv = advantages[idx].reshape(-1)
-    new_tgt = targets[idx].reshape(-1)
-    new_val = traj_batch.value[idx].reshape(-1)
+    obs_dim = traj_batch.obs.shape[-1]
+
+    # Flatten ALL (step, actor) pairs so we sample individual transitions,
+    # not full time-steps.  Previously the code permuted over num_steps and
+    # then reshaped with num_actors, producing num_steps*num_actors samples
+    # (up to 1.6 M) that were circular-written into a ~5 000-slot buffer,
+    # overwriting almost everything instantly.
+    total = advantages.shape[0] * advantages.shape[1]   # num_steps * num_actors
+    idx = jax.random.randint(mem_rng, (agem_sample_size,), 0, total)
+
+    new_obs      = traj_batch.obs.reshape(-1, obs_dim)[idx]   # [S, obs_dim]
+    new_actions  = traj_batch.action.reshape(-1)[idx]          # [S]
+    new_log_probs = traj_batch.log_prob.reshape(-1)[idx]       # [S]
+    new_adv      = advantages.reshape(-1)[idx]                 # [S]
+    new_tgt      = targets.reshape(-1)[idx]                    # [S]
+    new_val      = traj_batch.value.reshape(-1)[idx]           # [S]
 
     b = new_obs.shape[0]  # batch size to insert
 
