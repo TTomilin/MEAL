@@ -50,7 +50,7 @@ class ActorCritic(nn.Module):
     @nn.compact
     def __call__(self, x, *, env_idx: int = 0):
         act = self._act()
-        hid = 128 if self.big_network else 128
+        hid = 256 if self.big_network else 128
 
         per_layer_ratios = []  # collect to average later
 
@@ -62,27 +62,27 @@ class ActorCritic(nn.Module):
 
         # -------- shared trunk ------------------------------------------------
         if self.shared_backbone:
-            for i in range(2 + self.big_network):  # 2 or 3 layers
-                x = self._dense(hid, get_layer_name("common", nn.Dense, i+1), np.sqrt(2))(x)
+            for layer in range(2 + self.big_network):  # 2 or 3 layers
+                x = self._dense(hid, get_layer_name("common", nn.Dense, layer+1), np.sqrt(2))(x)
                 x = act(x)
                 if self.track_dormant_ratio:
-                    per_layer_ratios.append(self._layer_dormant_ratio(x, f"shared_{i + 1}"))
-                if self.use_layer_norm:
-                    x = nn.LayerNorm(name=get_layer_name("common", nn.LayerNorm, i+i), epsilon=1e-6)(x)
+                    per_layer_ratios.append(self._layer_dormant_ratio(x, f"shared_{layer + 1}"))
+                if self.use_layer_norm and layer == 0:
+                    x = nn.LayerNorm(name=get_layer_name("common", nn.LayerNorm, layer+layer), epsilon=1e-6)(x)
             trunk = x
             actor_in = critic_in = trunk
         else:
             # separate trunks – duplicate code for actor / critic
             def branch(prefix, inp):
                 ratios = []
-                for i in range(2 + self.big_network):
+                for layer in range(2 + self.big_network):
                     inp = self._dense(
-                        hid, get_layer_name(prefix, nn.Dense, i+1), np.sqrt(2))(inp)
+                        hid, get_layer_name(prefix, nn.Dense, layer+1), np.sqrt(2))(inp)
                     inp = act(inp)
                     if self.track_dormant_ratio:
-                        ratios.append(self._layer_dormant_ratio(inp, f"{prefix}_{i + 1}"))
-                    if self.use_layer_norm:
-                        inp = nn.LayerNorm(name=get_layer_name(prefix, nn.LayerNorm, i+1), epsilon=1e-6)(inp)
+                        ratios.append(self._layer_dormant_ratio(inp, f"{prefix}_{layer + 1}"))
+                    if self.use_layer_norm and layer == 0:
+                        inp = nn.LayerNorm(name=get_layer_name(prefix, nn.LayerNorm, layer+1), epsilon=1e-6)(inp)
                 return inp, ratios
 
             actor_in, actor_ratios = branch("actor", x)
@@ -91,10 +91,13 @@ class ActorCritic(nn.Module):
                 per_layer_ratios.extend(actor_ratios)
                 per_layer_ratios.extend(critic_ratios)
 
+        # naming for actor/critic heads:
+        head_string = "multi_head" if self.use_multihead else "single_head"
+
         # -------- actor head --------------------------------------------------
         logits_dim = self.action_dim * \
                      (self.num_tasks if self.use_multihead else 1)
-        all_logits = self._dense(logits_dim, get_layer_name("actor", nn.Dense, "head"), 0.01)(actor_in)
+        all_logits = self._dense(logits_dim, get_layer_name("actor", nn.Dense, head_string), 0.01)(actor_in)
 
         logits = choose_head(all_logits, self.num_tasks,
                              env_idx) if self.use_multihead else all_logits
@@ -102,7 +105,7 @@ class ActorCritic(nn.Module):
 
         # -------- critic head -------------------------------------------------
         vdim = 1 * (self.num_tasks if self.use_multihead else 1)
-        all_v = self._dense(vdim, get_layer_name("critic", nn.Dense, "head"), 1.0)(critic_in)
+        all_v = self._dense(vdim, get_layer_name("critic", nn.Dense, head_string), 1.0)(critic_in)
         v = choose_head(all_v, self.num_tasks,
                         env_idx) if self.use_multihead else all_v
         v = jnp.squeeze(v, -1)

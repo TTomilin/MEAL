@@ -4,12 +4,16 @@ from datetime import datetime
 from typing import NamedTuple
 
 import jax
+import flax.linen as nn
 import jax.numpy as jnp
+from flax.core.frozen_dict import FrozenDict
+from flax.typing import FrozenVariableDict
 from flax.core.frozen_dict import FrozenDict
 from tensorboardX import SummaryWriter
 
-from experiments.continual.base import CLState
-
+from experiments.continual.base import CLState, RegCLState, CLMethod
+from experiments.continual.packnet import PacknetState
+from typing import Type, Union
 
 class Transition(NamedTuple):
     '''
@@ -95,6 +99,9 @@ def add_eval_metrics(avg_rewards, avg_soups, layout_names, max_soup_dict, metric
         metrics[f"Evaluation/Returns/{i}_{layout_name}"] = avg_rewards[i]
         metrics[f"Evaluation/Soup/{i}_{layout_name}"] = avg_soups[i]
         metrics[f"Evaluation/Soup_Scaled/{i}_{layout_name}"] = avg_soups[i] / max_soup_dict[i]
+    metrics[f"Evaluation/Soup_Over_All_Env"] = sum([s for s in avg_soups])
+    metrics[f"Evaluation/Soup_Scaled_Over_All_Env"] = sum([s_s for s_s in avg_soups])
+    metrics[f"Evaluation/Reward_Over_All_Env"] = sum([r for r in avg_rewards])
     return metrics
 
 
@@ -110,14 +117,30 @@ def build_reg_weights(params, regularize_critic: bool, regularize_heads: bool) -
     return jax.tree_util.tree_map_with_path(_mark, params)
 
 
-def init_cl_state(params: FrozenDict, regularize_critic: bool, regularize_heads: bool) -> CLState:
-    mask = build_reg_weights(params, regularize_critic, regularize_heads)
-    return CLState(
-        old_params=jax.tree.map(lambda x: x.copy(), params),
-        importance=jax.tree.map(jnp.zeros_like, params),
-        mask=mask
-    )
+def init_cl_state(params: FrozenVariableDict, regularize_critic: bool, 
+                  regularize_heads: bool, cl: CLMethod, cfg) -> CLState:
+    if cfg.cl_method == "packnet":
+        return PacknetState(
+            masks=cl.init_mask_tree(params["params"]),
+            mask={},
+            current_task=0,
+            train_mode=True,
+            mask_memory=[],
+            weight_memory=[]
+        )
+    else:
+        mask = build_reg_weights(params, regularize_critic, regularize_heads)
+        return RegCLState(
+            old_params=jax.tree.map(lambda x: x.copy(), params),
+            importance=jax.tree.map(jnp.zeros_like, params),
+            mask=mask
+        )
 
+ALLOWED_PREFIXES = ['actor', 'critic', 'common']
+def get_layer_name(actor_or_critic: str, layer_type: Type[nn.Module], suffix: Union[int, str]):
+    if actor_or_critic not in ALLOWED_PREFIXES:
+        raise ValueError(f"Choose 'actor_or_critic' from {ALLOWED_PREFIXES}")
+    return f"{actor_or_critic}_{layer_type.__name__}_{suffix}"
 
 # ---------------------------------------------------------------
 # util: build a (2, …) batch without Python branches

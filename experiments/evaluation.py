@@ -1,7 +1,9 @@
 import jax
+import pdb
 import jax.numpy as jnp
 
 from experiments.utils import batchify, unbatchify
+from experiments.continual.packnet import Packnet
 
 
 def _jsd(p: jnp.ndarray, q: jnp.ndarray) -> jnp.ndarray:
@@ -15,7 +17,7 @@ def _jsd(p: jnp.ndarray, q: jnp.ndarray) -> jnp.ndarray:
     return jnp.clip(0.5 * (kl_pm + kl_qm), 0.0, 1.0)
 
 
-def make_eval_fn(reset_switch, step_switch, network, agents, num_envs: int, num_steps: int, use_cnn: bool):
+def make_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: int, num_steps: int, use_cnn: bool, eval_deterministic: bool, seed: int):
     """
     Returns a jitted evaluate_single_env(rng, params, env_idx) that *closes over*
     the static callables and constants so we don't pass non-arrays to jit.
@@ -27,8 +29,10 @@ def make_eval_fn(reset_switch, step_switch, network, agents, num_envs: int, num_
     num_actions = network.action_dim
 
     @jax.jit
-    def evaluate_env(rng, params, env_idx):
+    def evaluate_env(cl_state, rng, params, env_idx):
         # Reset a batch of envs for shape parity with train
+        if eval_deterministic:
+            rng = jax.random.PRNGKey(env_idx + seed) # get new rng, fixed per task
         rng, env_rng = jax.random.split(rng)
         reset_rng = jax.random.split(env_rng, num_envs)
         obs, env_state = jax.vmap(lambda k: reset_switch(k, jnp.int32(env_idx)))(reset_rng)
@@ -41,18 +45,27 @@ def make_eval_fn(reset_switch, step_switch, network, agents, num_envs: int, num_
         # Per-agent, per-env action count accumulators: (n_agents, num_envs, num_actions)
         counts = jnp.zeros((n_agents, num_envs, num_actions), jnp.float32)
 
+        mask = None
+        if isinstance(cl, Packnet):
+            mask = cl.get_eval_mask(env_idx, cl_state) # note that this collects all masks <= env_idx
+
         def one_step(carry, _):
             env_state, obs, rewards, soups, counts, rng = carry
 
             # policy forward (greedy) on batched obs
-            obs_batch = batchify(obs, agents, n_agents * num_envs, not use_cnn)  # (n_agents*num_envs, obs_dim)
-            pi, _, _ = network.apply(params, obs_batch, env_idx=env_idx)
-            action = pi.mode()  # (n_agents * num_envs,)
+            obs_batch = batchify(obs, agents, n_agents * num_envs, not use_cnn)  # (num_actors, obs_dim)
+            if isinstance(cl, Packnet):
+                masked_params = cl.apply_mask(params, mask)
+                pi, _, _ = network.apply(masked_params, obs_batch, env_idx=env_idx)
+            else:
+                pi, _, _ = network.apply(params, obs_batch, env_idx=env_idx)
+            action = pi.mode()  # deterministic eval
 
             # accumulate per-agent action counts
             # batchify lays out rows as: agent0_env0..envN, agent1_env0..envN, ...
             action_2d = action.reshape(n_agents, num_envs)       # (n_agents, num_envs)
             counts = counts + jax.nn.one_hot(action_2d, num_actions)  # (n_agents, num_envs, num_actions)
+
 
             # unbatch to dict of (num_envs,)
             env_act = unbatchify(action, agents, num_envs, n_agents)
@@ -102,9 +115,8 @@ def make_eval_fn(reset_switch, step_switch, network, agents, num_envs: int, num_
 
     return evaluate_env
 
-
-def evaluate_all_envs(rng, params, num_envs, evaluate_env):
+def evaluate_all_envs(cl_state, rng, actor_params, num_envs, evaluate_env):
     env_indices = jnp.arange(num_envs, dtype=jnp.int32)
     rngs = jax.random.split(rng, num_envs)
-    eval_vmapped = jax.vmap(evaluate_env, in_axes=(0, None, 0))
-    return eval_vmapped(rngs, params, env_indices)
+    eval_vmapped = jax.vmap(evaluate_env, in_axes=(None, 0, None, 0))
+    return eval_vmapped(cl_state, rngs, actor_params, env_indices)

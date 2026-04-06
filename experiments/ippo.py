@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Sequence, Optional, List, Literal
 
 import flax
+import flax.linen as nn
 import numpy as np
 import optax
 import tyro
@@ -16,13 +17,16 @@ from jax._src.flatten_util import ravel_pytree
 from experiments.continual.agem import AGEM, init_agem_memory, sample_task_slot, \
     compute_memory_gradient, agem_project, update_agem_memory
 from experiments.continual.er_ace import ERACE, compute_er_ace_gradient
+from experiments.continual.base import RegCLMethod
 from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
-from experiments.evaluation import evaluate_all_envs, make_eval_fn
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.model.mlp import ActorCritic as MLPActorCritic
+from experiments.model.mlp_packnet import ActorCritic as PacknetActorCritic
+from experiments.continual.packnet import Packnet
+from experiments.evaluation import evaluate_all_envs, make_eval_fn
 from experiments.utils import *
 from meal import make_sequence
 from meal.env.utils.max_soup_calculator import calculate_max_soup
@@ -93,6 +97,12 @@ class Config:
     # ER-ACE specific parameters
     er_ace_coef: float = 1.0
 
+    # Packnet specific parameters
+    train_epochs: int = 8
+    finetune_epochs: int = 2
+    finetune_timesteps: int = 1e7
+    re_init_pruned_weights: bool = False
+
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
@@ -126,6 +136,7 @@ class Config:
     video_length: int = 250
     log_interval: int = 5
     renderer_version: str = "v1"  # "v1" for original spritesheets, "v2" for dynamic colours
+    eval_deterministic: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # LOGGING PARAMETERS
@@ -147,6 +158,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     num_actors: int = 0
     num_updates: int = 0
+    finetune_updates: int = 0
     minibatch_size: int = 0
 
 
@@ -182,7 +194,7 @@ def main():
         cfg.cl_method = "FT"
     if cfg.cl_method is None:
         raise ValueError(
-            "cl_method is required. Please specify a continual learning method (e.g., ewc, mas, l2, ft, agem).")
+            "cl_method is required. Please specify a continual learning method (e.g., ewc, mas, l2, ft, agem, packnet, er_ace).")
 
     difficulty = cfg.difficulty
     seq_length = cfg.seq_length
@@ -203,7 +215,11 @@ def main():
                       l2=L2(),
                       ft=FT(),
                       agem=AGEM(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
-                      er_ace=ERACE(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size))
+                      er_ace=ERACE(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
+                      packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4,
+                      train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
+                      prunable_layers=[nn.Dense, nn.Conv],
+                      re_init_pruned_weights=cfg.re_init_pruned_weights))
 
     cl = method_map[cfg.cl_method.lower()]
 
@@ -284,6 +300,7 @@ def main():
 
     cfg.num_actors = num_agents * cfg.num_envs
     cfg.num_updates = cfg.steps_per_task // cfg.num_steps // cfg.num_envs
+    cfg.finetune_updates = cfg.finetune_timesteps // cfg.num_steps // cfg.num_envs
     cfg.minibatch_size = (cfg.num_actors * cfg.num_steps) // cfg.num_minibatches
 
     def linear_schedule(count):
@@ -294,7 +311,14 @@ def main():
         frac = 1.0 - (count // (cfg.num_minibatches * cfg.update_epochs)) / cfg.num_updates
         return cfg.lr * frac
 
-    ac_cls = CNNActorCritic if cfg.use_cnn else MLPActorCritic
+    if cfg.cl_method == 'packnet' and cfg.use_cnn:
+        raise ValueError("Packnet currently does not support CNN.")
+    if cfg.cl_method == 'packnet':
+        ac_cls = PacknetActorCritic
+    elif cfg.use_cnn:
+        ac_cls = CNNActorCritic
+    else:
+        ac_cls = MLPActorCritic
 
     network = ac_cls(temp_env.action_space().n, cfg.activation, seq_length, cfg.use_multihead,
                      cfg.shared_backbone, cfg.big_network, cfg.use_task_id, cfg.regularize_heads,
@@ -339,7 +363,8 @@ def main():
     def step_switch(key, state, actions, task_idx):
         return jax.lax.switch(task_idx, step_fns, key, state, actions)
 
-    evaluate_env = make_eval_fn(reset_switch, step_switch, network, agents, seq_length, cfg.num_steps, cfg.use_cnn)
+    evaluate_env = make_eval_fn(cl, reset_switch, step_switch, network, agents, seq_length,
+                                         cfg.num_steps, cfg.use_cnn, cfg.eval_deterministic, cfg.seed)
 
     importance_fn = cl.make_importance_fn(reset_switch, step_switch, network, agents, cfg.use_cnn,
                                           cfg.importance_episodes, cfg.importance_steps, cfg.normalize_importance,
@@ -572,7 +597,7 @@ def main():
                         entropy = pi.entropy().mean()
 
                         # CL penalty (for regularization-based methods)
-                        cl_penalty = cl.penalty(params, cl_state, cfg.reg_coef)
+                        cl_penalty = cl.penalty(params, cl_state, cfg.reg_coef) if isinstance(cl, RegCLMethod) else 0.0
 
                         total_loss = (loss_actor
                                       + cfg.vf_coef * value_loss
@@ -596,12 +621,11 @@ def main():
                     if cfg.cl_method.lower() == "agem" and cl_state is not None:
                         # Project raw PPO gradients against the memory gradient so that
                         # dot(g_ppo_projected, g_mem) >= 0.  We project at the gradient
-                        # level (original AGEM paper) and then let the optimizer (Adam)
-                        # handle scaling.  The previous approach of projecting Adam updates
-                        # using PPO's optimizer state for the memory gradient was wrong:
-                        # Adam's momentum/variance estimates are accumulated from PPO
-                        # gradients, so applying them to g_mem produces a corrupted
-                        # direction that breaks the projection.
+                        # level and then let the optimizer (Adam)  handle scaling.
+                        # We should not project Adam updates using PPO's optimizer state
+                        # for the memory gradient. Adam's momentum/variance estimates are
+                        # accumulated from PPO gradients, so applying them to g_mem produces
+                        # a corrupted direction that breaks the projection.
                         past_sizes = cl_state.sizes.at[env_idx].set(0)
 
                         def apply_agem_projection(agem_rng, past_sizes):
@@ -689,9 +713,15 @@ def main():
                         grads = jax.tree_util.tree_map(
                             lambda g, eg: g + cfg.er_ace_coef * eg, grads, er_ace_grads
                         )
+                        # If using packnet, mask before applying gradient:
+                        if cfg.cl_method == "packnet":
+                            grads = cl.mask_gradients(cl_state, grads)
                         train_state = train_state.apply_gradients(grads=grads)
                         agem_stats = er_ace_stats
                     else:
+                        # If using packnet, mask before applying gradient:
+                        if cfg.cl_method == "packnet":
+                            grads = cl.mask_gradients(cl_state, grads)
                         # Non-AGEM methods: standard apply_gradients
                         train_state = train_state.apply_gradients(grads=grads)
 
@@ -862,7 +892,7 @@ def main():
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
                         avg_rewards, avg_soups, avg_het = evaluate_all_envs(
-                            eval_rng, train_state.params, seq_length, evaluate_env
+                            cl_state, eval_rng, train_state.params, seq_length, evaluate_env
                         )
                         metrics = add_eval_metrics(avg_rewards, avg_soups, env_names, max_soup_vals, metrics)
                         metrics = add_het_metrics(avg_het, env_names, metrics)
@@ -900,6 +930,32 @@ def main():
             xs=None,
             length=cfg.num_updates
         )
+
+        if cfg.cl_method.lower() == "packnet":
+            # Unpack runner state
+            train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+
+            # Prune the model and update the parameters
+            train_state, cl_state = cl.on_train_end(train_state, cl_state)
+
+            # create new runner state for fine-tuning:
+            rng, finetune_rng = jax.random.split(rng)
+            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
+
+            # run fine-tuning
+            runner_state, metrics = jax.lax.scan(
+                f=_update_step,
+                init=runner_state,
+                xs=None,
+                length=cfg.finetune_updates
+            )
+
+            train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+            # handle the end of the finetune phase
+            train_state, cl_state = cl.on_finetune_end(train_state, cl_state)
+
+            # add cl_state (packnet_state in this case) to new runner state
+            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
 
         # Return the runner state after the training loop, and the metrics arrays
         return runner_state, metrics
@@ -1030,7 +1086,7 @@ def main():
 
     # Run the model
     rng, train_rng = jax.random.split(rng)
-    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads)
+    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads, cl, cfg)
 
     # Initialize AGEM/ER-ACE memory if required
     if cfg.cl_method.lower() in ("agem", "er_ace"):
