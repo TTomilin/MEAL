@@ -34,14 +34,17 @@ from experiments.continual.agem import (
     sample_task_slot,
     update_agem_memory,
 )
+from experiments.continual.base import RegCLMethod
 from experiments.continual.er_ace import ERACE, compute_er_ace_gradient
 from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
+from experiments.continual.packnet import Packnet
 from experiments.evaluation_smax import evaluate_all_envs, make_eval_fn
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.model.mlp import ActorCritic as MLPActorCritic
+from experiments.model.mlp_packnet import ActorCritic as PacknetActorCritic
 from experiments.utils import *
 from meal.env.smax import make_smax_sequence
 from meal.wrappers.logging import LogWrapper
@@ -104,6 +107,12 @@ class Config:
     agem_gradient_scale: float = 1.0
     er_ace_coef: float = 1.0
 
+    # Packnet specific parameters
+    train_epochs: int = 4
+    finetune_epochs: int = 1
+    finetune_timesteps: float = 5e6
+    re_init_pruned_weights: bool = False
+
     # ═══════════════════════════════════════════════════════════════════════
     # ENVIRONMENT
     # ═══════════════════════════════════════════════════════════════════════
@@ -122,6 +131,7 @@ class Config:
     record_video: bool = False
     video_length: int = 100
     log_interval: int = 5
+    eval_deterministic: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════
     # LOGGING
@@ -143,6 +153,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════
     num_actors: int = 0
     num_updates: int = 0
+    finetune_updates: int = 0
     minibatch_size: int = 0
 
 
@@ -175,8 +186,15 @@ def main():
         ft=FT(),
         agem=AGEM(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
         er_ace=ERACE(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
+        packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4,
+                        train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
+                        prunable_layers=[nn.Dense, nn.Conv],
+                        re_init_pruned_weights=cfg.re_init_pruned_weights),
     )
     cl = method_map[cfg.cl_method.lower()]
+
+    if cfg.cl_method.lower() == "packnet" and cfg.use_cnn:
+        raise ValueError("Packnet does not support CNN.")
 
     envs = make_smax_sequence(
         sequence_length=seq_length,
@@ -224,13 +242,19 @@ def main():
 
     cfg.num_actors = num_agents * cfg.num_envs
     cfg.num_updates = int(cfg.steps_per_task // cfg.num_steps // cfg.num_envs)
+    cfg.finetune_updates = int(cfg.finetune_timesteps // cfg.num_steps // cfg.num_envs)
     cfg.minibatch_size = (cfg.num_actors * cfg.num_steps) // cfg.num_minibatches
 
     def linear_schedule(count):
         frac = 1.0 - (count // (cfg.num_minibatches * cfg.update_epochs)) / cfg.num_updates
         return cfg.lr * frac
 
-    ac_cls = CNNActorCritic if cfg.use_cnn else MLPActorCritic
+    if cfg.cl_method.lower() == "packnet":
+        ac_cls = PacknetActorCritic
+    elif cfg.use_cnn:
+        ac_cls = CNNActorCritic
+    else:
+        ac_cls = MLPActorCritic
     network = ac_cls(
         temp_env.action_space(agents[0]).n,
         cfg.activation,
@@ -274,8 +298,9 @@ def main():
         return jax.lax.switch(task_idx, step_fns, key, state, actions)
 
     evaluate_env = make_eval_fn(
-        reset_switch, step_switch, network, agents,
+        cl, reset_switch, step_switch, network, agents,
         seq_length, cfg.num_steps, cfg.use_cnn,
+        cfg.eval_deterministic, cfg.seed,
     )
     importance_fn = cl.make_importance_fn(
         reset_switch, step_switch, network, agents, cfg.use_cnn,
@@ -383,7 +408,7 @@ def main():
                         loss_actor = -jnp.minimum(loss_actor_unclipped, loss_actor_clipped).mean()
                         entropy = pi.entropy().mean()
 
-                        cl_penalty = cl.penalty(params, cl_state, cfg.reg_coef)
+                        cl_penalty = cl.penalty(params, cl_state, cfg.reg_coef) if isinstance(cl, RegCLMethod) else 0.0
                         total_loss = (
                                 loss_actor
                                 + cfg.vf_coef * value_loss
@@ -480,9 +505,13 @@ def main():
                         grads = jax.tree_util.tree_map(
                             lambda g, eg: g + cfg.er_ace_coef * eg, grads, er_ace_grads
                         )
+                        if cfg.cl_method.lower() == "packnet":
+                            grads = cl.mask_gradients(cl_state, grads)
                         train_state = train_state.apply_gradients(grads=grads)
                         agem_stats = er_ace_stats
                     else:
+                        if cfg.cl_method.lower() == "packnet":
+                            grads = cl.mask_gradients(cl_state, grads)
                         train_state = train_state.apply_gradients(grads=grads)
 
                     loss_information = total_loss, grads, agem_stats
@@ -579,7 +608,7 @@ def main():
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
                         avg_returns, avg_kill_fraction = evaluate_all_envs(
-                            eval_rng, train_state.params, seq_length, evaluate_env
+                            cl_state, eval_rng, train_state.params, seq_length, evaluate_env
                         )
                         for i, env_name in enumerate(env_names):
                             metrics[f"Evaluation/Returns/{i}_{env_name}"] = avg_returns[i]
@@ -615,6 +644,19 @@ def main():
         runner_state, metrics = jax.lax.scan(
             _update_step, runner_state, None, length=cfg.num_updates
         )
+
+        if cfg.cl_method.lower() == "packnet":
+            train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+            train_state, cl_state = cl.on_train_end(train_state, cl_state)
+            rng, finetune_rng = jax.random.split(rng)
+            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
+            runner_state, metrics = jax.lax.scan(
+                _update_step, runner_state, None, length=cfg.finetune_updates
+            )
+            train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+            train_state, cl_state = cl.on_finetune_end(train_state, cl_state)
+            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
+
         return runner_state, metrics
 
     # ------------------------------------------------------------------
@@ -663,7 +705,7 @@ def main():
                 break
 
     rng, train_rng = jax.random.split(rng)
-    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads)
+    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads, cl, cfg)
 
     if cfg.cl_method.lower() in ("agem", "er_ace"):
         obs_shape = temp_env.observation_space(agents[0]).shape

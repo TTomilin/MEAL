@@ -15,11 +15,13 @@ from jax._src.flatten_util import ravel_pytree
 
 from experiments.continual.agem import (AGEM, init_agem_memory, sample_task_slot,
                                         agem_project, update_agem_memory)
-from experiments.continual.er_ace import ERACE, compute_er_ace_gradient
+from experiments.continual.base import RegCLMethod
+from experiments.continual.er_ace import ERACE
 from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
+from experiments.continual.packnet import Packnet
 from experiments.evaluation import evaluate_all_envs, make_eval_fn
 from experiments.model.decoupled_mlp import Actor, Critic
 from experiments.utils import *
@@ -83,13 +85,19 @@ class Config:
     importance_stride: int = 5  # compute importance once every N steps
     importance_steps: int = 500
     importance_mode: str = "online"  # "online", "last", or "multi" — for EWC & MAS
-    importance_decay: float = 0.9   # Only for online EWC & MAS
+    importance_decay: float = 0.9  # Only for online EWC & MAS
 
     # AGEM specific parameters
     agem_memory_size: int = 100000
     agem_sample_size: int = 1024
     agem_gradient_scale: float = 1.0
     er_ace_coef: float = 1.0
+
+    # Packnet specific parameters
+    train_epochs: int = 8
+    finetune_epochs: int = 2
+    finetune_timesteps: float = 1e7
+    re_init_pruned_weights: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
@@ -124,6 +132,7 @@ class Config:
     video_length: int = 250
     log_interval: int = 75
     renderer_version: str = "v1"
+    eval_deterministic: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # LOGGING PARAMETERS
@@ -145,6 +154,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     num_actors: int = 0
     num_updates: int = 0
+    finetune_updates: int = 0
     minibatch_size: int = 0
 
 
@@ -219,8 +229,14 @@ def main():
         ft=FT(),
         agem=AGEM(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
         er_ace=ERACE(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
+        packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4,
+                        train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
+                        prunable_layers=[], re_init_pruned_weights=cfg.re_init_pruned_weights),
     )
     cl = method_map[cfg.cl_method.lower()]
+
+    if cfg.cl_method.lower() == "packnet":
+        raise ValueError("Packnet is not supported for MAPPO (decoupled actor/critic networks).")
 
     # Create environment sequence
     envs = make_sequence(
@@ -373,8 +389,8 @@ def main():
         tx=tx,
     )
 
-    evaluate_env = make_eval_fn(reset_switch, step_switch, network, agents, seq_length,
-                                cfg.num_steps, cfg.use_cnn)
+    evaluate_env = make_eval_fn(cl, reset_switch, step_switch, network, agents, seq_length,
+                                cfg.num_steps, cfg.use_cnn, cfg.eval_deterministic, cfg.seed)
 
     importance_fn = cl.make_importance_fn(
         reset_switch, step_switch, network, agents, cfg.use_cnn,
@@ -528,7 +544,7 @@ def main():
                         ).mean()
                         entropy = pi.entropy().mean()
 
-                        cl_penalty = cl.penalty(params, cl_state, cfg.reg_coef)
+                        cl_penalty = cl.penalty(params, cl_state, cfg.reg_coef) if isinstance(cl, RegCLMethod) else 0.0
                         total_loss = (loss_actor + cfg.vf_coef * value_loss
                                       - cfg.ent_coef * entropy + cl_penalty)
                         return total_loss, (value_loss, loss_actor, entropy, cl_penalty)
@@ -772,7 +788,7 @@ def main():
             for agent in agents:
                 metrics[f"General/shaped_reward_{agent}"] = metrics["shaped_reward"][agent]
                 metrics[f"General/shaped_reward_annealed_{agent}"] = (
-                    metrics[f"General/shaped_reward_{agent}"] * rew_shaping_anneal(current_timestep)
+                        metrics[f"General/shaped_reward_{agent}"] * rew_shaping_anneal(current_timestep)
                 )
             metrics.pop('shaped_reward', None)
 
@@ -785,7 +801,7 @@ def main():
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
                         avg_rewards, avg_soups, avg_het = evaluate_all_envs(
-                            eval_rng, train_state.params, seq_length, evaluate_env
+                            cl_state, eval_rng, train_state.params, seq_length, evaluate_env
                         )
                         metrics = add_eval_metrics(avg_rewards, avg_soups, env_names, max_soup_vals, metrics)
                         metrics = add_het_metrics(avg_het, env_names, metrics)
@@ -905,7 +921,7 @@ def main():
 
     # ── Run ───────────────────────────────────────────────────────────────────
     rng, train_rng = jax.random.split(rng)
-    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads)
+    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads, cl, cfg)
 
     if cfg.cl_method.lower() in ("agem", "er_ace"):
         obs_dim_agem = temp_env.observation_space().shape

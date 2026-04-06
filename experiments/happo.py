@@ -22,8 +22,10 @@ Learning", https://arxiv.org/abs/2109.11251
 """
 
 import json
+import os
 import time
 from dataclasses import dataclass, field, asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Sequence, Optional, List, Literal, NamedTuple
 
@@ -37,16 +39,19 @@ import wandb
 from flax.core.frozen_dict import unfreeze
 from flax.training.train_state import TrainState
 from jax._src.flatten_util import ravel_pytree
+from tensorboardX import SummaryWriter
 
 from experiments.continual.agem import (
     AGEM, init_agem_memory, sample_task_slot,
     compute_memory_gradient, agem_project, update_agem_memory,
 )
-from experiments.continual.er_ace import ERACE, compute_er_ace_gradient
+from experiments.continual.base import RegCLMethod
+from experiments.continual.er_ace import ERACE
 from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
+from experiments.continual.packnet import Packnet
 from experiments.evaluation import evaluate_all_envs, make_eval_fn
 from experiments.model.decoupled_mlp import Actor, Critic
 from experiments.utils import (
@@ -57,10 +62,6 @@ from experiments.utils import (
 from meal import make_sequence
 from meal.env.utils.max_soup_calculator import calculate_max_soup
 from meal.wrappers.logging import LogWrapper
-
-import os
-from datetime import datetime
-from tensorboardX import SummaryWriter
 
 
 # ---------------------------------------------------------------------------
@@ -76,13 +77,13 @@ class Transition_HAPPO(NamedTuple):
     global_state has shape (num_envs, global_dim) – one row per *environment*,
     not per actor – so the scan axis adds a leading num_steps dim.
     """
-    done: jnp.ndarray         # (num_actors,)
-    action: jnp.ndarray       # (num_actors,)
-    value: jnp.ndarray        # (num_actors,)  – tiled from per-env critic output
-    reward: jnp.ndarray       # (num_actors,)
-    log_prob: jnp.ndarray     # (num_actors,)
-    obs: jnp.ndarray          # (num_actors, obs_dim)  – batchified local observations
-    global_state: jnp.ndarray # (num_envs, global_dim) – for centralized critic
+    done: jnp.ndarray  # (num_actors,)
+    action: jnp.ndarray  # (num_actors,)
+    value: jnp.ndarray  # (num_actors,)  – tiled from per-env critic output
+    reward: jnp.ndarray  # (num_actors,)
+    log_prob: jnp.ndarray  # (num_actors,)
+    obs: jnp.ndarray  # (num_actors, obs_dim)  – batchified local observations
+    global_state: jnp.ndarray  # (num_envs, global_dim) – for centralized critic
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +152,12 @@ class Config:
     # ER-ACE specific parameters
     er_ace_coef: float = 1.0
 
+    # Packnet specific parameters
+    train_epochs: int = 8
+    finetune_epochs: int = 2
+    finetune_timesteps: float = 1e7
+    re_init_pruned_weights: bool = False
+
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
@@ -184,6 +191,7 @@ class Config:
     video_length: int = 250
     log_interval: int = 5
     renderer_version: str = "v1"
+    eval_deterministic: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # LOGGING PARAMETERS
@@ -205,7 +213,8 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     num_actors: int = 0
     num_updates: int = 0
-    minibatch_size: int = 0   # per-agent minibatch size
+    finetune_updates: int = 0
+    minibatch_size: int = 0  # per-agent minibatch size
 
 
 # ---------------------------------------------------------------------------
@@ -221,10 +230,10 @@ def create_global_state_for_critic(obs_dict, agent_list, num_envs: int, use_cnn:
     """
     if use_cnn:
         agent_obs = [obs_dict[a] for a in agent_list]
-        return jnp.concatenate(agent_obs, axis=-1)   # stack along channel dim
+        return jnp.concatenate(agent_obs, axis=-1)  # stack along channel dim
     else:
         agent_obs = [obs_dict[a].reshape(num_envs, -1) for a in agent_list]
-        return jnp.concatenate(agent_obs, axis=-1)   # (num_envs, total_obs_dim)
+        return jnp.concatenate(agent_obs, axis=-1)  # (num_envs, total_obs_dim)
 
 
 class HAPPOActorWrapper:
@@ -334,8 +343,14 @@ def main():
         ft=FT(),
         agem=AGEM(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
         er_ace=ERACE(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
+        packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4,
+                        train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
+                        prunable_layers=[], re_init_pruned_weights=cfg.re_init_pruned_weights),
     )
     cl = method_map[cfg.cl_method.lower()]
+
+    if cfg.cl_method.lower() == "packnet":
+        raise ValueError("Packnet is not supported for HAPPO (decoupled actor/critic networks).")
 
     envs = make_sequence(
         sequence_length=seq_length,
@@ -499,7 +514,8 @@ def main():
 
     # Evaluation and importance functions use actor_wrapper (3-value apply)
     evaluate_env = make_eval_fn(
-        reset_switch, step_switch, actor_wrapper, agents, cfg.num_envs, cfg.num_steps, cfg.use_cnn
+        cl, reset_switch, step_switch, actor_wrapper, agents, cfg.num_envs, cfg.num_steps,
+        cfg.use_cnn, cfg.eval_deterministic, cfg.seed,
     )
 
     importance_fn = cl.make_importance_fn(
@@ -553,8 +569,8 @@ def main():
 
                 # Actor: shared policy, processes all agents together
                 pi, _, _ = actor_wrapper.apply(actor_ts.params, obs_batch, env_idx=env_idx)
-                action = pi.sample(seed=_rng)       # (num_actors,)
-                log_prob = pi.log_prob(action)       # (num_actors,)
+                action = pi.sample(seed=_rng)  # (num_actors,)
+                log_prob = pi.log_prob(action)  # (num_actors,)
 
                 # Centralized critic: takes concatenated (global) observations
                 global_state = create_global_state_for_critic(
@@ -602,7 +618,7 @@ def main():
                     reward=batchify(reward, agents, cfg.num_actors).squeeze(),
                     log_prob=log_prob,
                     obs=obs_batch,
-                    global_state=global_state,   # (num_envs, global_dim)
+                    global_state=global_state,  # (num_envs, global_dim)
                 )
 
                 steps_for_env = steps_for_env + cfg.num_envs
@@ -658,20 +674,20 @@ def main():
                 def slice_agent(x, i):
                     """(T, num_actors, ...) or (T, num_actors) → (T*num_envs, ...)"""
                     s, e = i * cfg.num_envs, (i + 1) * cfg.num_envs
-                    sliced = x[:, s:e]                   # (T, num_envs, ...)
+                    sliced = x[:, s:e]  # (T, num_envs, ...)
                     return sliced.reshape(per_agent_bs, *sliced.shape[2:])
 
                 # Stacked shapes: (num_agents, per_agent_bs, ...)
-                agent_obs   = jnp.stack([slice_agent(traj_batch.obs,      i) for i in range(num_agents)])
-                agent_acts  = jnp.stack([slice_agent(traj_batch.action,   i) for i in range(num_agents)])
+                agent_obs = jnp.stack([slice_agent(traj_batch.obs, i) for i in range(num_agents)])
+                agent_acts = jnp.stack([slice_agent(traj_batch.action, i) for i in range(num_agents)])
                 agent_logps = jnp.stack([slice_agent(traj_batch.log_prob, i) for i in range(num_agents)])
-                agent_vals  = jnp.stack([slice_agent(traj_batch.value,    i) for i in range(num_agents)])
-                agent_advs  = jnp.stack([slice_agent(advantages,          i) for i in range(num_agents)])
-                agent_tgts  = jnp.stack([slice_agent(targets,             i) for i in range(num_agents)])
+                agent_vals = jnp.stack([slice_agent(traj_batch.value, i) for i in range(num_agents)])
+                agent_advs = jnp.stack([slice_agent(advantages, i) for i in range(num_agents)])
+                agent_tgts = jnp.stack([slice_agent(targets, i) for i in range(num_agents)])
 
                 # Critic data (per-env)
                 # traj_batch.global_state: (num_steps, num_envs, global_dim)
-                critic_gs   = traj_batch.global_state.reshape(per_agent_bs, -1)
+                critic_gs = traj_batch.global_state.reshape(per_agent_bs, -1)
                 # Use agent-0's value/targets for the critic (same as MAPPO; correct for shared rewards)
                 critic_vals = traj_batch.value[:, :cfg.num_envs].reshape(per_agent_bs)
                 critic_tgts = targets[:, :cfg.num_envs].reshape(per_agent_bs)
@@ -680,15 +696,15 @@ def main():
                 rng, _rng = jax.random.split(rng)
                 perm = jax.random.permutation(_rng, per_agent_bs)
 
-                agent_obs   = jnp.take(agent_obs,   perm, axis=1)
-                agent_acts  = jnp.take(agent_acts,  perm, axis=1)
+                agent_obs = jnp.take(agent_obs, perm, axis=1)
+                agent_acts = jnp.take(agent_acts, perm, axis=1)
                 agent_logps = jnp.take(agent_logps, perm, axis=1)
-                agent_vals  = jnp.take(agent_vals,  perm, axis=1)
-                agent_advs  = jnp.take(agent_advs,  perm, axis=1)
-                agent_tgts  = jnp.take(agent_tgts,  perm, axis=1)
-                critic_gs   = jnp.take(critic_gs,   perm, axis=0)
-                critic_vals = jnp.take(critic_vals,  perm, axis=0)
-                critic_tgts = jnp.take(critic_tgts,  perm, axis=0)
+                agent_vals = jnp.take(agent_vals, perm, axis=1)
+                agent_advs = jnp.take(agent_advs, perm, axis=1)
+                agent_tgts = jnp.take(agent_tgts, perm, axis=1)
+                critic_gs = jnp.take(critic_gs, perm, axis=0)
+                critic_vals = jnp.take(critic_vals, perm, axis=0)
+                critic_tgts = jnp.take(critic_tgts, perm, axis=0)
 
                 # ── Reshape into minibatches for jax.lax.scan ─────────────────
                 # (num_agents, per_agent_bs, ...) → (num_mb, num_agents, mb_size, ...)
@@ -709,14 +725,14 @@ def main():
                     return x.reshape(cfg.num_minibatches, mb_size)
 
                 xs = (
-                    make_agent_mbs(agent_obs),         # (num_mb, num_agents, mb_size, obs_dim)
-                    make_agent_mbs(agent_acts),         # (num_mb, num_agents, mb_size)
+                    make_agent_mbs(agent_obs),  # (num_mb, num_agents, mb_size, obs_dim)
+                    make_agent_mbs(agent_acts),  # (num_mb, num_agents, mb_size)
                     make_agent_mbs(agent_logps),
                     make_agent_mbs(agent_vals),
                     make_agent_mbs(agent_advs),
                     make_agent_mbs(agent_tgts),
-                    make_critic_mbs(critic_gs),         # (num_mb, mb_size, global_dim)
-                    make_critic_mbs_1d(critic_vals),    # (num_mb, mb_size)
+                    make_critic_mbs(critic_gs),  # (num_mb, mb_size, global_dim)
+                    make_critic_mbs_1d(critic_vals),  # (num_mb, mb_size)
                     make_critic_mbs_1d(critic_tgts),
                 )
 
@@ -734,6 +750,7 @@ def main():
                     (agent_obs_mb, agent_acts_mb, agent_logps_mb,
                      agent_vals_mb, agent_advs_mb, agent_tgts_mb,
                      critic_gs_mb, critic_vals_mb, critic_tgts_mb) = xs_mb
+
                     # Per-agent shapes: (num_agents, mb_size, ...)
                     # Critic shapes:    (mb_size, ...)
 
@@ -760,17 +777,17 @@ def main():
                     M = jnp.ones(agent_obs_mb.shape[1])  # (mb_size,)  initialised to 1
 
                     total_actor_loss = jnp.array(0.0)
-                    total_entropy    = jnp.array(0.0)
+                    total_entropy = jnp.array(0.0)
                     total_cl_penalty = jnp.array(0.0)
                     agem_stats = {}
 
                     for i in range(num_agents):
-                        obs_i   = agent_obs_mb[i]    # (mb_size, obs_dim)
-                        act_i   = agent_acts_mb[i]   # (mb_size,)
-                        logp_i  = agent_logps_mb[i]  # (mb_size,)
-                        val_i   = agent_vals_mb[i]   # (mb_size,)
-                        adv_i   = agent_advs_mb[i]   # (mb_size,)
-                        tgt_i   = agent_tgts_mb[i]   # (mb_size,)
+                        obs_i = agent_obs_mb[i]  # (mb_size, obs_dim)
+                        act_i = agent_acts_mb[i]  # (mb_size,)
+                        logp_i = agent_logps_mb[i]  # (mb_size,)
+                        val_i = agent_vals_mb[i]  # (mb_size,)
+                        adv_i = agent_advs_mb[i]  # (mb_size,)
+                        tgt_i = agent_tgts_mb[i]  # (mb_size,)
 
                         # Closure over M (stop-gradient'd cumulative IS ratio)
                         M_i = jax.lax.stop_gradient(M)
@@ -789,13 +806,14 @@ def main():
                             happo_adv = M_i * adv_norm
 
                             loss_unclipped = ratio * happo_adv
-                            loss_clipped   = (
-                                jnp.clip(ratio, 1.0 - cfg.clip_eps, 1.0 + cfg.clip_eps)
-                                * happo_adv
+                            loss_clipped = (
+                                    jnp.clip(ratio, 1.0 - cfg.clip_eps, 1.0 + cfg.clip_eps)
+                                    * happo_adv
                             )
                             actor_loss = -jnp.minimum(loss_unclipped, loss_clipped).mean()
-                            entropy    = pi.entropy().mean()
-                            cl_penalty = cl.penalty(actor_params, cl_state, cfg.reg_coef)
+                            entropy = pi.entropy().mean()
+                            cl_penalty = cl.penalty(actor_params, cl_state, cfg.reg_coef) if isinstance(cl,
+                                                                                                        RegCLMethod) else 0.0
 
                             total = actor_loss - cfg.ent_coef * entropy + cl_penalty
                             return total, (actor_loss, entropy, cl_penalty)
@@ -817,7 +835,7 @@ def main():
                                     "agem/ppo_total_loss": jnp.array(0.0),
                                     "agem/ppo_value_loss": jnp.array(0.0),
                                     "agem/ppo_actor_loss": jnp.array(0.0),
-                                    "agem/ppo_entropy":    jnp.array(0.0),
+                                    "agem/ppo_entropy": jnp.array(0.0),
                                 }
 
                                 for t in range(cl_state.obs.shape[0]):
@@ -851,30 +869,30 @@ def main():
 
                                 mem_norm = jnp.linalg.norm(ravel_pytree(grads_mem)[0])
                                 total_used = jnp.sum(cl_state.sizes)
-                                total_cap  = (
-                                    cl_state.obs.shape[0] * cl_state.max_size_per_task
+                                total_cap = (
+                                        cl_state.obs.shape[0] * cl_state.max_size_per_task
                                 )
-                                proj_stats["agem/mem_grad_norm_raw"]   = mem_norm
+                                proj_stats["agem/mem_grad_norm_raw"] = mem_norm
                                 proj_stats["agem/memory_fullness_pct"] = (
-                                    total_used / total_cap
-                                ) * 100.0
+                                                                                 total_used / total_cap
+                                                                         ) * 100.0
                                 return projected, {**ppo_stats, **proj_stats}
 
                             def no_agem_proj():
                                 empty = {
-                                    "agem/agem_alpha":               jnp.array(0.0),
-                                    "agem/agem_dot_g":               jnp.array(0.0),
-                                    "agem/agem_final_grad_norm":     jnp.array(0.0),
-                                    "agem/agem_is_proj":             jnp.array(False),
-                                    "agem/agem_mem_grad_norm":       jnp.array(0.0),
-                                    "agem/agem_ppo_grad_norm":       jnp.array(0.0),
+                                    "agem/agem_alpha": jnp.array(0.0),
+                                    "agem/agem_dot_g": jnp.array(0.0),
+                                    "agem/agem_final_grad_norm": jnp.array(0.0),
+                                    "agem/agem_is_proj": jnp.array(False),
+                                    "agem/agem_mem_grad_norm": jnp.array(0.0),
+                                    "agem/agem_ppo_grad_norm": jnp.array(0.0),
                                     "agem/agem_projected_grad_norm": jnp.array(0.0),
-                                    "agem/mem_grad_norm_raw":        jnp.array(0.0),
-                                    "agem/memory_fullness_pct":      jnp.array(0.0),
-                                    "agem/ppo_actor_loss":           jnp.array(0.0),
-                                    "agem/ppo_entropy":              jnp.array(0.0),
-                                    "agem/ppo_total_loss":           jnp.array(0.0),
-                                    "agem/ppo_value_loss":           jnp.array(0.0),
+                                    "agem/mem_grad_norm_raw": jnp.array(0.0),
+                                    "agem/memory_fullness_pct": jnp.array(0.0),
+                                    "agem/ppo_actor_loss": jnp.array(0.0),
+                                    "agem/ppo_entropy": jnp.array(0.0),
+                                    "agem/ppo_total_loss": jnp.array(0.0),
+                                    "agem/ppo_value_loss": jnp.array(0.0),
                                 }
                                 return grads_i, empty
 
@@ -894,7 +912,7 @@ def main():
                             for t in range(max_tasks):
                                 agem_rng, task_rng = jax.random.split(agem_rng)
                                 t_obs, t_acts, _, _, _, _ = sample_task_slot(cl_state, t, spt, task_rng)
-                                t_obs  = jax.lax.stop_gradient(t_obs)
+                                t_obs = jax.lax.stop_gradient(t_obs)
                                 t_acts = jax.lax.stop_gradient(t_acts)
 
                                 def bc_loss(p, obs=t_obs, acts=t_acts, task=t):
@@ -938,14 +956,14 @@ def main():
                         M = M * jnp.clip(ratio_new, 1.0 - cfg.clip_eps, 1.0 + cfg.clip_eps)
 
                         total_actor_loss = total_actor_loss + al_i
-                        total_entropy    = total_entropy    + e_i
+                        total_entropy = total_entropy + e_i
                         total_cl_penalty = total_cl_penalty + cp_i
 
                     avg_actor_loss = total_actor_loss / num_agents
-                    avg_entropy    = total_entropy    / num_agents
+                    avg_entropy = total_entropy / num_agents
                     avg_cl_penalty = total_cl_penalty / num_agents
 
-                    actor_grad_norm  = optax.global_norm(grads_i)
+                    actor_grad_norm = optax.global_norm(grads_i)
                     critic_grad_norm = optax.global_norm(critic_grads)
 
                     loss_information = (
@@ -998,10 +1016,10 @@ def main():
             update_step += 1
 
             # ── Metrics ──────────────────────────────────────────────────────
-            metrics["General/env_index"]   = env_idx
+            metrics["General/env_index"] = env_idx
             metrics["General/update_step"] = update_step
             metrics["General/steps_for_env"] = steps_for_env
-            metrics["General/env_step"]    = update_step * cfg.num_steps * cfg.num_envs
+            metrics["General/env_step"] = update_step * cfg.num_steps * cfg.num_envs
             metrics["General/learning_rate"] = (
                 linear_schedule(
                     (update_step - 1) * cfg.num_minibatches * cfg.update_epochs * num_agents
@@ -1015,12 +1033,12 @@ def main():
             total_loss_scalar = total_loss[0]
             actor_grad_norm, critic_grad_norm = loss_dict["grad_norms"]
 
-            metrics["Losses/total_loss"]  = total_loss_scalar.mean()
+            metrics["Losses/total_loss"] = total_loss_scalar.mean()
             metrics["Losses/critic_loss"] = critic_loss_val.mean()
-            metrics["Losses/actor_loss"]  = avg_actor_loss.mean()
-            metrics["Losses/entropy"]     = avg_entropy.mean()
-            metrics["Losses/reg_loss"]    = avg_cl_penalty.mean()
-            metrics["Gradients/actor_grad_norm"]  = actor_grad_norm.mean()
+            metrics["Losses/actor_loss"] = avg_actor_loss.mean()
+            metrics["Losses/entropy"] = avg_entropy.mean()
+            metrics["Losses/reg_loss"] = avg_cl_penalty.mean()
+            metrics["Gradients/actor_grad_norm"] = actor_grad_norm.mean()
             metrics["Gradients/critic_grad_norm"] = critic_grad_norm.mean()
 
             if "agem_stats" in loss_dict:
@@ -1033,7 +1051,7 @@ def main():
             soups_tea = jnp.stack([info["soups"][a] for a in agents], axis=-1)
             soups_per_env = soups_tea.sum(axis=(0, 2))
             done_tea = traj_batch.done.reshape(T, E, A)
-            done_te  = done_tea[..., 0]
+            done_te = done_tea[..., 0]
             episodes_per_env = done_te.sum(axis=0)
             mask = episodes_per_env > 0
             true_avg = jnp.where(mask, soups_per_env / jnp.maximum(episodes_per_env, 1), 0.0)
@@ -1053,14 +1071,14 @@ def main():
             for agent in agents:
                 metrics[f"General/shaped_reward_{agent}"] = metrics["shaped_reward"][agent]
                 metrics[f"General/shaped_reward_annealed_{agent}"] = (
-                    metrics[f"General/shaped_reward_{agent}"]
-                    * rew_shaping_anneal(current_timestep)
+                        metrics[f"General/shaped_reward_{agent}"]
+                        * rew_shaping_anneal(current_timestep)
                 )
             metrics.pop("shaped_reward", None)
 
-            metrics["Advantage_Targets/advantages"]     = advantages.mean()
+            metrics["Advantage_Targets/advantages"] = advantages.mean()
             metrics["Advantage_Targets/advantages_std"] = advantages.std()
-            metrics["Advantage_Targets/targets"]        = targets.mean()
+            metrics["Advantage_Targets/targets"] = targets.mean()
 
             # Dormant neuron ratio
             obs_batch_last = batchify(last_obs, agents, cfg.num_actors, not cfg.use_cnn)
@@ -1076,7 +1094,7 @@ def main():
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
                         avg_rewards, avg_soups, _ = evaluate_all_envs(
-                            eval_rng, actor_ts.params, seq_length, evaluate_env
+                            cl_state, eval_rng, actor_ts.params, seq_length, evaluate_env
                         )
                         metrics = add_eval_metrics(
                             avg_rewards, avg_soups, env_names, max_soup_vals, metrics
@@ -1130,9 +1148,9 @@ def main():
             runner_state, metrics = train_on_environment(
                 task_rng, actor_ts, critic_ts, cl_state, task_idx
             )
-            actor_ts  = runner_state[0]
+            actor_ts = runner_state[0]
             critic_ts = runner_state[1]
-            cl_state  = runner_state[7]
+            cl_state = runner_state[7]
 
             # CL importance update (actor params only)
             importance = importance_fn(actor_ts.params, task_idx, task_rng)
@@ -1190,14 +1208,14 @@ def main():
             config_data = {"env_kwargs": env_kwargs, "layout_name": layout_name}
             if config is not None:
                 config_dict = convert_frozen_dict({
-                    "use_cnn":         config.use_cnn,
-                    "num_tasks":       seq_length,
-                    "use_multihead":   config.use_multihead,
-                    "use_task_id":     config.use_task_id,
-                    "use_layer_norm":  config.use_layer_norm,
-                    "activation":      config.activation,
-                    "strategy":        config.strategy,
-                    "seed":            config.seed,
+                    "use_cnn": config.use_cnn,
+                    "num_tasks": seq_length,
+                    "use_multihead": config.use_multihead,
+                    "use_task_id": config.use_task_id,
+                    "use_layer_norm": config.use_layer_norm,
+                    "activation": config.activation,
+                    "strategy": config.strategy,
+                    "seed": config.seed,
                 })
                 config_data.update(config_dict)
             config_data = convert_frozen_dict(config_data)
@@ -1222,7 +1240,7 @@ def main():
         # With a single shared head, regularize it like any other layer.
         regularize_heads = not cfg.use_multihead
         cl_state = init_cl_state(actor_ts.params, regularize_critic=False,
-                                 regularize_heads=regularize_heads)
+                                 regularize_heads=regularize_heads, cl=cl, cfg=cfg)
 
     loop_over_envs(train_rng, actor_ts, critic_ts, cl_state, envs)
 

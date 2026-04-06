@@ -15,6 +15,7 @@ from jax._src.flatten_util import ravel_pytree
 
 from experiments.continual.agem import AGEM, init_agem_memory, sample_memory, compute_memory_gradient, agem_project, \
     update_agem_memory
+from experiments.continual.base import RegCLMethod
 from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
@@ -607,7 +608,7 @@ def main():
                         entropy = pi.entropy().mean()
 
                         # CL penalty (for regularization-based methods)
-                        cl_penalty = cl.penalty(params, cl_state, cfg.reg_coef)
+                        cl_penalty = cl.penalty(params, cl_state, cfg.reg_coef) if isinstance(cl, RegCLMethod) else 0.0
 
                         total_loss = (loss_actor
                                       + cfg.vf_coef * value_loss
@@ -822,7 +823,8 @@ def main():
 
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
-                        avg_rewards, avg_success = evaluate_all_envs(eval_rng, train_state.params, seq_length, evaluate_env)
+                        avg_rewards, avg_success = evaluate_all_envs(eval_rng, train_state.params, seq_length,
+                                                                     evaluate_env)
                         for i, env_name in enumerate(env_names):
                             metrics[f"Evaluation/Returns/{i}_{env_name}"] = avg_rewards[i]
                             metrics[f"Evaluation/Success/{i}_{env_name}"] = avg_success[i]
@@ -1004,7 +1006,7 @@ def main():
 
     # Run the model
     rng, train_rng = jax.random.split(rng)
-    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads)
+    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads, cl, cfg)
 
     # Initialize AGEM memory if using AGEM and this is the first environment
     if cfg.cl_method.lower() == "agem":

@@ -20,10 +20,12 @@ from experiments.continual.agem import (
     AGEM, init_vdn_agem_memory, sample_vdn_task_slot,
     compute_vdn_memory_gradient, update_vdn_agem_memory, agem_project,
 )
+from experiments.continual.base import RegCLMethod
 from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
+from experiments.continual.packnet import Packnet
 from experiments.evaluation import evaluate_all_envs
 from experiments.model.q_mlp import QNetwork
 from experiments.utils import (
@@ -60,7 +62,7 @@ class Config:
     eps_finish: float = 0.05
     eps_decay: float = 0.1  # fraction of num_updates over which eps decays
     max_grad_norm: float = 1.0
-    update_epochs: int = 8   # passes over collected data per update
+    update_epochs: int = 8  # passes over collected data per update
     num_minibatches: int = 16  # minibatches per epoch
     lr: float = 1e-3
     anneal_lr: bool = False
@@ -99,6 +101,12 @@ class Config:
     # AGEM specific parameters
     agem_memory_size: int = 100000
     agem_sample_size: int = 1024
+
+    # Packnet specific parameters
+    train_epochs: int = 8
+    finetune_epochs: int = 2
+    finetune_timesteps: float = 1e7
+    re_init_pruned_weights: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
@@ -169,7 +177,7 @@ def make_vdn_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
     num_agents = len(agents)
 
     @jax.jit
-    def evaluate_env(rng, params, env_idx):
+    def evaluate_env(cl_state, rng, params, env_idx):
         rng, env_rng = jax.random.split(rng)
         reset_rng = jax.random.split(env_rng, num_envs)
         obs, env_state = jax.vmap(lambda k: reset_switch(k, jnp.int32(env_idx)))(reset_rng)
@@ -353,8 +361,14 @@ def main():
         l2=L2(),
         ft=FT(),
         agem=AGEM(),
+        packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4,
+                        train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
+                        prunable_layers=[], re_init_pruned_weights=cfg.re_init_pruned_weights),
     )
     cl = method_map[cfg.cl_method.lower()]
+
+    if cfg.cl_method.lower() == "packnet":
+        raise ValueError("Packnet is not supported for VDN (value-based method).")
 
     difficulty = cfg.difficulty
     seq_length = cfg.seq_length
@@ -613,13 +627,14 @@ def main():
             )(train_state.target_network_params, nxt_b)  # (A, N, action_dim)
             q_next_max = jnp.max(q_next, axis=-1)  # (A, N)
             vdn_target = rew_flat + (1 - don_flat) * cfg.gamma * jnp.sum(q_next_max, axis=0)
+
             # shape: (N,) – no stop_gradient needed: uses target_network_params, not params
 
             def _learn_minibatch(train_state, mb_indices):
                 """One gradient step on a minibatch of on-policy transitions."""
-                mb_obs  = {a: obs_flat[a][mb_indices] for a in agents}
+                mb_obs = {a: obs_flat[a][mb_indices] for a in agents}
                 mb_acts = {a: act_flat[a][mb_indices] for a in agents}
-                mb_tgt  = vdn_target[mb_indices]
+                mb_tgt = vdn_target[mb_indices]
 
                 def _loss_fn(params):
                     obs_b = jnp.stack([mb_obs[a] for a in agents])  # (A, mb, obs_dim)
@@ -635,7 +650,7 @@ def main():
 
                     chosen_q_sum = jnp.sum(chosen_q, axis=0)  # (mb,)
                     td_loss = jnp.mean((chosen_q_sum - mb_tgt) ** 2)
-                    cl_penalty = cl.penalty(params, cl_state, cfg.reg_coef)
+                    cl_penalty = cl.penalty(params, cl_state, cfg.reg_coef) if isinstance(cl, RegCLMethod) else 0.0
                     total_loss = td_loss + cl_penalty
                     return total_loss, (td_loss, chosen_q_sum.mean(), cl_penalty)
 
@@ -683,10 +698,10 @@ def main():
                 _learn_epoch, (train_state, _rng), xs=None, length=cfg.update_epochs
             )
             # Reduce (update_epochs, num_minibatches) → scalar
-            total_loss  = total_loss.reshape(-1).mean()
-            td_loss     = td_loss.reshape(-1).mean()
-            qvals       = qvals.reshape(-1).mean()
-            cl_penalty  = cl_penalty.reshape(-1).mean()
+            total_loss = total_loss.reshape(-1).mean()
+            td_loss = td_loss.reshape(-1).mean()
+            qvals = qvals.reshape(-1).mean()
+            cl_penalty = cl_penalty.reshape(-1).mean()
 
             # Update target network every target_update_interval collection phases
             train_state = jax.lax.cond(
@@ -745,7 +760,7 @@ def main():
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
                         avg_rewards, avg_soups = evaluate_all_envs(
-                            eval_rng, train_state.params, seq_length, evaluate_env
+                            cl_state, eval_rng, train_state.params, seq_length, evaluate_env
                         )
                         metrics = add_eval_metrics(
                             avg_rewards, avg_soups, env_names, max_soup_vals, metrics
@@ -787,7 +802,7 @@ def main():
         )
 
         final_train_state = runner_state[0]
-        final_expl_state  = runner_state[1]
+        final_expl_state = runner_state[1]
 
         # AGEM: collect one final on-policy batch with the trained policy and
         # store it as the memory for this task.
@@ -840,11 +855,11 @@ def main():
             }
 
             N_mem = cfg.num_steps * cfg.num_envs
-            obs_m  = {a: mem_ts.obs[a].reshape(N_mem, -1) for a in agents}
-            nxt_m  = {a: next_obs_mem[a].reshape(N_mem, -1) for a in agents}
-            act_m  = {a: mem_ts.actions[a].reshape(N_mem) for a in agents}
-            rew_m  = mem_ts.rewards["__all__"].reshape(N_mem)
-            don_m  = mem_ts.dones["__all__"].reshape(N_mem).astype(jnp.float32)
+            obs_m = {a: mem_ts.obs[a].reshape(N_mem, -1) for a in agents}
+            nxt_m = {a: next_obs_mem[a].reshape(N_mem, -1) for a in agents}
+            act_m = {a: mem_ts.actions[a].reshape(N_mem) for a in agents}
+            rew_m = mem_ts.rewards["__all__"].reshape(N_mem)
+            don_m = mem_ts.dones["__all__"].reshape(N_mem).astype(jnp.float32)
 
             rng, samp_rng = jax.random.split(rng)
             samp_idx = jax.random.choice(samp_rng, N_mem, (cfg.agem_sample_size,), replace=False)
@@ -852,8 +867,8 @@ def main():
             _obs_b = jnp.stack([obs_m[a][samp_idx] for a in agents]).transpose(1, 0, 2)
             _nxt_b = jnp.stack([nxt_m[a][samp_idx] for a in agents]).transpose(1, 0, 2)
             _act_b = jnp.stack([act_m[a][samp_idx] for a in agents]).T
-            _rew   = rew_m[samp_idx]
-            _don   = don_m[samp_idx]
+            _rew = rew_m[samp_idx]
+            _don = don_m[samp_idx]
 
             cl_state = update_vdn_agem_memory(
                 cl_state, env_idx, _obs_b, _act_b, _rew, _nxt_b, _don
@@ -954,7 +969,7 @@ def main():
             max_tasks=seq_length,
         )
     else:
-        cl_state = init_cl_state(train_state.params, False, cfg.regularize_heads)
+        cl_state = init_cl_state(train_state.params, False, cfg.regularize_heads, cl, cfg)
 
     rng, train_rng = jax.random.split(rng)
     loop_over_envs(train_rng, train_state, cl_state)

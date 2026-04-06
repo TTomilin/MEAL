@@ -21,10 +21,12 @@ from experiments.continual.agem import (
     AGEM, init_qmix_agem_memory, sample_qmix_task_slot,
     compute_qmix_memory_gradient, update_qmix_agem_memory, agem_project,
 )
+from experiments.continual.base import RegCLMethod
 from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
+from experiments.continual.packnet import Packnet
 from experiments.evaluation import evaluate_all_envs
 from experiments.model.mixing_network import MixingNetwork
 from experiments.model.q_mlp import QNetwork
@@ -49,7 +51,7 @@ from meal.wrappers.logging import LogWrapper
 
 @chex.dataclass(frozen=True)
 class QMIXTimestep:
-    obs: dict               # per-agent obs (without __all__)
+    obs: dict  # per-agent obs (without __all__)
     global_state: jnp.ndarray  # concatenated agent observations (num_steps, num_envs, state_dim)
     actions: dict
     avail_actions: dict
@@ -72,7 +74,7 @@ class Config:
     eps_finish: float = 0.05
     eps_decay: float = 0.1  # fraction of num_updates over which eps decays
     max_grad_norm: float = 1.0
-    update_epochs: int = 8   # passes over collected data per update
+    update_epochs: int = 8  # passes over collected data per update
     num_minibatches: int = 16  # minibatches per epoch
     lr: float = 1e-3
     anneal_lr: bool = False
@@ -111,6 +113,12 @@ class Config:
     # AGEM specific parameters
     agem_memory_size: int = 100000
     agem_sample_size: int = 1024
+
+    # Packnet specific parameters
+    train_epochs: int = 8
+    finetune_epochs: int = 2
+    finetune_timesteps: float = 1e7
+    re_init_pruned_weights: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
@@ -180,7 +188,7 @@ def make_qmix_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
     num_agents = len(agents)
 
     @jax.jit
-    def evaluate_env(rng, q_params, env_idx):
+    def evaluate_env(cl_state, rng, q_params, env_idx):
         rng, env_rng = jax.random.split(rng)
         reset_rng = jax.random.split(env_rng, num_envs)
         obs, env_state = jax.vmap(lambda k: reset_switch(k, jnp.int32(env_idx)))(reset_rng)
@@ -365,8 +373,14 @@ def main():
         l2=L2(),
         ft=FT(),
         agem=AGEM(),
+        packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4,
+                        train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
+                        prunable_layers=[], re_init_pruned_weights=cfg.re_init_pruned_weights),
     )
     cl = method_map[cfg.cl_method.lower()]
+
+    if cfg.cl_method.lower() == "packnet":
+        raise ValueError("Packnet is not supported for QMIX (value-based method).")
 
     difficulty = cfg.difficulty
     seq_length = cfg.seq_length
@@ -629,38 +643,39 @@ def main():
             )  # (num_steps, num_envs, state_dim)
 
             # Flatten (num_steps, num_envs, ...) → (N, ...) preserving obs dims
-            obs_flat  = {a: timesteps.obs[a].reshape((N,) + timesteps.obs[a].shape[2:]) for a in agents}
-            nxt_flat  = {a: next_obs[a].reshape((N,) + next_obs[a].shape[2:]) for a in agents}
-            act_flat  = {a: timesteps.actions[a].reshape(N) for a in agents}
-            gs_flat   = timesteps.global_state.reshape(N, -1)   # always flat for mixing network
-            ngs_flat  = next_global_state.reshape(N, -1)        # always flat for mixing network
-            rew_flat  = timesteps.rewards["__all__"].reshape(N)
-            don_flat  = timesteps.dones["__all__"].reshape(N).astype(jnp.float32)
+            obs_flat = {a: timesteps.obs[a].reshape((N,) + timesteps.obs[a].shape[2:]) for a in agents}
+            nxt_flat = {a: next_obs[a].reshape((N,) + next_obs[a].shape[2:]) for a in agents}
+            act_flat = {a: timesteps.actions[a].reshape(N) for a in agents}
+            gs_flat = timesteps.global_state.reshape(N, -1)  # always flat for mixing network
+            ngs_flat = next_global_state.reshape(N, -1)  # always flat for mixing network
+            rew_flat = timesteps.rewards["__all__"].reshape(N)
+            don_flat = timesteps.dones["__all__"].reshape(N).astype(jnp.float32)
 
             # Compute QMIX TD-targets once using the frozen target networks.
-            tgt_q_params  = train_state.target_network_params["q"]
+            tgt_q_params = train_state.target_network_params["q"]
             tgt_mix_params = train_state.target_network_params["mix"]
 
             nxt_b = jnp.stack([nxt_flat[a] for a in agents])  # (A, N, obs_dim)
             q_next = jax.vmap(
                 lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
             )(tgt_q_params, nxt_b)  # (A, N, action_dim)
-            q_next_max   = jnp.max(q_next, axis=-1)  # (A, N)
-            q_next_max_T = q_next_max.T               # (N, A)
+            q_next_max = jnp.max(q_next, axis=-1)  # (A, N)
+            q_next_max_T = q_next_max.T  # (N, A)
 
             q_total_next = mixing_network.apply(tgt_mix_params, q_next_max_T, ngs_flat)  # (N,)
-            qmix_target  = rew_flat + (1 - don_flat) * cfg.gamma * q_total_next
+            qmix_target = rew_flat + (1 - don_flat) * cfg.gamma * q_total_next
+
             # shape: (N,) – stop_gradient implicit: uses target_network_params
 
             def _learn_minibatch(train_state, mb_indices):
                 """One gradient step on a minibatch of on-policy transitions."""
-                mb_obs  = {a: obs_flat[a][mb_indices] for a in agents}
+                mb_obs = {a: obs_flat[a][mb_indices] for a in agents}
                 mb_acts = {a: act_flat[a][mb_indices] for a in agents}
-                mb_gs   = gs_flat[mb_indices]   # (mb, state_dim)
-                mb_tgt  = qmix_target[mb_indices]
+                mb_gs = gs_flat[mb_indices]  # (mb, state_dim)
+                mb_tgt = qmix_target[mb_indices]
 
                 def _loss_fn(combined_params):
-                    q_params  = combined_params["q"]
+                    q_params = combined_params["q"]
                     mix_params = combined_params["mix"]
 
                     obs_b = jnp.stack([mb_obs[a] for a in agents])  # (A, mb, obs_dim)
@@ -679,7 +694,7 @@ def main():
                     td_loss = jnp.mean((q_total - mb_tgt) ** 2)
 
                     # CL regularization on Q-network params only
-                    cl_penalty = cl.penalty(q_params, cl_state, cfg.reg_coef)
+                    cl_penalty = cl.penalty(q_params, cl_state, cfg.reg_coef) if isinstance(cl, RegCLMethod) else 0.0
                     total_loss = td_loss + cl_penalty
                     return total_loss, (td_loss, q_total.mean(), cl_penalty)
 
@@ -731,10 +746,10 @@ def main():
                 _learn_epoch, (train_state, _rng), xs=None, length=cfg.update_epochs
             )
             # Reduce (update_epochs, num_minibatches) → scalar
-            total_loss  = total_loss.reshape(-1).mean()
-            td_loss     = td_loss.reshape(-1).mean()
-            qvals       = qvals.reshape(-1).mean()
-            cl_penalty  = cl_penalty.reshape(-1).mean()
+            total_loss = total_loss.reshape(-1).mean()
+            td_loss = td_loss.reshape(-1).mean()
+            qvals = qvals.reshape(-1).mean()
+            cl_penalty = cl_penalty.reshape(-1).mean()
 
             # Update target networks every target_update_interval collection phases
             train_state = jax.lax.cond(
@@ -794,7 +809,7 @@ def main():
                     if cfg.evaluation:
                         # Pass Q-network params only to eval (mixing network not needed)
                         avg_rewards, avg_soups = evaluate_all_envs(
-                            eval_rng, train_state.params["q"], seq_length, evaluate_env
+                            cl_state, eval_rng, train_state.params["q"], seq_length, evaluate_env
                         )
                         metrics = add_eval_metrics(
                             avg_rewards, avg_soups, env_names, max_soup_vals, metrics
@@ -836,7 +851,7 @@ def main():
         )
 
         final_train_state = runner_state[0]
-        final_expl_state  = runner_state[1]
+        final_expl_state = runner_state[1]
 
         # AGEM: collect one final on-policy batch with the trained policy and
         # store it as the memory for this task.
@@ -893,24 +908,24 @@ def main():
             )
 
             N_mem = cfg.num_steps * cfg.num_envs
-            obs_m  = {a: mem_ts.obs[a].reshape(N_mem, -1) for a in agents}
-            nxt_m  = {a: next_obs_mem[a].reshape(N_mem, -1) for a in agents}
-            act_m  = {a: mem_ts.actions[a].reshape(N_mem) for a in agents}
-            gs_m   = mem_ts.global_state.reshape(N_mem, -1)
-            ngs_m  = next_gs_mem.reshape(N_mem, -1)
-            rew_m  = mem_ts.rewards["__all__"].reshape(N_mem)
-            don_m  = mem_ts.dones["__all__"].reshape(N_mem).astype(jnp.float32)
+            obs_m = {a: mem_ts.obs[a].reshape(N_mem, -1) for a in agents}
+            nxt_m = {a: next_obs_mem[a].reshape(N_mem, -1) for a in agents}
+            act_m = {a: mem_ts.actions[a].reshape(N_mem) for a in agents}
+            gs_m = mem_ts.global_state.reshape(N_mem, -1)
+            ngs_m = next_gs_mem.reshape(N_mem, -1)
+            rew_m = mem_ts.rewards["__all__"].reshape(N_mem)
+            don_m = mem_ts.dones["__all__"].reshape(N_mem).astype(jnp.float32)
 
             rng, samp_rng = jax.random.split(rng)
             samp_idx = jax.random.choice(samp_rng, N_mem, (cfg.agem_sample_size,), replace=False)
 
-            _obs_b  = jnp.stack([obs_m[a][samp_idx] for a in agents]).transpose(1, 0, 2)
-            _nxt_b  = jnp.stack([nxt_m[a][samp_idx] for a in agents]).transpose(1, 0, 2)
-            _act_b  = jnp.stack([act_m[a][samp_idx] for a in agents]).T
-            _gs     = gs_m[samp_idx]
-            _ngs    = ngs_m[samp_idx]
-            _rew    = rew_m[samp_idx]
-            _don    = don_m[samp_idx]
+            _obs_b = jnp.stack([obs_m[a][samp_idx] for a in agents]).transpose(1, 0, 2)
+            _nxt_b = jnp.stack([nxt_m[a][samp_idx] for a in agents]).transpose(1, 0, 2)
+            _act_b = jnp.stack([act_m[a][samp_idx] for a in agents]).T
+            _gs = gs_m[samp_idx]
+            _ngs = ngs_m[samp_idx]
+            _rew = rew_m[samp_idx]
+            _don = don_m[samp_idx]
 
             cl_state = update_qmix_agem_memory(
                 cl_state, env_idx,
@@ -1013,7 +1028,7 @@ def main():
         )
     else:
         # CL state tracks Q-network params only
-        cl_state = init_cl_state(q_network_params, False, cfg.regularize_heads)
+        cl_state = init_cl_state(q_network_params, False, cfg.regularize_heads, cl, cfg)
 
     rng, train_rng = jax.random.split(rng)
     loop_over_envs(train_rng, train_state, cl_state)
