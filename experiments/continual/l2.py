@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 
-from experiments.continual.base import RegCLMethod, CLState
+from experiments.continual.base import RegCLMethod, CLState, RegCLState
 
 
 class L2(RegCLMethod):
@@ -14,7 +14,7 @@ class L2(RegCLMethod):
 
     def update_state(self, cl_state: CLState, new_params: FrozenDict, new_importance: FrozenDict) -> CLState:
         # we only need to remember θᵗ
-        return CLState(old_params=new_params, importance=cl_state.importance, mask=cl_state.mask)
+        return RegCLState(old_params=new_params, importance=cl_state.importance, mask=cl_state.mask)
 
     def penalty(self,
                 params: FrozenDict,
