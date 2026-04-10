@@ -121,7 +121,7 @@ def init_cl_state(params: FrozenVariableDict, regularize_critic: bool,
                   regularize_heads: bool, cl: CLMethod, cfg) -> CLState:
     if cfg.cl_method == "packnet":
         return PacknetState(
-            masks=cl.init_mask_tree(params["params"]),
+            masks=cl.init_mask_tree(cl.unpack_params(params)),
             mask={},
             current_task=0,
             train_mode=True,

@@ -229,14 +229,13 @@ def main():
         ft=FT(),
         agem=AGEM(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
         er_ace=ERACE(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
-        packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4,
-                        train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
-                        prunable_layers=[], re_init_pruned_weights=cfg.re_init_pruned_weights),
+                      packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4,
+                      train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
+                      prunable_layers=[nn.Dense, nn.Conv],
+                      re_init_pruned_weights=cfg.re_init_pruned_weights)
     )
-    cl = method_map[cfg.cl_method.lower()]
 
-    if cfg.cl_method.lower() == "packnet":
-        raise ValueError("Packnet is not supported for MAPPO (decoupled actor/critic networks).")
+    cl = method_map[cfg.cl_method.lower()]
 
     # Create environment sequence
     envs = make_sequence(
@@ -674,9 +673,15 @@ def main():
                         grads = jax.tree_util.tree_map(
                             lambda g, eg: g + cfg.er_ace_coef * eg, grads, er_ace_grads
                         )
+                        # if using packnet, mask before applying gradient:
+                        if cfg.cl_method == "packnet":
+                            grads['actor'] = cl.mask_gradients(cl_state, grads['actor'])
                         train_state = train_state.apply_gradients(grads=grads)
                         agem_stats = {"er_ace/total_past_samples": jnp.sum(past_sizes).astype(jnp.float32)}
                     else:
+                        # if using packnet, mask before applying gradient:
+                        if cfg.cl_method == "packnet":
+                            grads['actor'] = cl.mask_gradients(cl_state, grads['actor'])
                         train_state = train_state.apply_gradients(grads=grads)
 
                     return (train_state, cl_state, rng), (total_loss, grads, agem_stats)
@@ -833,6 +838,33 @@ def main():
         runner_state, metrics = jax.lax.scan(
             _update_step, runner_state, xs=None, length=cfg.num_updates
         )
+
+        if cfg.cl_method.lower() == "packnet":
+            # Unpack runner state
+            train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+
+            # Prune the model and update the parameters
+            train_state, cl_state = cl.on_train_end(train_state, cl_state)
+
+            # create new runner state for fine-tuning:
+            rng, finetune_rng = jax.random.split(rng)
+            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
+
+            # run fine-tuning
+            runner_state, metrics = jax.lax.scan(
+                f=_update_step,
+                init=runner_state,
+                xs=None,
+                length=cfg.finetune_updates
+            )
+
+            train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+            # handle the end of the finetune phase
+            train_state, cl_state = cl.on_finetune_end(train_state, cl_state)
+
+            # add cl_state (packnet_state in this case) to new runner state
+            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
+
         return runner_state, metrics
 
     # ─────────────────────────────────────────────────────────────────────────
