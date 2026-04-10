@@ -260,7 +260,6 @@ class Packnet(CLMethod):
         # Get the combined mask of all previous tasks
         combined_mask = self._combine_masks(state.masks, state.current_task)
         sparsity_mask = self._compute_sparsity(combined_mask)
-        jax.debug.breakpoint()
         jax.debug.print("sparsity_mask: {sparsity_mask}", sparsity_mask=sparsity_mask)
 
         mask = {}
