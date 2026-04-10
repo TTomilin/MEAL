@@ -137,7 +137,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     # LOGGING PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
-    use_wandb: bool = True
+    use_wandb: bool = False
     wandb_mode: Literal["online", "offline", "disabled"] = "online"
     entity: Optional[str] = ""
     project: str = "MEAL"
@@ -329,6 +329,9 @@ def main():
     else:
         local_obs_dim = obs_dim
         global_obs_dim = (obs_dim[0], obs_dim[1], obs_dim[2] * num_agents)
+
+    if cfg.cl_method == "packnet" and cfg.use_cnn:
+        raise ValueError("Packnet currently doesn't support CNN.")
 
     actor_network = Actor(
         action_dim=temp_env.action_space().n,
@@ -673,15 +676,12 @@ def main():
                         grads = jax.tree_util.tree_map(
                             lambda g, eg: g + cfg.er_ace_coef * eg, grads, er_ace_grads
                         )
-                        # if using packnet, mask before applying gradient:
-                        if cfg.cl_method == "packnet":
-                            grads['actor'] = cl.mask_gradients(cl_state, grads['actor'])
                         train_state = train_state.apply_gradients(grads=grads)
                         agem_stats = {"er_ace/total_past_samples": jnp.sum(past_sizes).astype(jnp.float32)}
                     else:
                         # if using packnet, mask before applying gradient:
                         if cfg.cl_method == "packnet":
-                            grads['actor'] = cl.mask_gradients(cl_state, grads['actor'])
+                            grads = cl.mask_gradients(cl_state, grads)
                         train_state = train_state.apply_gradients(grads=grads)
 
                     return (train_state, cl_state, rng), (total_loss, grads, agem_stats)

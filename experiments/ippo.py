@@ -713,9 +713,6 @@ def main():
                         grads = jax.tree_util.tree_map(
                             lambda g, eg: g + cfg.er_ace_coef * eg, grads, er_ace_grads
                         )
-                        # If using packnet, mask before applying gradient:
-                        if cfg.cl_method == "packnet":
-                            grads = cl.mask_gradients(cl_state, grads)
                         train_state = train_state.apply_gradients(grads=grads)
                         agem_stats = er_ace_stats
                     else:

@@ -260,6 +260,7 @@ class Packnet(CLMethod):
         # Get the combined mask of all previous tasks
         combined_mask = self._combine_masks(state.masks, state.current_task)
         sparsity_mask = self._compute_sparsity(combined_mask)
+        jax.debug.breakpoint()
         jax.debug.print("sparsity_mask: {sparsity_mask}", sparsity_mask=sparsity_mask)
 
         mask = {}
@@ -472,6 +473,7 @@ class Packnet(CLMethod):
         '''
         Handles the end of the finetuning phase on a task.
         '''
+        unpacked_params = self.unpack_params(train_state.params)
         # compute and report sparsity:
         sparsity = self._compute_sparsity(self.unpack_params(train_state.params))
         jax.debug.print(
@@ -479,7 +481,7 @@ class Packnet(CLMethod):
         # If the first task was just tuned, freeze biases and normalization layers:
         state = jax.lax.cond(
             state.current_task == 0,
-            lambda s: self._fix_biases_and_normalization(self.unpack_params(train_state.params), s),
+            lambda s: self._fix_biases_and_normalization(unpacked_params, s),
             lambda s: s,
             state
         )
@@ -487,7 +489,7 @@ class Packnet(CLMethod):
         state = state.replace(current_task=state.current_task+1, train_mode=True)
         if self.re_init_pruned_weights:
             # initialize weights to small values:
-            new_unpacked_params = self._initialize_pruned_weights(self.unpack_params(train_state.params), state)
+            new_unpacked_params = self._initialize_pruned_weights(unpacked_params, state)
             # update train_state:        
             train_state = self._update_train_state(train_state, self._merge_params(train_state.params, new_unpacked_params))
         # return train_state and state:
@@ -529,7 +531,8 @@ class Packnet(CLMethod):
         Masks gradients for frozen weights before the optimizer step.
         This is the proper PackNet approach - zero gradients before optimizer sees them.
         '''
-
+        unpacked_gradients = self.unpack_params(gradients)
+        
         def train_mode():
             # Training mode: mask gradients for weights from previous tasks
             prev_mask = self._combine_masks(state.masks, jnp.maximum(state.current_task, 0))
@@ -541,8 +544,8 @@ class Packnet(CLMethod):
                 return jnp.where(mask_leaf, jnp.zeros_like(grad_leaf), grad_leaf)
             
             # Apply masking to gradients
-            masked_grads = jax.tree_util.tree_map(mask_gradient_leaf, gradients["params"], prev_mask)
-            return {**gradients, "params": masked_grads}
+            masked_unpacked_grads = jax.tree_util.tree_map(mask_gradient_leaf, unpacked_gradients, prev_mask)
+            return self._merge_params(gradients, masked_unpacked_grads)
 
         def finetune_mode():
             # Fine-tuning mode: mask gradients for pruned weights of current task
@@ -556,8 +559,8 @@ class Packnet(CLMethod):
                 return jnp.where(mask_leaf, grad_leaf, jnp.zeros_like(grad_leaf))
 
             # Apply masking to gradients
-            masked_grads = jax.tree_util.tree_map(mask_gradient_leaf, gradients["params"], current_mask)
-            return {**gradients, "params": masked_grads}
+            masked_unpacked_grads = jax.tree_util.tree_map(mask_gradient_leaf, unpacked_gradients, current_mask)
+            return self._merge_params(gradients, masked_unpacked_grads)
 
         # Apply gradient masking based on current task and mode using JAX conditionals
         return jax.lax.cond(
