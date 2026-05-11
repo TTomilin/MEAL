@@ -151,8 +151,7 @@ class TrainConfig:
 
         #############
         print("Number of updates: ", self.num_updates)
-        # TODO we probably don't need this many checkpoints
-        self.num_checkpoints = max(1, int(self.num_updates))
+        self.num_checkpoints = 1  # Only final params are used; avoid 122× param memory in scan carry
 
 
 def read_layouts(config):
