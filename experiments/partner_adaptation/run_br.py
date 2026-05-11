@@ -72,9 +72,9 @@ class TrainConfig:
     # Training
     lr: float = 1e-3
     anneal_lr: bool = False
-    num_envs: int = 512
+    num_envs: int = 2048
     num_steps: int = 400
-    total_timesteps: int = 5e7
+    total_timesteps: int = 1e8
     update_epochs: int = 8
     num_minibatches: int = 16
     gamma: float = 0.99
