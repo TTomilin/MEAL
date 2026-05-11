@@ -869,6 +869,10 @@ class Overcooked(MultiAgentEnv):
             dtype=jnp.uint32
         )
 
+    def get_avail_actions(self, state) -> dict:
+        """All actions are always available in Overcooked."""
+        return {agent: jnp.ones(self.num_actions, dtype=jnp.float32) for agent in self.agents}
+
     def observation_space(self) -> spaces.Box:
         """Observation space of the environment."""
         return spaces.Box(0, 255, self.obs_shape)

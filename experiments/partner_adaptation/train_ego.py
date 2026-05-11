@@ -23,6 +23,8 @@ from flax.training.train_state import TrainState
 
 # Import unified evaluation utilities
 from experiments.utils import add_eval_metrics
+from experiments.continual.agem import AGEMMemory, update_agem_memory
+from experiments.continual.er_ace import ERACE, compute_er_ace_gradient
 from experiments.partner_adaptation.partner_agents.population_interface import AgentPopulation
 from experiments.partner_adaptation.partner_generation.run_episodes import run_episodes
 from experiments.partner_adaptation.partner_generation.utils import _create_minibatches_no_time, Transition, unbatchify
@@ -61,6 +63,9 @@ def train_ppo_ego_agent(
         '''agent 0 is the ego agent while agent 1 is the confederate'''
         num_agents = env.num_agents
         assert num_agents == 2, "This snippet assumes exactly 2 agents."
+
+        is_memory_method = (cl is not None and cl_state is not None and
+                            isinstance(cl_state, AGEMMemory))
 
         def linear_schedule(count):
             frac = 1.0 - \
@@ -222,7 +227,11 @@ def train_ppo_ego_agent(
 
                 return advantages, advantages + traj_batch.value
 
-            def _update_minbatch(train_state, batch_info):
+            def _update_minbatch(carry, batch_info):
+                if is_memory_method:
+                    train_state, mb_rng = carry
+                else:
+                    train_state = carry
                 init_ego_hstate, traj_batch, advantages, returns = batch_info
 
                 def _loss_fn(params, init_ego_hstate, traj_batch, gae, target_v):
@@ -277,6 +286,19 @@ def train_ppo_ego_agent(
                 grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
                 (loss_val, aux_vals), grads = grad_fn(
                     train_state.params, init_ego_hstate, traj_batch, advantages, returns)
+
+                # ER-ACE: add BC gradient from past task memory (uses initial cl_state via closure)
+                if is_memory_method and isinstance(cl, ERACE):
+                    mb_rng, er_ace_rng = jax.random.split(mb_rng)
+                    past_sizes = cl_state.sizes.at[env_id_idx].set(0)
+                    er_ace_grads, _ = compute_er_ace_gradient(
+                        ego_policy.network, train_state.params, cl_state,
+                        config.agem_sample_size, er_ace_rng, past_sizes,
+                    )
+                    grads = jax.tree_util.tree_map(
+                        lambda g, eg: g + config.er_ace_coef * eg, grads, er_ace_grads
+                    )
+
                 train_state = train_state.apply_gradients(grads=grads)
 
                 # compute average grad norm
@@ -287,7 +309,10 @@ def train_ppo_ego_agent(
                 n_elements = len(jax.tree.leaves(grad_l2_norms))
                 avg_grad_norm = sum_of_grad_norms / n_elements
 
-                return train_state, (loss_val, aux_vals, avg_grad_norm)
+                if is_memory_method:
+                    return (train_state, mb_rng), (loss_val, aux_vals, avg_grad_norm)
+                else:
+                    return train_state, (loss_val, aux_vals, avg_grad_norm)
 
             def _update_epoch(update_state, unused):
                 train_state, init_ego_hstate, traj_batch, advantages, targets, rng = update_state
@@ -301,9 +326,14 @@ def train_ppo_ego_agent(
                 minibatches = _create_minibatches_no_time(
                     traj_batch, advantages, targets, init_ego_hstate, config.num_controlled_actors,
                     config.num_minibatches, batch_size, perm_rng)
-                train_state, losses_and_grads = jax.lax.scan(
-                    _update_minbatch, train_state, minibatches
-                )
+                if is_memory_method:
+                    (train_state, _), losses_and_grads = jax.lax.scan(
+                        _update_minbatch, (train_state, rng), minibatches
+                    )
+                else:
+                    train_state, losses_and_grads = jax.lax.scan(
+                        _update_minbatch, train_state, minibatches
+                    )
                 update_state = (train_state, init_ego_hstate,
                                 traj_batch, advantages, targets, rng)
                 return update_state, losses_and_grads
@@ -314,7 +344,10 @@ def train_ppo_ego_agent(
                 2. Compute advantage
                 3. PPO updates
                 """
-                (train_state, rng, update_steps) = update_runner_state
+                if is_memory_method:
+                    (train_state, rng, update_steps, cl_carry) = update_runner_state
+                else:
+                    (train_state, rng, update_steps) = update_runner_state
                 # Init envs & partner indices
                 rng, reset_rng, p_rng = jax.random.split(rng, 3)
                 reset_rngs = jax.random.split(reset_rng, config.num_envs)
@@ -365,6 +398,14 @@ def train_ppo_ego_agent(
                 train_state = update_state[0]
                 _, loss_terms, avg_grad_norm = losses_and_grads
 
+                # Update per-task AGEM/ER-ACE memory buffer after all PPO epochs
+                if is_memory_method:
+                    rng = update_state[5]
+                    cl_carry, rng = update_agem_memory(
+                        config.agem_sample_size, env_id_idx, advantages,
+                        cl_carry, rng, targets, traj_batch,
+                    )
+
                 metric = traj_batch.info
                 metric["update_steps"] = update_steps
                 metric["actor_loss"] = loss_terms[1]
@@ -372,7 +413,10 @@ def train_ppo_ego_agent(
                 metric["entropy_loss"] = loss_terms[2]
                 metric["cl_penalty"] = loss_terms[3]
                 metric["avg_grad_norm"] = avg_grad_norm
-                new_runner_state = (train_state, rng, update_steps + 1)
+                if is_memory_method:
+                    new_runner_state = (train_state, rng, update_steps + 1, cl_carry)
+                else:
+                    new_runner_state = (train_state, rng, update_steps + 1)
                 return (new_runner_state, metric)
 
             # PPO Update and Checkpoint saving
@@ -397,7 +441,10 @@ def train_ppo_ego_agent(
                     update_state,
                     None
                 )
-                (train_state, rng, update_steps) = new_update_state
+                if is_memory_method:
+                    (train_state, rng, update_steps, cl_carry) = new_update_state
+                else:
+                    (train_state, rng, update_steps) = new_update_state
 
                 # To eval or not to eval
                 to_eval = jnp.logical_or(
@@ -462,7 +509,11 @@ def train_ppo_ego_agent(
 
                 metric["eval_ep_last_info"] = eval_last_infos
                 metric["eval_infos"] = eval_infos
-                return ((train_state, rng, update_steps), checkpoint_array, ckpt_idx, eval_last_infos,
+                if is_memory_method:
+                    runner_state_out = (train_state, rng, update_steps, cl_carry)
+                else:
+                    runner_state_out = (train_state, rng, update_steps)
+                return (runner_state_out, checkpoint_array, ckpt_idx, eval_last_infos,
                         eval_infos), metric
 
             checkpoint_array = init_ckpt_array(train_state.params)
@@ -497,7 +548,10 @@ def train_ppo_ego_agent(
             update_steps = 0
             rng_train, partner_rng = jax.random.split(rng_train)
 
-            update_runner_state = (train_state, rng_train, update_steps)
+            if is_memory_method:
+                update_runner_state = (train_state, rng_train, update_steps, cl_state)
+            else:
+                update_runner_state = (train_state, rng_train, update_steps)
             state_with_ckpt = (update_runner_state, checkpoint_array, ckpt_idx, eval_eps_last_infos, eval_infos)
 
             state_with_ckpt, metrics = jax.lax.scan(
@@ -512,6 +566,8 @@ def train_ppo_ego_agent(
                 "metrics": metrics,  # shape (NUM_UPDATES, ...)
                 "checkpoints": checkpoint_array,
             }
+            if is_memory_method:
+                out["final_cl_state"] = final_runner_state[3]
             return out
 
         return train

@@ -25,7 +25,7 @@ class TrainConfig:
 
     # MEAL
     # Pregenerated MEAL layouts that we are interested in.
-    layouts_path: str = "jax_marl/environments/overcooked/"
+    layouts_path: str = "meal/env/layouts/"
 
     # Overcooked
     env_name: str = "overcooked"
@@ -58,13 +58,13 @@ class TrainConfig:
     num_envs_sp: int = 32
     num_steps: int = 400
     total_timesteps: int = 2.5e8
-    update_epochs: int = 15
+    update_epochs: int = 8
     num_minibatches: int = 16
     gamma: float = 0.99
     gae_lambda: float = 0.95
-    clip_eps: float = 0.1
-    ent_coef: float = 0.05
-    vf_coef: float = 1.0
+    clip_eps: float = 0.2
+    ent_coef: float = 0.01
+    vf_coef: float = 0.5
     max_grad_norm: float = 1.0
 
     # Eval
@@ -76,11 +76,11 @@ class TrainConfig:
         ### MEAL ###
 
         if self.layout_difficulty == "medium":
-            self.layouts_path = self.layouts_path + "layouts_20_medium.json"
+            self.layouts_path = self.layouts_path + "gen_20_medium.json"
         elif self.layout_difficulty == "easy":
-            self.layouts_path = self.layouts_path + "layouts_20_easy.json"
+            self.layouts_path = self.layouts_path + "gen_20_easy.json"
         elif self.layout_difficulty == "hard":
-            self.layouts_path = self.layouts_path + "layouts_20_easy.json"
+            self.layouts_path = self.layouts_path + "gen_20_hard.json"
 
         ### BRDiv ###
         self.num_envs = self.num_envs_xp + self.num_envs_sp

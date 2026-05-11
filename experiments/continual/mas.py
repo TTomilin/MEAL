@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
 from experiments.continual.base import RegCLMethod, CLState, RegCLState
-from experiments.utils import build_reg_weights, unbatchify, batchify
+from experiments.utils import unbatchify, batchify
 
 
 def _tree_mean_abs(t):
@@ -22,12 +22,6 @@ class MAS(RegCLMethod):
         self.mode = mode
         self.decay = decay
         self.normalize_task = normalize_task
-
-    def init_state(self, params: FrozenDict, regularize_critic: bool, regularize_heads: bool) -> CLState:
-        mask = build_reg_weights(params, regularize_critic, regularize_heads)
-        zeros = jax.tree.map(jnp.zeros_like, params)
-        return RegCLState(old_params=jax.tree.map(lambda x: x.copy(), params),
-                          importance=zeros, mask=mask)
 
     def update_state(self, cl_state: CLState, new_params: FrozenDict, new_importance: FrozenDict) -> CLState:
         ω_old = cl_state.importance

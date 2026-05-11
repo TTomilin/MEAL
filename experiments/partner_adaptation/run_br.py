@@ -12,20 +12,17 @@ import jax.numpy as jnp
 import numpy as np
 import tyro
 import wandb
-from dotenv import load_dotenv
-from gym import make
 
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.model.mlp import ActorCritic as MLPActorCritic
-# Import utility functions from baselines
-from experiments.utils import rollout_for_video
-# Import continual learning methods
+from experiments.utils import rollout_for_video, init_cl_state
 from experiments.continual.agem import AGEM, init_agem_memory
+from experiments.continual.er_ace import ERACE
 from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
-from meal.env.layouts.presets import easy_layouts_legacy
+from meal.env.layouts.presets import overcooked_layouts
 from meal.env.utils.max_soup_calculator import calculate_max_soup
 from meal.visualization.visualizer import OvercookedVisualizer
 from meal import make_env
@@ -51,7 +48,7 @@ class TrainConfig:
 
     # MEAL
     # Pregenerated MEAL layouts that we are interested in.
-    layouts_path: str = "jax_marl/environments/overcooked/"
+    layouts_path: str = "meal/env/layouts/"
 
     # Overcooked
     env_name: str = "overcooked"
@@ -59,7 +56,7 @@ class TrainConfig:
     layout_idx: int = 0
     layout_name: str = ""  # If specified, overrides layout_idx
 
-    rew_shaping_horizon: int = 1e7
+    reward_shaping_horizon: float = 2.5e7
     num_agents: int = 2
 
     # best_response
@@ -78,11 +75,11 @@ class TrainConfig:
     num_envs: int = 512
     num_steps: int = 400
     total_timesteps: int = 5e7
-    update_epochs: int = 15
+    update_epochs: int = 8
     num_minibatches: int = 16
     gamma: float = 0.99
     gae_lambda: float = 0.95
-    clip_eps: float = 0.05
+    clip_eps: float = 0.2
     ent_coef: float = 0.01
     vf_coef: float = 0.5
     max_grad_norm: float = 1.0
@@ -107,18 +104,18 @@ class TrainConfig:
     regularize_critic: bool = False
     regularize_heads: bool = False
 
-    # EWC specific parameters
-    ewc_mode: str = "online"
-    ewc_decay: float = 0.9
+    # Importance / regularization parameters (EWC, MAS, L2)
+    importance_mode: str = "online"   # "online", "last", or "multi"
+    importance_decay: float = 0.9
+    importance_episodes: int = 5
+    importance_steps: int = 500
+    importance_stride: int = 5
 
-    # AGEM specific parameters
-    agem_memory_size: int = 1000
-    agem_sample_size: int = 64
+    # AGEM / ER-ACE specific parameters
+    agem_memory_size: int = 100000
+    agem_sample_size: int = 1024
     agem_gradient_scale: float = 1.0
-
-    # Importance computation parameters
-    importance_episodes: int = 10
-    importance_steps: int = 100
+    er_ace_coef: float = 1.0
 
     # Eval
     num_eval_episodes: int = 20
@@ -135,11 +132,11 @@ class TrainConfig:
         ### MEAL ###
 
         if self.layout_difficulty == "medium":
-            self.layouts_path = self.layouts_path + "layouts_20_medium.json"
+            self.layouts_path = self.layouts_path + "gen_20_medium.json"
         elif self.layout_difficulty == "easy":
-            self.layouts_path = self.layouts_path + "layouts_20_easy.json"
+            self.layouts_path = self.layouts_path + "gen_20_easy.json"
         elif self.layout_difficulty == "hard":
-            self.layouts_path = self.layouts_path + "layouts_20_easy.json"
+            self.layouts_path = self.layouts_path + "gen_20_hard.json"
 
         self.num_actors = 2 * self.num_envs
         self.num_controlled_actors = self.num_envs
@@ -186,7 +183,6 @@ def run_training():
     run_name = f"{run_string}_{timestamp}"
 
     # Initialize WandB with unified parameters like baselines/PPO_CL.py
-    load_dotenv()
     wandb_tags = tags if tags is not None else []
     wandb.login(key=os.environ.get("WANDB_API_KEY"))
     run = wandb.init(
@@ -222,11 +218,12 @@ def run_training():
 
         # Initialize the continual learning method
         method_map = dict(
-            ewc=EWC(mode=config.ewc_mode, decay=config.ewc_decay),
-            mas=MAS(),
+            ewc=EWC(mode=config.importance_mode, decay=config.importance_decay),
+            mas=MAS(mode=config.importance_mode, decay=config.importance_decay),
             l2=L2(),
             ft=FT(),
-            agem=AGEM(memory_size=config.agem_memory_size, sample_size=config.agem_sample_size)
+            agem=AGEM(memory_size=config.agem_memory_size, sample_size=config.agem_sample_size),
+            er_ace=ERACE(memory_size=config.agem_memory_size, sample_size=config.agem_sample_size),
         )
 
         if config.cl_method.lower() in method_map:
@@ -247,7 +244,7 @@ def run_training():
         print(f"Saved to {save_dir}/config.pckl")
 
     if config.layout_name != "":
-        layout_dict = {"layout": easy_layouts_legacy[config.layout_name]}
+        layout_dict = {"layout": overcooked_layouts[config.layout_name]}
     else:
         layouts = read_layouts(config)
         layout_dict = {"layout": frozendict_from_layout_repr(
@@ -307,16 +304,33 @@ def run_training():
         # Initialize continual learning state if CL method is specified
         cl_state = None
         if cl is not None:
-            cl_state = cl.init_state(ego_params, config.regularize_critic, config.regularize_heads)
+            cl_state = init_cl_state(ego_params, config.regularize_critic, config.regularize_heads, cl, config)
 
-            # Initialize AGEM memory if using AGEM
-            if config.cl_method.lower() == "agem":
+            # Initialize AGEM memory if using AGEM or ER-ACE
+            if config.cl_method.lower() in ("agem", "er_ace"):
                 obs_dim_agem = env.observation_space().shape
                 if not config.use_cnn:
                     obs_dim_agem = (np.prod(obs_dim_agem),)
                 cl_state = init_agem_memory(config.agem_memory_size, obs_dim_agem)
 
             print(f"Initialized CL state for method: {config.cl_method.upper()}")
+
+        # Build importance function for regularization-based CL methods (EWC, MAS, L2, FT)
+        importance_fn = None
+        if cl is not None and config.cl_method.lower() not in ("agem", "er_ace"):
+            def reset_switch(key, task_idx):
+                return env.reset(key)
+
+            def step_switch(key, state, actions, task_idx):
+                # Ego actions are for agent_0 only; provide a noop for agent_1
+                full_actions = {**actions, env.agents[1]: jnp.zeros_like(actions[env.agents[0]])}
+                return env.step(key, state, full_actions)
+
+            importance_fn = cl.make_importance_fn(
+                reset_switch, step_switch, ego_policy.network, [env.agents[0]], config.use_cnn,
+                config.importance_episodes, config.importance_steps, config.normalize_importance,
+                config.importance_stride,
+            )
 
         indp = OvercookedIndependentPolicyWrapper(
             layout=config.layout["layout"], p_onion_on_counter=0.5, p_plate_on_counter=0.5)
@@ -361,7 +375,8 @@ def run_training():
             ego_params, cl_state = run_br_training(
                 config, env, partner_agent_config, ego_policy,
                 ego_params, partner_policy, pop_params[i], env_id_idx=i, eval_partner=eval_partner,
-                max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
+                max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state,
+                importance_fn=importance_fn)
             # TODO when using vmap over seeds, do the following
             # ego_params = jax.tree.map(lambda x: x[0, ...], ego_params) # take the first params set from the batch dimension
 
@@ -389,7 +404,8 @@ def run_training():
             ego_params, cl_state = run_br_training(
                 config, env, partner_agent_config, ego_policy,
                 ego_params, partner_policy_obj, None, env_id_idx=env_id_idx, eval_partner=eval_partner,
-                max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state)
+                max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state,
+                importance_fn=importance_fn)
             ego_params = jax.tree.map(  # take the first params set from the batch dimension
                 lambda x: x[0, ...], ego_params)
 

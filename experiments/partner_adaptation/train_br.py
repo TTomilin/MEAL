@@ -105,7 +105,7 @@ class HeuristicPolicyPopulation(AgentPopulation):
 def run_br_training(
         config, env, partner_agent_config, ego_policy, ego_params, partner_policy, partner_params=None,
         partner_test_mode=False, env_id_idx=0, eval_partner=[], max_soup_dict=None, layout_names=None, cl=None,
-        cl_state=None):
+        cl_state=None, importance_fn=None):
     '''Run ego agent training against a single partner agent.
 
     Args:
@@ -155,16 +155,15 @@ def run_br_training(
 
     # Update continual learning state after training if CL method is specified
     if cl is not None and cl_state is not None:
-        # Compute importance weights for the parameters after training
-        importance = cl.compute_importance(
-            out["final_params"], env, ego_policy.network, env_id_idx, train_rng,
-            config.use_cnn, config.importance_episodes, config.importance_steps,
-            config.normalize_importance
-        )
-
-        # Update the CL state with new parameters and importance
-        cl_state = cl.update_state(cl_state, out["final_params"], importance)
-        log.info(f"Updated CL state after training on partner {env_id_idx}")
+        if "final_cl_state" in out:
+            # Memory-based methods (AGEM, ER-ACE): cl_state is updated inside the training scan
+            cl_state = out["final_cl_state"]
+            log.info(f"Updated memory CL state after training on partner {env_id_idx}")
+        else:
+            # Importance-based methods (EWC, MAS, L2, FT): use pre-built importance_fn
+            importance = importance_fn(out["final_params"], env_id_idx, train_rng)
+            cl_state = cl.update_state(cl_state, out["final_params"], importance)
+            log.info(f"Updated CL state after training on partner {env_id_idx}")
 
     # process and log metrics
     metric_names = get_metric_names("overcooked")
