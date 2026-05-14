@@ -167,6 +167,6 @@ def run_br_training(
 
     # process and log metrics
     metric_names = get_metric_names("overcooked")
-    log_metrics(config, out, metric_names, max_soup_dict, layout_names)
+    log_metrics(config, out, metric_names, max_soup_dict, layout_names, env_id_idx=env_id_idx)
 
     return out["final_params"], cl_state

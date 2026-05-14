@@ -15,12 +15,14 @@ class LogEnvState:
     env_state: State
     episode_returns: Array
     episode_lengths: Array
+    episode_soups: Array
     returned_episode_returns: Array
     returned_episode_lengths: Array
+    returned_episode_soups: Array
 
 
 class LogWrapper(JaxMARLWrapper):
-    """Log the episode returns and lengths.
+    """Log the episode returns, lengths, and soup deliveries.
     NOTE for now for envs where agents terminate at the same time.
     """
 
@@ -33,6 +35,8 @@ class LogWrapper(JaxMARLWrapper):
         obs, env_state = self._env.reset(key)
         state = LogEnvState(
             env_state,
+            jnp.zeros((self._env.num_agents,)),
+            jnp.zeros((self._env.num_agents,)),
             jnp.zeros((self._env.num_agents,)),
             jnp.zeros((self._env.num_agents,)),
             jnp.zeros((self._env.num_agents,)),
@@ -59,23 +63,33 @@ class LogWrapper(JaxMARLWrapper):
             done_arr = jnp.asarray(done, jnp.bool_)
             ep_done_vec = done_arr if done_arr.ndim > 0 else jnp.full((self._env.num_agents,), done_arr)
 
-        new_episode_return = state.episode_returns + self._batchify_floats(reward)  # reward of the current step
-        new_episode_length = state.episode_lengths + 1  # length of the current episode
+        new_episode_return = state.episode_returns + self._batchify_floats(reward)
+        new_episode_length = state.episode_lengths + 1
 
-        keep = (1 - ep_done_vec).astype(new_episode_return.dtype)  # (A,)
+        # Per-agent soup deliveries this step (0.0 if env doesn't provide soups)
+        if "soups" in info:
+            step_soups = jnp.stack([info["soups"][a] for a in self._env.agents])  # (num_agents,)
+            new_episode_soups = state.episode_soups + step_soups
+        else:
+            new_episode_soups = state.episode_soups
+
+        keep = (1 - ep_done_vec).astype(new_episode_return.dtype)
         add = ep_done_vec.astype(new_episode_length.dtype)
 
         state = LogEnvState(
             env_state=env_state,
             episode_returns=new_episode_return * keep,
             episode_lengths=(state.episode_lengths + 1) * keep,
+            episode_soups=new_episode_soups * keep,
             returned_episode_returns=state.returned_episode_returns * keep + new_episode_return * add,
             returned_episode_lengths=state.returned_episode_lengths * keep + new_episode_length * add,
+            returned_episode_soups=state.returned_episode_soups * keep + new_episode_soups * add,
         )
         if self.replace_info:
             info = {}
         info["returned_episode_returns"] = state.returned_episode_returns
         info["returned_episode_lengths"] = state.returned_episode_lengths
+        info["returned_episode_soups"] = state.returned_episode_soups
         info["returned_episode"] = ep_done_vec
         return obs, state, reward, done, info
 
