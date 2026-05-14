@@ -197,6 +197,10 @@ def run_training():
         save_code=True,
     )
 
+    wandb.define_metric("train_step")
+    wandb.define_metric("Train/*", step_metric="train_step")
+    wandb.define_metric("Eval/*", step_metric="train_step")
+
     print("XPID ID name:")
     print(run.name)
     print("-------------")
@@ -393,7 +397,8 @@ def run_training():
                                            max_steps=config.gif_len)
                 partner_name = f"BRDiv_Partner_{i}"
                 file_path = f"videos/{run.name}/task_{i}_{partner_name}.mp4"
-                visualizer.animate(states, out_path=file_path, task_idx=i, env=env)
+                final_step = (i + 1) * int(config.num_updates) - 1
+                visualizer.animate(states, out_path=file_path, task_idx=i, env=env, wandb_step=final_step)
 
         # Train against heuristic partners if enabled
         for i in range(min(config.num_heuristic_partners, len(heuristic_policies))):
@@ -414,7 +419,8 @@ def run_training():
                 states = rollout_for_video(rng, config, temp_train_state, env, ego_policy.network, env_idx=env_id_idx,
                                            max_steps=config.gif_len)
                 file_path = f"gifs/{run.name}/task_{env_id_idx}_{partner_name}.mp4"
-                visualizer.animate(states, out_path=file_path, task_idx=env_id_idx, env=env)
+                final_step = (env_id_idx + 1) * int(config.num_updates) - 1
+                visualizer.animate(states, out_path=file_path, task_idx=env_id_idx, env=env, wandb_step=final_step)
     else:
         raise NotImplementedError("Selected method not implemented.")
 

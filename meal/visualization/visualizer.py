@@ -125,7 +125,7 @@ class OvercookedVisualizer:
         return self._render_drawable_state(drawable_state, show)
 
     # ---------- sequence ----------
-    def animate(self, state_seq: Sequence[object], out_path: str, task_idx: int = 0, fps: int = 10, pad_to_max: bool = False, env = None) -> str:
+    def animate(self, state_seq: Sequence[object], out_path: str, task_idx: int = 0, fps: int = 10, pad_to_max: bool = False, env = None, wandb_step: int = None) -> str:
         """
         Render a sequence of env states to GIF or MP4.
         """
@@ -167,7 +167,10 @@ class OvercookedVisualizer:
 
         # 5) log to wandb
         if wandb.run is not None:
-            wandb.log({f"task_{task_idx}": wandb.Video(out_path, format="mp4")})
+            log_dict = {f"task_{task_idx}": wandb.Video(out_path, format="mp4")}
+            if wandb_step is not None:
+                log_dict["train_step"] = wandb_step
+            wandb.log(log_dict)
 
         return out_path
 
