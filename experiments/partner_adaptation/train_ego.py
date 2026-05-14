@@ -196,6 +196,9 @@ def train_ppo_ego_agent(
                 else:
                     ego_reward = reward["agent_0"]
 
+                # Extract total soup per env before dropping (sum over both agents)
+                soups_step = info["soups"]["agent_0"] + info["soups"]["agent_1"]  # (num_envs,)
+
                 # note that num_actors = num_envs * num_agents
                 keys_to_drop = {"shaped_reward", "soups"}
                 info = {k: v for k, v in info.items() if k not in keys_to_drop}
@@ -216,7 +219,7 @@ def train_ppo_ego_agent(
                 new_runner_state = (train_state, env_state_next, obs_next, done_next,
                                     new_ego_hstate, new_partner_hstate, updated_partner_indices, rng,
                                     update_steps_inner)
-                return new_runner_state, transition
+                return new_runner_state, (transition, soups_step)
 
             def _calculate_gae(traj_batch, last_val):
                 def _get_advantages(gae_and_next_value, transition):
@@ -378,7 +381,7 @@ def train_ppo_ego_agent(
                                 init_ego_hstate, init_partner_hstate, new_partner_indices, rng,
                                 update_steps)
 
-                runner_state, traj_batch = jax.lax.scan(_env_step, runner_state, None, config.num_steps)
+                runner_state, (traj_batch, soups_steps) = jax.lax.scan(_env_step, runner_state, None, config.num_steps)
                 (train_state, env_state, obs, done, ego_hstate, partner_hstate, partner_indices, rng, _) = runner_state
 
                 # 2) advantage
@@ -432,6 +435,14 @@ def train_ppo_ego_agent(
                 metric["entropy_loss"] = loss_terms[2]
                 metric["cl_penalty"] = loss_terms[3]
                 metric["avg_grad_norm"] = avg_grad_norm
+
+                # Compute per-episode soup average from trajectory (same approach as ippo.py)
+                # soups_steps: (num_steps, num_envs), traj_batch.done: (num_steps, num_envs)
+                episodes_per_env = traj_batch.done.sum(axis=0)  # (num_envs,)
+                soups_per_env = soups_steps.sum(axis=0)          # (num_envs,)
+                ep_mask = episodes_per_env > 0
+                avg_per_env = jnp.where(ep_mask, soups_per_env / jnp.maximum(episodes_per_env, 1), 0.0)
+                metric["avg_soup"] = avg_per_env.sum() / jnp.maximum(ep_mask.sum(), 1)
                 if is_memory_method:
                     new_runner_state = (train_state, rng, update_steps + 1, cl_carry)
                 else:
@@ -721,7 +732,16 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
     all_ego_returns = add_seed_axis_if_missing(all_ego_returns, expected_ndim_with_seed=4)
     average_ego_rets_per_iter = np.mean(all_ego_returns, axis=(0, 2, 3))
 
-    # Extract soup metrics
+    # Trajectory-based soup (fresh every update step, same approach as ippo.py)
+    # shape: (n_seeds, num_updates) or (num_updates,) for single seed
+    traj_soup_raw = np.asarray(train_metrics["avg_soup"])
+    traj_soup_raw = add_seed_axis_if_missing(traj_soup_raw, expected_ndim_with_seed=2)
+    traj_soup_per_iter = np.mean(traj_soup_raw, axis=0)  # (num_updates,)
+
+    # Max soup for normalization (single layout in this setting)
+    max_soup = list(max_soup_dict.values())[0] if max_soup_dict else None
+
+    # Extract eval soup metrics (sparse, only when eval ran)
     all_ego_soups = None
     average_ego_soups_per_iter = None
     if "returned_episode_soups" in train_metrics["eval_ep_last_info"]:
@@ -796,18 +816,28 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
                     continue
                 metrics[f"Train/Ego_{stat_name}"] = _stat_mean_at_step(stat_data, step)
 
-            # Main return: trajectory-based (fresh every update step, matches ippo.py approach)
+            # Train return: from trajectory batch, fresh every update step (matches ippo.py approach)
             if traj_return_data is not None:
                 traj_return_val = _stat_mean_at_step(traj_return_data, step)
+                metrics["Train/EgoReturn"] = traj_return_val
             else:
                 traj_return_val = float(average_ego_rets_per_iter[step])
-            metrics["Eval/EgoReturn"] = traj_return_val
 
-            # Sparse eval-based return (only meaningful when eval ran; kept for reference)
-            metrics["Eval/EgoReturn_eval"] = float(average_ego_rets_per_iter[step])
+            # Train soup: from trajectory batch, fresh every update step
+            traj_soup_val = float(traj_soup_per_iter[min(step, len(traj_soup_per_iter) - 1)])
+            metrics["Train/EgoSoup"] = traj_soup_val
+            if max_soup is not None and max_soup > 0:
+                metrics["Train/EgoSoup_scaled"] = traj_soup_val / max_soup
 
+            # Eval return: from dedicated evaluation episodes (sparse; set eval_every=1 for full resolution)
+            metrics["Eval/EgoReturn"] = float(average_ego_rets_per_iter[step])
+
+            # Eval soup: from dedicated evaluation episodes
             if average_ego_soups_per_iter is not None:
-                metrics["Eval/EgoSoup"] = float(average_ego_soups_per_iter[step])
+                eval_soup_val = float(average_ego_soups_per_iter[step])
+                metrics["Eval/EgoSoup"] = eval_soup_val
+                if max_soup is not None and max_soup > 0:
+                    metrics["Eval/EgoSoup_scaled"] = eval_soup_val / max_soup
 
             for partner_name, partner_data in per_partner_per_iter.items():
                 metrics[partner_name] = float(partner_data[step])
