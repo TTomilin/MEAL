@@ -2,10 +2,10 @@
 import json
 import os
 import pickle
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import jax
 import jax.numpy as jnp
@@ -42,6 +42,7 @@ class TrainConfig:
     mode: str = "online"  # Literal["online", "offline", "disabled"]
     group: str = "overcooked"
     entity: str = ""
+    tags: List[str] = field(default_factory=list)
     checkpoint_path: str = "checkpoints"
     checkpoint_freq: int = 50  # Checkpoint every N updates
     save_dir: str = ""  # Set programmatically based on wandb run name
@@ -162,28 +163,27 @@ def read_layouts(config):
 
 
 def get_run_string(config: TrainConfig):
-    return f"FF_BRDIV_PPO_{config.layout_difficulty}_{config.layout_idx}"
+    cl_method = config.cl_method if config.cl_method is not None else "none"
+    layout = config.layout_name if config.layout_name else f"layout{config.layout_idx}"
+    network = "cnn" if config.use_cnn else "mlp"
+    return (
+        f"br_{cl_method}_{config.layout_difficulty}_{layout}"
+        f"_{network}_pop{config.num_population_partners}"
+        f"_heur{config.num_heuristic_partners}_seed{config.seed}"
+    )
 
 
 def run_training():
     config = tyro.cli(TrainConfig)
-    tags = [
-        "FF",
-        "BRDIV",
-        "IPPO",
-        str(config.layout_difficulty),
-        str(config.layout_idx),
-    ]
 
-    group_string = get_run_string(config)
-    run_string = f"{group_string}_SEED_{config.seed}"
+    run_string = get_run_string(config)
 
     # Create a unique run name with timestamp
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
     run_name = f"{run_string}_{timestamp}"
 
-    # Initialize WandB with unified parameters like baselines/PPO_CL.py
-    wandb_tags = tags if tags is not None else []
+    # Initialize WandB
+    wandb_tags = config.tags if config.tags is not None else []
     wandb.login(key=os.environ.get("WANDB_API_KEY"))
     run = wandb.init(
         project=config.project,
