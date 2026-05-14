@@ -775,8 +775,10 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
     per_epoch_grad_norms = _to_per_epoch(all_ego_grad_norms)
 
     # Loss metrics are logged per epoch (num_updates * update_epochs points, e.g. 122 * 8 = 976).
-    # Eval/return metrics are per-update and are logged only at the last epoch of each update
-    # to avoid sawtooth repetition (those only have 122 values).
+    # Return metrics are sourced from trajectory batch data (same approach as ippo.py), giving
+    # a fresh value every update step rather than the sparse eval_every cadence.
+    traj_return_data = train_stats.get("returned_episode_returns")
+
     for step in range(num_updates):
         for epoch in range(update_epochs):
             global_step = step * update_epochs + epoch
@@ -788,11 +790,21 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
             metrics["Train/EgoEntropyLoss"] = float(per_epoch_ent_losses[step, epoch])
             metrics["Train/EgoGradNorm"] = float(per_epoch_grad_norms[step, epoch])
 
-            # Per-update metrics (same value for all epochs within an update)
+            # Per-update train stats (skip returned_episode_returns — handled below as EgoReturn)
             for stat_name, stat_data in train_stats.items():
+                if stat_name == "returned_episode_returns":
+                    continue
                 metrics[f"Train/Ego_{stat_name}"] = _stat_mean_at_step(stat_data, step)
 
-            metrics["Eval/EgoReturn"] = float(average_ego_rets_per_iter[step])
+            # Main return: trajectory-based (fresh every update step, matches ippo.py approach)
+            if traj_return_data is not None:
+                traj_return_val = _stat_mean_at_step(traj_return_data, step)
+            else:
+                traj_return_val = float(average_ego_rets_per_iter[step])
+            metrics["Eval/EgoReturn"] = traj_return_val
+
+            # Sparse eval-based return (only meaningful when eval ran; kept for reference)
+            metrics["Eval/EgoReturn_eval"] = float(average_ego_rets_per_iter[step])
 
             if average_ego_soups_per_iter is not None:
                 metrics["Eval/EgoSoup"] = float(average_ego_soups_per_iter[step])
@@ -804,7 +816,7 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
                 metrics[partner_name] = float(partner_data[step])
 
             if max_soup_dict is not None and layout_names is not None and average_ego_soups_per_iter is not None:
-                avg_rewards = [float(average_ego_rets_per_iter[step])]
+                avg_rewards = [traj_return_val]
                 avg_soups = [float(average_ego_soups_per_iter[step])]
                 metrics = add_eval_metrics(avg_rewards, avg_soups, layout_names, max_soup_dict, metrics)
 
