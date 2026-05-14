@@ -119,10 +119,10 @@ class TrainConfig:
 
     # Eval
     num_eval_episodes: int = 20
-    eval_every: int = 10       # Run eval every N update steps (1 = every step)
-    log_interval: int = 10     # Log live metrics every N update steps
-    record_gif: bool = False   # Record and upload gifs after each partner training
-    gif_len: int = 100         # Maximum steps for gif recording
+    eval_every: int = 10        # Run eval every N update steps (1 = every step)
+    log_interval: int = 10      # Log live metrics every N update steps
+    record_video: bool = False  # Record and upload gifs after each partner training
+    gif_len: int = 100          # Maximum steps for gif recording
 
     log_train_out: bool = True
 
@@ -381,8 +381,8 @@ def run_training():
             # TODO when using vmap over seeds, do the following
             # ego_params = jax.tree.map(lambda x: x[0, ...], ego_params) # take the first params set from the batch dimension
 
-            # Record gif after training with population partner
-            if hasattr(config, 'record_gif') and config.record_gif:
+            # Record video after training with population partner
+            if hasattr(config, 'record_video') and config.record_video:
                 from flax.training.train_state import TrainState
                 import optax
                 temp_train_state = TrainState.create(
@@ -393,8 +393,8 @@ def run_training():
                 states = rollout_for_video(rng, config, temp_train_state, env, ego_policy.network, env_idx=i,
                                            max_steps=config.gif_len)
                 partner_name = f"BRDiv_Partner_{i}"
-                visualizer.animate(states, agent_view_size=5, task_idx=i, task_name=partner_name,
-                                   exp_dir=f"gifs/{run.name}")
+                file_path = f"videos/{run.name}/task_{i}_{partner_name}.mp4"
+                visualizer.animate(states, out_path=file_path, task_idx=i, env=env)
 
         # Train against heuristic partners if enabled
         for i in range(min(config.num_heuristic_partners, len(heuristic_policies))):
@@ -408,14 +408,14 @@ def run_training():
                 max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state,
                 importance_fn=importance_fn)
 
-            # Record gif after training with heuristic partner
-            if hasattr(config, 'record_gif') and config.record_gif:
+            # Record video after training with heuristic partner
+            if hasattr(config, 'record_video') and config.record_video:
                 temp_train_state = TrainState.create(
                     apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
                 states = rollout_for_video(rng, config, temp_train_state, env, ego_policy.network, env_idx=env_id_idx,
                                            max_steps=config.gif_len)
-                visualizer.animate(states, agent_view_size=5, task_idx=env_id_idx, task_name=partner_name,
-                                   exp_dir=f"gifs/{run.name}")
+                file_path = f"gifs/{run.name}/task_{env_id_idx}_{partner_name}.mp4"
+                visualizer.animate(states, out_path=file_path, task_idx=env_id_idx, env=env)
     else:
         raise NotImplementedError("Selected method not implemented.")
 
