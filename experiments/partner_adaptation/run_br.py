@@ -118,8 +118,8 @@ class TrainConfig:
     er_ace_coef: float = 1.0
 
     # Eval
-    num_eval_episodes: int = 20
-    eval_every: int = 1         # Run eval every N update steps (1 = every step)
+    num_eval_episodes: int = 5
+    eval_every: int = 2         # Run eval every N update steps (1 = every step)
     record_video: bool = False  # Record and upload gifs after each partner training
     gif_len: int = 100          # Maximum steps for gif recording
 
