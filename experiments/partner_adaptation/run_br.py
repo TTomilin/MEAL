@@ -119,8 +119,7 @@ class TrainConfig:
 
     # Eval
     num_eval_episodes: int = 20
-    eval_every: int = 10        # Run eval every N update steps (1 = every step)
-    log_interval: int = 10      # Log live metrics every N update steps
+    eval_every: int = 1         # Run eval every N update steps (1 = every step)
     record_video: bool = False  # Record and upload gifs after each partner training
     gif_len: int = 100          # Maximum steps for gif recording
 
