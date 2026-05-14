@@ -774,37 +774,40 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
     per_epoch_ent_losses = _to_per_epoch(all_ego_entropy_losses)
     per_epoch_grad_norms = _to_per_epoch(all_ego_grad_norms)
 
-    # Log once per epoch: num_updates * update_epochs points total (e.g. 122 * 8 = 976)
+    # Loss metrics are logged per epoch (num_updates * update_epochs points, e.g. 122 * 8 = 976).
+    # Eval/return metrics are per-update and are logged only at the last epoch of each update
+    # to avoid sawtooth repetition (those only have 122 values).
     for step in range(num_updates):
         for epoch in range(update_epochs):
             global_step = step * update_epochs + epoch
             metrics = {}
 
-            # Per-epoch loss metrics
+            # Per-epoch loss metrics (vary within an update)
             metrics["Train/EgoValueLoss"] = float(per_epoch_val_losses[step, epoch])
             metrics["Train/EgoActorLoss"] = float(per_epoch_act_losses[step, epoch])
             metrics["Train/EgoEntropyLoss"] = float(per_epoch_ent_losses[step, epoch])
             metrics["Train/EgoGradNorm"] = float(per_epoch_grad_norms[step, epoch])
 
-            # Per-update metrics (constant within an update; repeated across epochs)
-            for stat_name, stat_data in train_stats.items():
-                metrics[f"Train/Ego_{stat_name}"] = _stat_mean_at_step(stat_data, step)
+            # Per-update metrics: only log once (at the last epoch) to avoid sawtooth repeats
+            if epoch == update_epochs - 1:
+                for stat_name, stat_data in train_stats.items():
+                    metrics[f"Train/Ego_{stat_name}"] = _stat_mean_at_step(stat_data, step)
 
-            metrics["Eval/EgoReturn"] = float(average_ego_rets_per_iter[step])
+                metrics["Eval/EgoReturn"] = float(average_ego_rets_per_iter[step])
 
-            if average_ego_soups_per_iter is not None:
-                metrics["Eval/EgoSoup"] = float(average_ego_soups_per_iter[step])
+                if average_ego_soups_per_iter is not None:
+                    metrics["Eval/EgoSoup"] = float(average_ego_soups_per_iter[step])
 
-            for partner_name, partner_data in per_partner_per_iter.items():
-                metrics[partner_name] = float(partner_data[step])
+                for partner_name, partner_data in per_partner_per_iter.items():
+                    metrics[partner_name] = float(partner_data[step])
 
-            for partner_name, partner_data in per_partner_soup_per_iter.items():
-                metrics[partner_name] = float(partner_data[step])
+                for partner_name, partner_data in per_partner_soup_per_iter.items():
+                    metrics[partner_name] = float(partner_data[step])
 
-            if max_soup_dict is not None and layout_names is not None and average_ego_soups_per_iter is not None:
-                avg_rewards = [float(average_ego_rets_per_iter[step])]
-                avg_soups = [float(average_ego_soups_per_iter[step])]
-                metrics = add_eval_metrics(avg_rewards, avg_soups, layout_names, max_soup_dict, metrics)
+                if max_soup_dict is not None and layout_names is not None and average_ego_soups_per_iter is not None:
+                    avg_rewards = [float(average_ego_rets_per_iter[step])]
+                    avg_soups = [float(average_ego_soups_per_iter[step])]
+                    metrics = add_eval_metrics(avg_rewards, avg_soups, layout_names, max_soup_dict, metrics)
 
             metrics["train_step"] = int(global_step)
             wandb.log(metrics, commit=True)
