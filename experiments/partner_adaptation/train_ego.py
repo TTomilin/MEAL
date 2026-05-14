@@ -510,31 +510,6 @@ def train_ppo_ego_agent(
                 metric["eval_ep_last_info"] = eval_last_infos
                 metric["eval_infos"] = eval_infos
 
-                # Live scalar logging every log_interval updates via host callback
-                log_interval = int(getattr(config, "log_interval", 10))
-                global_step = env_id_idx * int(config.num_updates) + update_steps
-                avg_return = jnp.mean(
-                    jnp.sum(eval_last_infos["returned_episode_returns"], axis=-1))
-                avg_val_loss = jnp.mean(metric["value_loss"])
-                avg_act_loss = jnp.mean(metric["actor_loss"])
-                avg_ent_loss = jnp.mean(metric["entropy_loss"])
-
-                def _log_live(args):
-                    step, ret, vl, al, el = args
-                    wandb.log({
-                        "Live/EgoReturn": float(ret),
-                        "Live/ValueLoss": float(vl),
-                        "Live/ActorLoss": float(al),
-                        "Live/EntropyLoss": float(el),
-                    }, step=int(step), commit=True)
-
-                jax.lax.cond(
-                    jnp.equal(jnp.mod(update_steps, log_interval), 0),
-                    lambda a: jax.experimental.io_callback(_log_live, None, a),
-                    lambda a: None,
-                    (global_step, avg_return, avg_val_loss, avg_act_loss, avg_ent_loss),
-                )
-
                 if is_memory_method:
                     runner_state_out = (train_state, rng, update_steps, cl_carry)
                 else:
@@ -754,49 +729,63 @@ def log_metrics(config, train_out, metric_names: tuple, max_soup_dict=None, layo
             average_soup_per_partner_per_iters = np.mean(soup_per_partner, axis=(0, 2, 3))
             per_partner_soup_per_iter[f"Eval/EgoSoup_Partner{partner_id}"] = average_soup_per_partner_per_iters
 
-    # Process loss metrics - average across ego seeds, partners and minibatches dims
-    # Loss metrics shape should be (n_ego_train_seeds, num_updates, ...)
-    average_ego_value_losses = mean_over_all_but_updates(all_ego_value_losses, config.num_updates)
-    average_ego_actor_losses = mean_over_all_but_updates(all_ego_actor_losses, config.num_updates)
-    average_ego_entropy_losses = mean_over_all_but_updates(all_ego_entropy_losses, config.num_updates)
-    average_ego_grad_norms = mean_over_all_but_updates(all_ego_grad_norms, config.num_updates)
-
-    # ---- figure out how many steps to log safely ----
-    num_updates = int(len(average_ego_value_losses))
+    # ---- figure out how many update steps to log safely ----
+    num_updates = int(config.num_updates)
+    update_epochs = int(config.update_epochs)
 
     # also cap by the shortest train_stat series (handles 1-D or 2-D stats)
     if train_stats:
         shortest = min(max(1, np.asarray(v).shape[0]) for v in train_stats.values())
         num_updates = min(num_updates, int(shortest))
 
+    # Per-epoch loss arrays: shape (num_updates, update_epochs)
+    # Raw shape is (num_updates, update_epochs, num_minibatches)
+    # or (n_seeds, num_updates, update_epochs, num_minibatches) with vmap.
+    # Average over minibatches (and seeds if present) to keep the epoch dimension.
+    def _to_per_epoch(arr):
+        a = np.asarray(arr)
+        if a.ndim == 3:    # (num_updates, update_epochs, num_minibatches)
+            return a.mean(axis=-1)
+        elif a.ndim == 4:  # (n_seeds, num_updates, update_epochs, num_minibatches)
+            return a.mean(axis=(0, -1))
+        return np.full((num_updates, update_epochs), float(np.asarray(arr).mean()))
+
+    per_epoch_val_losses = _to_per_epoch(all_ego_value_losses)
+    per_epoch_act_losses = _to_per_epoch(all_ego_actor_losses)
+    per_epoch_ent_losses = _to_per_epoch(all_ego_entropy_losses)
+    per_epoch_grad_norms = _to_per_epoch(all_ego_grad_norms)
+
+    # Log once per epoch: num_updates * update_epochs points total (e.g. 122 * 8 = 976)
     for step in range(num_updates):
-        metrics = {}
+        for epoch in range(update_epochs):
+            global_step = step * update_epochs + epoch
+            metrics = {}
 
-        # robust stat extraction (works for 1-D or (mean,std))
-        for stat_name, stat_data in train_stats.items():
-            stat_mean = _stat_mean_at_step(stat_data, step)
-            metrics[f"Train/Ego_{stat_name}"] = stat_mean
+            # Per-epoch loss metrics
+            metrics["Train/EgoValueLoss"] = float(per_epoch_val_losses[step, epoch])
+            metrics["Train/EgoActorLoss"] = float(per_epoch_act_losses[step, epoch])
+            metrics["Train/EgoEntropyLoss"] = float(per_epoch_ent_losses[step, epoch])
+            metrics["Train/EgoGradNorm"] = float(per_epoch_grad_norms[step, epoch])
 
-        metrics["Eval/EgoReturn"] = float(average_ego_rets_per_iter[step])
+            # Per-update metrics (constant within an update; repeated across epochs)
+            for stat_name, stat_data in train_stats.items():
+                metrics[f"Train/Ego_{stat_name}"] = _stat_mean_at_step(stat_data, step)
 
-        if average_ego_soups_per_iter is not None:
-            metrics["Eval/EgoSoup"] = float(average_ego_soups_per_iter[step])
+            metrics["Eval/EgoReturn"] = float(average_ego_rets_per_iter[step])
 
-        for partner_name, partner_data in per_partner_per_iter.items():
-            metrics[partner_name] = float(partner_data[step])
+            if average_ego_soups_per_iter is not None:
+                metrics["Eval/EgoSoup"] = float(average_ego_soups_per_iter[step])
 
-        for partner_name, partner_data in per_partner_soup_per_iter.items():
-            metrics[partner_name] = float(partner_data[step])
+            for partner_name, partner_data in per_partner_per_iter.items():
+                metrics[partner_name] = float(partner_data[step])
 
-        if max_soup_dict is not None and layout_names is not None and average_ego_soups_per_iter is not None:
-            avg_rewards = [float(average_ego_rets_per_iter[step])]
-            avg_soups = [float(average_ego_soups_per_iter[step])]
-            metrics = add_eval_metrics(avg_rewards, avg_soups, layout_names, max_soup_dict, metrics)
+            for partner_name, partner_data in per_partner_soup_per_iter.items():
+                metrics[partner_name] = float(partner_data[step])
 
-        metrics["Train/EgoValueLoss"] = float(average_ego_value_losses[step])
-        metrics["Train/EgoActorLoss"] = float(average_ego_actor_losses[step])
-        metrics["Train/EgoEntropyLoss"] = float(average_ego_entropy_losses[step])
-        metrics["Train/EgoGradNorm"] = float(average_ego_grad_norms[step])
-        metrics["train_step"] = int(step)
+            if max_soup_dict is not None and layout_names is not None and average_ego_soups_per_iter is not None:
+                avg_rewards = [float(average_ego_rets_per_iter[step])]
+                avg_soups = [float(average_ego_soups_per_iter[step])]
+                metrics = add_eval_metrics(avg_rewards, avg_soups, layout_names, max_soup_dict, metrics)
 
-        wandb.log(metrics, commit=True)
+            metrics["train_step"] = int(global_step)
+            wandb.log(metrics, commit=True)
