@@ -97,9 +97,18 @@ def train_ppo_ego_agent(
             init_partner_hstate = partner_population.init_hstate(
                 config.num_uncontrolled_actors)
 
-            # near the top of train(...) right after you compute/know config.num_updates
             eval_every = int(getattr(config, "eval_every", 1))  # evaluate every N updates
             num_ckpts = int(getattr(config, "num_checkpoints", 1))  # 1 = only final
+
+            rew_shaping_horizon = float(getattr(config, "reward_shaping_horizon", 0.0))
+            if rew_shaping_horizon > 0:
+                rew_shaping_anneal = optax.linear_schedule(
+                    init_value=1.0,
+                    end_value=0.0,
+                    transition_steps=int(rew_shaping_horizon),
+                )
+            else:
+                rew_shaping_anneal = None
 
             def _env_step(runner_state, unused):
                 """
@@ -108,7 +117,7 @@ def train_ppo_ego_agent(
                 2. Step environment using sampled actions
                 3. Return state, reward, ...
                 """
-                train_state, env_state, prev_obs, prev_done, ego_hstate, partner_hstate, partner_indices, rng = runner_state
+                train_state, env_state, prev_obs, prev_done, ego_hstate, partner_hstate, partner_indices, rng, update_steps_inner = runner_state
                 rng, actor_rng, partner_rng, step_rng = jax.random.split(
                     rng, 4)
 
@@ -179,6 +188,14 @@ def train_ppo_ego_agent(
                 obs_next, env_state_next, reward, done_next, info = jax.vmap(env.step, in_axes=(0, 0, 0))(
                     step_rngs, env_state, env_act
                 )
+                # Apply reward shaping annealing if configured
+                shaped_reward_0 = info["shaped_reward"]["agent_0"]
+                if rew_shaping_anneal is not None:
+                    current_timestep = update_steps_inner * config.num_envs * config.num_steps
+                    ego_reward = reward["agent_0"] + rew_shaping_anneal(current_timestep) * shaped_reward_0
+                else:
+                    ego_reward = reward["agent_0"]
+
                 # note that num_actors = num_envs * num_agents
                 keys_to_drop = {"shaped_reward", "soups"}
                 info = {k: v for k, v in info.items() if k not in keys_to_drop}
@@ -189,7 +206,7 @@ def train_ppo_ego_agent(
                     done=done_next["agent_0"],
                     action=act_0,
                     value=val_0,
-                    reward=reward["agent_0"],
+                    reward=ego_reward,
                     log_prob=logp_0,
                     obs=prev_obs["agent_0"].reshape(
                         config.num_controlled_actors, -1),
@@ -197,7 +214,8 @@ def train_ppo_ego_agent(
                     avail_actions=avail_actions_0
                 )
                 new_runner_state = (train_state, env_state_next, obs_next, done_next,
-                                    new_ego_hstate, new_partner_hstate, updated_partner_indices, rng)
+                                    new_ego_hstate, new_partner_hstate, updated_partner_indices, rng,
+                                    update_steps_inner)
                 return new_runner_state, transition
 
             def _calculate_gae(traj_batch, last_val):
@@ -357,10 +375,11 @@ def train_ppo_ego_agent(
 
                 # 1) rollout
                 runner_state = (train_state, init_env_state, init_obs, init_done,
-                                init_ego_hstate, init_partner_hstate, new_partner_indices, rng)
+                                init_ego_hstate, init_partner_hstate, new_partner_indices, rng,
+                                update_steps)
 
                 runner_state, traj_batch = jax.lax.scan(_env_step, runner_state, None, config.num_steps)
-                (train_state, env_state, obs, done, ego_hstate, partner_hstate, partner_indices, rng) = runner_state
+                (train_state, env_state, obs, done, ego_hstate, partner_hstate, partner_indices, rng, _) = runner_state
 
                 # 2) advantage
                 # Get available actions for agent 0 from environment state

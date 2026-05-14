@@ -252,7 +252,7 @@ def run_training():
             layouts[config.layout_idx]["layout"]), "random_agent_start": True}
 
     config.layout = layout_dict.copy()  # These are env kwargs
-    env = make_env(config.env_name, **config.layout)
+    env = make_env(config.env_name, **config.layout, max_steps=config.num_steps)
     env = LogWrapper(env)
 
     # Calculate max soup for the layout
