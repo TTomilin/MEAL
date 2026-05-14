@@ -542,7 +542,8 @@ def train_ppo_ego_agent(
 
                     jax.experimental.io_callback(
                         _log_eval, None,
-                        (mean_eval_ret, mean_eval_soup, update_steps - 1)
+                        (mean_eval_ret, mean_eval_soup, update_steps - 1),
+                        ordered=False,
                     )
 
                     return (rng, eval_eps_last_infos, eval_infos)
@@ -597,7 +598,8 @@ def train_ppo_ego_agent(
                     (mean_train_ret, metric["avg_soup"],
                      metric["value_loss"].mean(), metric["actor_loss"].mean(),
                      metric["entropy_loss"].mean(), metric["avg_grad_norm"].mean(),
-                     update_steps - 1)
+                     update_steps - 1),
+                    ordered=False,
                 )
 
                 if is_memory_method:
