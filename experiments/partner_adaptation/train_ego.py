@@ -509,6 +509,32 @@ def train_ppo_ego_agent(
 
                 metric["eval_ep_last_info"] = eval_last_infos
                 metric["eval_infos"] = eval_infos
+
+                # Live scalar logging every log_interval updates via host callback
+                log_interval = int(getattr(config, "log_interval", 10))
+                global_step = env_id_idx * int(config.num_updates) + update_steps
+                avg_return = jnp.mean(
+                    jnp.sum(eval_last_infos["returned_episode_returns"], axis=-1))
+                avg_val_loss = jnp.mean(metric["value_loss"])
+                avg_act_loss = jnp.mean(metric["actor_loss"])
+                avg_ent_loss = jnp.mean(metric["entropy_loss"])
+
+                def _log_live(args):
+                    step, ret, vl, al, el = args
+                    wandb.log({
+                        "Live/EgoReturn": float(ret),
+                        "Live/ValueLoss": float(vl),
+                        "Live/ActorLoss": float(al),
+                        "Live/EntropyLoss": float(el),
+                    }, step=int(step), commit=True)
+
+                jax.lax.cond(
+                    jnp.equal(jnp.mod(update_steps, log_interval), 0),
+                    lambda a: jax.experimental.io_callback(_log_live, None, a),
+                    lambda a: None,
+                    (global_step, avg_return, avg_val_loss, avg_act_loss, avg_ent_loss),
+                )
+
                 if is_memory_method:
                     runner_state_out = (train_state, rng, update_steps, cl_carry)
                 else:

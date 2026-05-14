@@ -136,14 +136,15 @@ def run_episodes(rng, env, agent_0_param, agent_0_policy,
     rngs = jax.random.split(rng, num_eps + 1)
     ep_rngs = rngs[1:]
 
-    # Vectorize run_single_episode over the first argument (rng)
-    vmap_run_single_episode = jax.jit(jax.vmap(
+    # Vectorize run_single_episode over the first argument (rng).
+    # jax.jit is omitted — always called from within an outer jit context (training scan).
+    vmap_run_single_episode = jax.vmap(
         lambda ep_rng: run_single_episode(
             ep_rng, env, agent_0_param, agent_0_policy,
             agent_1_param, agent_1_policy, max_episode_steps, env_id_idx,
             agent_0_test_mode, agent_1_test_mode,
         )
-    ))
+    )
     # Run episodes in parallel
     all_outs = vmap_run_single_episode(ep_rngs)
     return all_outs  # each leaf has shape (num_eps, ...)

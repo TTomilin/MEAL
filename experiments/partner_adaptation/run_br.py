@@ -74,7 +74,7 @@ class TrainConfig:
     anneal_lr: bool = False
     num_envs: int = 2048
     num_steps: int = 400
-    total_timesteps: int = 1e8
+    total_timesteps: float = 1e8
     update_epochs: int = 8
     num_minibatches: int = 16
     gamma: float = 0.99
@@ -119,8 +119,10 @@ class TrainConfig:
 
     # Eval
     num_eval_episodes: int = 20
-    record_gif: bool = False  # Record and upload gifs after each partner training
-    gif_len: int = 100  # Maximum steps for gif recording
+    eval_every: int = 10       # Run eval every N update steps (1 = every step)
+    log_interval: int = 10     # Log live metrics every N update steps
+    record_gif: bool = False   # Record and upload gifs after each partner training
+    gif_len: int = 100         # Maximum steps for gif recording
 
     log_train_out: bool = True
 
@@ -405,8 +407,6 @@ def run_training():
                 ego_params, partner_policy_obj, None, env_id_idx=env_id_idx, eval_partner=eval_partner,
                 max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state,
                 importance_fn=importance_fn)
-            ego_params = jax.tree.map(  # take the first params set from the batch dimension
-                lambda x: x[0, ...], ego_params)
 
             # Record gif after training with heuristic partner
             if hasattr(config, 'record_gif') and config.record_gif:
