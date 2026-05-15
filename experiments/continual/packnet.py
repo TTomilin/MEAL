@@ -475,7 +475,6 @@ class Packnet(CLMethod):
         )
         # update task id after tuning:
         state = state.replace(current_task=state.current_task+1, train_mode=True)
-        debug_packnet_masks(state, train_state.params["params"])
         if self.re_init_pruned_weights:
             # initialize weights to small values:
             new_params = self._initialize_pruned_weights(train_state.params, state)
@@ -492,27 +491,6 @@ class Packnet(CLMethod):
         new_opt_state = train_state.tx.init(train_state.params)
         train_state = train_state.replace(opt_state=new_opt_state)
         return train_state
-    
-    def update_and_verify_weight_memory(self, params, state: PacknetState):
-        mask = self._combine_masks(state.masks, state.current_task)
-        state.weight_memory.append(params.copy())
-        state.mask_memory.append(mask.copy())
-        for i in range(len(state.weight_memory)):
-            mask_i = state.mask_memory[i]
-            weights_i = state.weight_memory[i]
-            for j in range(i+1, len(state.weight_memory)):
-                weights_j = state.weight_memory[j]
-                self.compare_tree_dicts(weights_i, weights_j, mask_i, i, j)
-
-    def compare_tree_dicts(self, dict_a, dict_b, mask_tree, i, j):
-        for layer_name, layer_dict in dict_a.items():
-            for module_name, module_array in layer_dict.items():
-                array_mask = mask_tree[layer_name][module_name]
-                array_a = jnp.where(array_mask, module_array, 0)
-                array_b = jnp.where(array_mask, dict_b[layer_name][module_name], 0)
-                out = jnp.all(array_a == array_b)
-                jax.debug.print("{},{}: {}|{} {}", i, j, layer_name, module_name, out)
-        return out
 
 
     def mask_gradients(self, state: PacknetState, gradients):
@@ -638,45 +616,3 @@ class Packnet(CLMethod):
             lambda mask: self._get_full_mask(mask), # else... use all parameters instead of masking
             current_mask
         )
-
-def debug_packnet_masks(state: PacknetState, params):
-    frozen_counts = {}
-    current_task_counts = {}
-    free_counts = {}
-    total_counts = {}
-
-    # Loop over layers using Python dict iteration
-    for layer_name, layer_dict in params.items():
-        frozen_counts[layer_name] = {}
-        current_task_counts[layer_name] = {}
-        free_counts[layer_name] = {}
-        total_counts[layer_name] = {}
-
-        for param_name, param_array in layer_dict.items():
-            # Mask arrays
-            mask_tree = state.masks[layer_name][param_name]
-
-            # Previous tasks mask (combined)
-            prev_mask = jnp.any(mask_tree, axis=0)
-
-            # Current task mask
-            current_mask = mask_tree[state.current_task]
-
-            # Counts
-            frozen_count = jnp.sum(prev_mask)
-            current_count = jnp.sum(current_mask)
-            free_mask = jnp.logical_not(jnp.logical_or(prev_mask, current_mask))
-            free_count = jnp.sum(free_mask)
-            total_count = param_array.size
-
-            # Store as JAX arrays (safe for JIT)
-            frozen_counts[layer_name][param_name] = frozen_count
-            current_task_counts[layer_name][param_name] = current_count
-            free_counts[layer_name][param_name] = free_count
-            total_counts[layer_name][param_name] = total_count
-
-            # Optional: print via jax.debug.print (works inside jit)
-            jax.debug.print(
-                "Layer: {}, Param: {} | Total: {} | Frozen: {} | Current: {} | Free: {}",
-                layer_name, param_name, total_count, frozen_count, current_count, free_count
-            )
