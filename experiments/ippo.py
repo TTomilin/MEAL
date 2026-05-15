@@ -723,6 +723,7 @@ def main():
                         if cfg.cl_method == "packnet":
                             grads = cl.mask_gradients(cl_state, grads)
                         # Non-AGEM methods: standard apply_gradients
+                        #jax.debug.print(grads["params"])
                         train_state = train_state.apply_gradients(grads=grads)
 
                     loss_information = total_loss, grads, agem_stats

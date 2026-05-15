@@ -441,9 +441,9 @@ class Packnet(CLMethod):
         
     def _merge_params(self, params, new_unpacked_params):
         if "actor" in params.keys():
-            return {"actor": {"params": new_unpacked_params}, "critic": params["critic"]}
+            return {**params, "actor": {"params": new_unpacked_params}, "critic": params["critic"]}
         else:
-            return {"params": new_unpacked_params}
+            return {**params, "params": new_unpacked_params}
 
     def _dispatch_prune(self, params, state: PacknetState):
         '''
