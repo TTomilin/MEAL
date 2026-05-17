@@ -197,7 +197,7 @@ def main() -> None:
 
     fig = build_figure(layout_dfs, args.layout_names, args.methods, not args.no_ci)
 
-    out_dir = Path(__file__).resolve().parents[2] / "plots"
+    out_dir = Path(__file__).resolve().parent.parent / "plots"
     save_plot(fig, out_dir, args.plot_name)
     plt.show()
 
