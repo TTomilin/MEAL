@@ -27,6 +27,7 @@ def cli() -> argparse.Namespace:
     p.add_argument("--overwrite", action="store_true", help="Overwrite existing files")
     p.add_argument("--num_agents", type=int, default=None, help="Filter by number of agents")
     p.add_argument("--env_name", type=str, default=None, help="Environment name")
+    p.add_argument("--layout_names", nargs="+", default=[], help="Layout names; presence implies partner-adaptation (BR) runs")
     p.add_argument("--importance_mode", type=str, default=None, choices=["online", "multi", "last"], help="Importance mode")
 
     # Reward settings arguments
@@ -93,6 +94,9 @@ def build_filters(args: argparse.Namespace) -> dict:
 
     if args.env_name is not None:
         f["config.env_name"] = args.env_name
+
+    if args.layout_names:
+        f["config.layout_name"] = {"$in": args.layout_names}
 
     if args.importance_mode is not None:
         f["config.importance_mode"] = args.importance_mode

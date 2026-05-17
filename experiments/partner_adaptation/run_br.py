@@ -61,7 +61,7 @@ class TrainConfig:
     num_agents: int = 2
 
     # best_response
-    alg = "br"
+    alg: str = "br"
 
     # Actor-Critic
     fc_dim_size: int = 256

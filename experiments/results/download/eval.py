@@ -76,8 +76,13 @@ ENV_CONFIGS: dict[str, EnvConfig] = {
 }
 
 DORMANT_RATIO_KEY = "Neural_Activity/dormant_ratio"
-PARTNER_EVAL_PATTERN = re.compile(r"^Eval/EgoReturn_Partner(\d+)$")
-TRAINING_RETURNS_KEY = "Train/Ego_returned_episode_returns"
+
+# Partner-adaptation (BR) keys — config-detected runs (alg == "br")
+BR_EVAL_SCALED_PATTERN = re.compile(r"^Eval/EgoSoup_scaled_Partner(\d+)$")
+BR_EVAL_SOUP_PATTERN   = re.compile(r"^Eval/EgoSoup_Partner(\d+)$")
+BR_EVAL_RET_PATTERN    = re.compile(r"^Eval/EgoReturn_Partner(\d+)$")  # legacy fallback
+BR_TRAIN_SOUP_KEY      = "Train/EgoSoup_scaled"
+
 
 
 # ---------------------------------------------------------------------------
@@ -156,18 +161,44 @@ def store_array(arr: List[float], path: Path, fmt: str) -> None:
         np.savez_compressed(path.with_suffix(".npz"), data=np.asarray(arr, dtype=np.float32))
 
 
-def discover_partner_keys(run: Run) -> List[str]:
+
+def discover_br_keys(run: Run):
+    """Return (eval_keys, train_key_or_None, is_scaled) for a BR run.
+
+    Preference order:
+      1. Eval/EgoSoup_scaled_Partner{idx} + Train/EgoSoup_scaled  (already normalised)
+      2. Eval/EgoSoup_Partner{idx}                                 (raw, normalise in script)
+      3. Eval/EgoReturn_Partner{idx}                               (legacy, normalise in script)
+    """
     df = run.history(samples=500)
-    keys = [TRAINING_RETURNS_KEY] if TRAINING_RETURNS_KEY in df.columns else []
-    keys += [c for c in df.columns if PARTNER_EVAL_PATTERN.match(c)]
+    cols = set(df.columns)
 
-    def partner_idx(k: str) -> int:
-        if k == TRAINING_RETURNS_KEY:
-            return -1
-        m = PARTNER_EVAL_PATTERN.match(k)
-        return int(m.group(1)) if m else 999
+    scaled = sorted([k for k in cols if BR_EVAL_SCALED_PATTERN.match(k)],
+                    key=lambda k: int(BR_EVAL_SCALED_PATTERN.match(k).group(1)))
+    if scaled:
+        train_key = BR_TRAIN_SOUP_KEY if BR_TRAIN_SOUP_KEY in cols else None
+        return scaled, train_key, True
 
-    return sorted(keys, key=partner_idx)
+    raw = sorted([k for k in cols if BR_EVAL_SOUP_PATTERN.match(k)],
+                 key=lambda k: int(BR_EVAL_SOUP_PATTERN.match(k).group(1)))
+    if raw:
+        return raw, None, False
+
+    legacy = sorted([k for k in cols if BR_EVAL_RET_PATTERN.match(k)],
+                    key=lambda k: int(BR_EVAL_RET_PATTERN.match(k).group(1)))
+    return legacy, None, False
+
+
+def br_eval_filename(key: str, ext: str) -> str:
+    for pat in (BR_EVAL_SCALED_PATTERN, BR_EVAL_SOUP_PATTERN, BR_EVAL_RET_PATTERN):
+        m = pat.match(key)
+        if m:
+            return f"eval_partner_{m.group(1)}_soup.{ext}"
+    return None
+
+
+def br_arch_string(cfg: dict) -> str:
+    return "multihead" if cfg.get("use_multihead", True) else "singlehead"
 
 
 def get_layout_from_config(cfg: dict):
@@ -246,24 +277,32 @@ def main() -> None:
         experiment   = experiment_suffix(cfg)
 
         # ----------------------------------------------------------------
-        # Partner-generalization runs (overcooked only)
+        # Partner-adaptation / best-response runs  (alg == "br")
         # ----------------------------------------------------------------
-        partner_keys = discover_partner_keys(run)
-        if partner_keys:
-            print(f"[info] Processing partner generalization run: {run.name}")
+        if args.layout_names and cfg.get("layout_name") in args.layout_names:
+            print(f"[info] Processing BR partner-adaptation run: {run.name}")
             layout_name, layout_dict = get_layout_from_config(cfg)
-            max_soup = calculate_max_soup(layout_dict)
-            print(f"[info] Layout: {layout_name}, Max soup: {max_soup}")
+            max_soup = calculate_max_soup(layout_dict, cfg.get("num_steps", 400))
+            arch = br_arch_string(cfg)
+            num_partners = cfg.get("num_population_partners", 3) + cfg.get("num_heuristic_partners", 5)
+            print(f"[info] Layout: {layout_name}, arch: {arch}, partners: {num_partners}, max_soup: {max_soup}")
 
-            out_base = base_workspace / args.output / algo / cl_method / "partners_8" / f"seed_{seed}"
-            for key in partner_keys:
-                if key == TRAINING_RETURNS_KEY:
+            eval_keys, train_key, is_scaled = discover_br_keys(run)
+            if not eval_keys and not train_key:
+                print(f"[warn] {run.name}: no BR eval keys found, skipping")
+                continue
+
+            out_base = (base_workspace / args.output / "ppo" / cl_method
+                        / layout_name / arch / f"partners_{num_partners}" / f"seed_{seed}")
+
+            all_keys = eval_keys + ([train_key] if train_key else [])
+            for key in all_keys:
+                if key == train_key:
                     filename = f"training_soup.{ext}"
                 else:
-                    m = PARTNER_EVAL_PATTERN.match(key)
-                    if not m:
+                    filename = br_eval_filename(key, ext)
+                    if filename is None:
                         continue
-                    filename = f"eval_partner_{m.group(1)}_soup.{ext}"
 
                 out = out_base / filename
                 if out.exists() and not args.overwrite:
@@ -275,9 +314,11 @@ def main() -> None:
                     print(f"→ {out} no data, skip")
                     continue
 
-                normalized = [v / max_soup for v in series]
-                print(f"→ writing {out} (max_soup={max_soup})")
-                store_array(normalized, out, args.format)
+                if not is_scaled and max_soup > 0:
+                    series = [v / max_soup for v in series]
+
+                print(f"→ writing {out}")
+                store_array(series, out, args.format)
             continue
 
         # ----------------------------------------------------------------

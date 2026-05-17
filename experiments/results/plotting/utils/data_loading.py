@@ -191,6 +191,48 @@ def collect_partner_curves(base: Path, algo: str, method: str, seq_len: int, see
     return env_names, curves
 
 
+def collect_br_cumulative_runs(
+    base: Path,
+    method: str,
+    layout_name: str,
+    arch: str,
+    num_partners: int,
+    seeds: List[int],
+    metric: str = "soup",
+) -> np.ndarray:
+    """Collect data for BR partner-adaptation cumulative evaluation plots.
+
+    Path: base/br/<method>/<layout_name>/<arch>/partners_<num_partners>/seed_<seed>/
+
+    Returns array of shape (n_seeds, L) — the mean-across-partners curve per seed.
+    """
+    folder = base / "ppo" / method / layout_name / arch / f"partners_{num_partners}"
+    per_seed = []
+
+    for seed in seeds:
+        sd = folder / f"seed_{seed}"
+        if not sd.exists():
+            print(f"[warn] missing {sd}")
+            continue
+        files = sorted(sd.glob(f"eval_partner_*_{metric}.*"))
+        if not files:
+            print(f"[warn] no eval_partner files in {sd}")
+            continue
+
+        partner_curves = [load_series(f) for f in files]
+        L = max(map(len, partner_curves))
+        padded = [np.pad(c, (0, L - len(c)), constant_values=c[-1]) for c in partner_curves]
+        mean_curve = np.nanmean(np.vstack(padded), axis=0)
+        per_seed.append(mean_curve)
+
+    if not per_seed:
+        return np.empty((0, 0))
+
+    N = max(map(len, per_seed))
+    per_seed = [np.pad(c, (0, N - len(c)), constant_values=c[-1]) for c in per_seed]
+    return np.vstack(per_seed)  # (S, N)
+
+
 def collect_cumulative_runs(base: Path, algo: str, method: str, strat: str, metric: str, seq_len: int, seeds: List[int],
                             level: int,  agents: int, experiment: str = "") -> np.ndarray:
     """

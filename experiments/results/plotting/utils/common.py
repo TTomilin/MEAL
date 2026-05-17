@@ -23,12 +23,14 @@ CRIT = {0.9: 1.833, 0.95: 1.96, 0.99: 2.576}
 # Standard colors for different methods
 METHOD_COLORS = {
     'EWC': '#12939A', 'MAS': '#2CA02C', 'AGEM': '#BC5090', 'Online_EWC': '#FF6E54', 'FT': '#FFA600',
-    'L2': '#003F5C', 'packnet': '#2F4B7C', 'ReDo': '#D62728', 'CBP': '#58508D'
+    'L2': '#003F5C', 'packnet': '#2F4B7C', 'ReDo': '#D62728', 'CBP': '#58508D',
+    'Online_MAS': '#7BC950',
 }
 
 # Display names for methods that differ from their internal identifier
 METHOD_DISPLAY_NAMES = {
     'Online_EWC': 'Online EWC',
+    'Online_MAS': 'Online MAS',
     'packnet': 'PackNet',
 }
 

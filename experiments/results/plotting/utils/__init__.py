@@ -11,7 +11,7 @@ from .common import (
 )
 
 from .data_loading import (
-    collect_runs, collect_env_curves, collect_cumulative_runs
+    collect_runs, collect_env_curves, collect_cumulative_runs, collect_br_cumulative_runs
 )
 
 from .plotting import (
@@ -34,7 +34,7 @@ __all__ = [
     'load_series', 'smooth_and_ci', 'get_output_path', 'forward_fill', 'method_display_name',
 
     # From data_loading
-    'collect_runs', 'collect_env_curves', 'collect_cumulative_runs',
+    'collect_runs', 'collect_env_curves', 'collect_cumulative_runs', 'collect_br_cumulative_runs',
 
     # From plotting
     'setup_figure', 'add_task_boundaries', 'setup_task_axes',
