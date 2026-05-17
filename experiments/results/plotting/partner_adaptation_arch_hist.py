@@ -102,7 +102,7 @@ def _plot_subplot(
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     if y_label:
-        label = r"Avg. Performance  $\mathcal{A} ↑$" if metric == "AP" else r"Forgetting  $\mathcal{F} ↓$"
+        label = r"Avg. Norm. Soup  $\mathcal{S} ↑$" if metric == "AP" else r"Forgetting  $\mathcal{F} ↓$"
         ax.set_ylabel(label, fontsize=11)
 
 
@@ -135,25 +135,19 @@ def build_figure(
             if metric == "F":
                 ax.set_ylim(bottom=0)
 
-    # ── legend ───────────────────────────────────────────────────────────────
-    method_handles = [
-        mpatches.Patch(facecolor=_method_color(m), edgecolor=EDGE_COLOR,
-                       linewidth=EDGE_LW, label=_method_label(m))
-        for m in methods
-    ]
+    # ── arch legend in bottom-left subplot only ─────────────────────────────────
     arch_handles = [
         mpatches.Patch(facecolor="white", edgecolor=EDGE_COLOR, linewidth=EDGE_LW,
                        hatch=HATCH[arch], label=ARCH_LABEL[arch])
         for arch in ARCHS
     ]
-    all_handles = method_handles + [mpatches.Patch(visible=False)] + arch_handles
-    fig.legend(
-        handles=all_handles,
-        loc="lower center",
-        bbox_to_anchor=(0.5, -0.04),
-        ncol=len(methods) + 1 + len(ARCHS),
-        frameon=False,
-        fontsize=8,
+    axes[1, 0].legend(
+        handles=arch_handles,
+        loc="upper right",
+        fontsize=10,
+        frameon=True,
+        framealpha=0.8,
+        edgecolor="none",
     )
 
     return fig
