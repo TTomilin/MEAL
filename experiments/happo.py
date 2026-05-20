@@ -349,9 +349,6 @@ def main():
     )
     cl = method_map[cfg.cl_method.lower()]
 
-    if cfg.cl_method.lower() == "packnet":
-        raise ValueError("Packnet is not supported for HAPPO (decoupled actor/critic networks).")
-
     envs = make_sequence(
         sequence_length=seq_length,
         strategy=strategy,
@@ -938,6 +935,8 @@ def main():
                             agem_stats = {"er_ace/total_past_samples": jnp.sum(past_sizes).astype(jnp.float32)}
 
                         else:
+                            if cfg.cl_method.lower() == "packnet":
+                                grads_i = cl.mask_gradients(cl_state, grads_i)
                             actor_ts = actor_ts.apply_gradients(grads=grads_i)
 
                         # ── Update M-factor for the next agent ─────────────────
@@ -1135,6 +1134,33 @@ def main():
         runner_state, metrics = jax.lax.scan(
             _update_step, runner_state, xs=None, length=cfg.num_updates
         )
+
+        if cfg.cl_method.lower() == "packnet":
+            # Unpack runner state
+            actor_ts, critic_ts, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+
+            # Prune the model and update the parameters
+            actor_ts, cl_state = cl.on_train_end(actor_ts, cl_state)
+
+            # create new runner state for fine-tuning:
+            rng, finetune_rng = jax.random.split(rng)
+            runner_state = (actor_ts, critic_ts, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
+
+            # run fine-tuning
+            runner_state, metrics = jax.lax.scan(
+                f=_update_step,
+                init=runner_state,
+                xs=None,
+                length=cfg.finetune_updates
+            )
+
+            actor_ts, critic_ts, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+            # handle the end of the finetune phase
+            actor_ts, cl_state = cl.on_finetune_end(actor_ts, cl_state)
+
+            # add cl_state (packnet_state in this case) to new runner state
+            runner_state = (actor_ts, critic_ts, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
+        
         return runner_state, metrics
 
     # ── loop_over_envs ───────────────────────────────────────────────────────
