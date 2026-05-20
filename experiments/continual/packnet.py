@@ -340,7 +340,6 @@ class Packnet(CLMethod):
             cutoff_per_layer_dict[layer_name] = cutoff            
 
         # apply the pruning cutoff to each parameter, according to the layer it belongs to:
-        jax.debug.breakpoint()
         for path, leaf in self._iterate_over_params(params):
             cutoff = cutoff_per_layer_dict[path[-2]]
             if self._param_path_is_prunable(path) and cutoff is not None:
