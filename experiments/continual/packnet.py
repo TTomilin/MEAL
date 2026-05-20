@@ -71,10 +71,7 @@ class Packnet(CLMethod):
             shape = (self.seq_length,) + leaf.shape
             return jnp.zeros(shape, dtype=bool)
 
-        mask = jax.tree_util.tree_map(make_mask_leaf, params)
-        self._get_full_mask(mask)
-        eval_mask = self.apply_eval_mask(params, mask)
-        return mask
+        return jax.tree_util.tree_map(make_mask_leaf, params)
 
     def _update_mask_tree(self, mask_tree, new_mask, current_task):
         '''
@@ -184,6 +181,7 @@ class Packnet(CLMethod):
         return component_name == "actor"
     
     def _param_path_is_prunable(self, path):
+        #jax.debug.breakpoint()
         if len(path) > 3:
             # if the parameter dict is four-level, check if component, layer and param are prunable:
             return (self._param_is_prunable(path[-1])

@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Sequence, Optional, List, Literal, NamedTuple
 
 import flax
+import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -344,8 +345,9 @@ def main():
         agem=AGEM(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
         er_ace=ERACE(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
         packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4,
-                        train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
-                        prunable_layers=[], re_init_pruned_weights=cfg.re_init_pruned_weights),
+        train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
+        prunable_layers=[nn.Dense, nn.Conv],
+        re_init_pruned_weights=cfg.re_init_pruned_weights)
     )
     cl = method_map[cfg.cl_method.lower()]
 
