@@ -229,7 +229,8 @@ class Packnet(CLMethod):
                 new_mask = self._push_leaf_in_tree(new_mask, path, new_mask_leaf)
             else:
                 # if not for normalization, use previous mask:
-                new_mask = self._push_leaf_in_tree(new_mask, path, leaf)
+                previous_mask_leaf = self._get_leaf_from_tree(mask, path)
+                new_mask = self._push_leaf_in_tree(new_mask, path, previous_mask_leaf)
 
         return new_mask
     
@@ -247,7 +248,8 @@ class Packnet(CLMethod):
                 new_mask = self._push_leaf_in_tree(new_mask, path, new_mask_leaf)
             else:
                 # if not, use previous mask:
-                new_mask = self._push_leaf_in_tree(new_mask, path, leaf)
+                previous_mask_leaf = self._get_leaf_from_tree(mask, path)
+                new_mask = self._push_leaf_in_tree(new_mask, path, previous_mask_leaf)
 
         return new_mask
     
@@ -338,6 +340,7 @@ class Packnet(CLMethod):
             cutoff_per_layer_dict[layer_name] = cutoff            
 
         # apply the pruning cutoff to each parameter, according to the layer it belongs to:
+        jax.debug.breakpoint()
         for path, leaf in self._iterate_over_params(params):
             cutoff = cutoff_per_layer_dict[path[-2]]
             if self._param_path_is_prunable(path) and cutoff is not None:
@@ -352,14 +355,16 @@ class Packnet(CLMethod):
                     complete_mask,
                     leaf,
                     0
-                )
+                ) # replace unmasked regions with zero
+
                 mask = self._push_leaf_in_tree(mask, path, new_mask_leaf)
                 new_params = self._push_leaf_in_tree(new_params, path, pruned_params)
             else:
+                # in case no pruning is possible:
                 mask = self._push_leaf_in_tree(
-                    mask, path, jnp.zeros(leaf.shape, dtype=bool)
+                    mask, path, jnp.zeros(leaf.shape, dtype=bool) # set mask to all zeroes
                 )
-                new_params = self._push_leaf_in_tree(new_params, path, leaf)
+                new_params = self._push_leaf_in_tree(new_params, path, leaf) # leave parameters untouched
 
         # update and save mask tree:
         masks = self._update_mask_tree(state.masks, mask, state.current_task)
@@ -609,6 +614,7 @@ class Packnet(CLMethod):
         for path, leaf in self._iterate_over_params(mask):
             new_mask_leaf = jnp.ones_like(leaf, dtype=bool)
             new_mask = self._push_leaf_in_tree(new_mask, path, new_mask_leaf)
+
         return new_mask
 
     def get_eval_mask(self, current_task, state: PacknetState):
