@@ -424,6 +424,7 @@ class Packnet(CLMethod):
         # Prune the model and update the parameters:
         unpacked_params = self.unpack_params(train_state.params)
         new_unpacked_params, cl_state = self._dispatch_prune(unpacked_params, cl_state)
+        jax.debug.breakpoint()
         # compute and log sparsity:
         sparsity = self._compute_sparsity(new_unpacked_params)
         jax.debug.print(
@@ -581,7 +582,7 @@ class Packnet(CLMethod):
 
         return self._merge_params(params, masked_unpacked_params)
     
-    def _add_multi_head_mask(self, mask):
+    def _get_partial_mask(self, mask):
         '''
         Modifies a mask to covers all parameters in output heads as well as what it currently covers.
         '''
@@ -617,13 +618,20 @@ class Packnet(CLMethod):
 
         return new_mask
 
-    def get_eval_mask(self, current_task, state: PacknetState):
+    def get_eval_mask(self, current_task, params, state: PacknetState):
         # retrieve the current task mask:
         current_mask = self._combine_masks(state.masks, current_task + 1)
         # return appropriate mask, based on current task and highest-trained task:
-        return jax.lax.cond(
+        current_mask = jax.lax.cond(
             current_task < state.current_task, # if current task has been trained...
-            lambda mask: self._add_multi_head_mask(mask), # return the appropriate mask
+            lambda mask: self._get_partial_mask(mask), # return the appropriate mask
             lambda mask: self._get_full_mask(mask), # else... use all parameters instead of masking
             current_mask
         )
+        # add layers not in unpacked paramters to the mask, having '1' everywhere:
+        merged_mask = self._merge_params(
+            jax.tree.map(lambda _: True, params),
+            current_mask
+        )
+        return merged_mask
+        
