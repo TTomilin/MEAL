@@ -306,7 +306,6 @@ class Packnet(CLMethod):
                 prunable_per_layer_dict[path[-2]] = list()
             # collect prunable parameters:
             if self._param_path_is_prunable(path):
-                jax.debug.breakpoint()
                 prev_mask_leaf = self._get_leaf_from_tree(combined_mask, path)
                 p = jnp.where(
                     prev_mask_leaf,
