@@ -53,7 +53,7 @@ def make_eval_fn(
                 obs, agents, len(agents) * num_envs, not use_cnn
             )
             if isinstance(cl, Packnet):
-                masked_params = cl.apply_mask(params, mask)
+                masked_params = cl.apply_eval_mask(params, mask)
                 pi, _, _ = network.apply(masked_params, obs_batch, env_idx=env_idx)
             else:
                 pi, _, _ = network.apply(params, obs_batch, env_idx=env_idx)

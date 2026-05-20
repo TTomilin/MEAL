@@ -42,8 +42,6 @@ class ActorCritic(nn.Module):
         denom = jnp.mean(m) + 1e-12
         s = m / denom  # normalized score
         ratio = jnp.mean(s <= self.dormant_threshold)
-        # stash per-layer ratio for logging
-        self.sow("metrics", tag, ratio)
         return ratio
 
     # ------------------------------------------------------------------ forward

@@ -47,7 +47,7 @@ def make_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: int, 
 
         mask = None
         if isinstance(cl, Packnet):
-            mask = cl.get_eval_mask(env_idx, params, cl_state) # note that this collects all masks <= env_idx
+            mask = cl.get_eval_mask(env_idx, cl_state) # note that this collects all masks <= env_idx
 
         def one_step(carry, _):
             env_state, obs, rewards, soups, counts, rng = carry
@@ -55,7 +55,7 @@ def make_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: int, 
             # policy forward (greedy) on batched obs
             obs_batch = batchify(obs, agents, n_agents * num_envs, not use_cnn)  # (num_actors, obs_dim)
             if isinstance(cl, Packnet):
-                masked_params = cl.apply_mask(params, mask)
+                masked_params = cl.apply_eval_mask(params, mask)
                 pi, _, _ = network.apply(masked_params, obs_batch, env_idx=env_idx)
             else:
                 pi, _, _ = network.apply(params, obs_batch, env_idx=env_idx)
