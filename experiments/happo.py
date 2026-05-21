@@ -422,6 +422,7 @@ def main():
 
     cfg.num_actors = num_agents * cfg.num_envs
     cfg.num_updates = int(cfg.steps_per_task // cfg.num_steps // cfg.num_envs)
+    cfg.finetune_updates = cfg.finetune_timesteps // cfg.num_steps // cfg.num_envs
     # Per-agent minibatch size (total / num_agents / num_minibatches)
     cfg.minibatch_size = (cfg.num_envs * cfg.num_steps) // cfg.num_minibatches
 

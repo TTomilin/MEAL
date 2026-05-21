@@ -181,7 +181,6 @@ class Packnet(CLMethod):
         return component_name == "actor"
     
     def _param_path_is_prunable(self, path):
-        #jax.debug.breakpoint()
         if len(path) > 3:
             # if the parameter dict is four-level, check if component, layer and param are prunable:
             return (self._param_is_prunable(path[-1])
