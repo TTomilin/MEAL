@@ -153,6 +153,7 @@ class Config:
     record_video: bool = False
     video_length: int = 250
     log_interval: int = 5
+    eval_deterministic: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # LOGGING PARAMETERS
@@ -181,7 +182,7 @@ class Config:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def make_qmix_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
-                      num_steps: int, use_cnn: bool):
+                      num_steps: int, use_cnn: bool, eval_deterministic: bool, seed: int):
     """
     Returns a JITted evaluate_env(rng, q_params, env_idx) -> (avg_reward, avg_soups).
     Due to the IGM property, greedy QMIX actions = argmax per individual Q-value.
@@ -190,6 +191,8 @@ def make_qmix_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
 
     @jax.jit
     def evaluate_env(cl_state, rng, q_params, env_idx):
+        if eval_deterministic:
+            rng = jax.random.PRNGKey(env_idx + seed) # get new rng, fixed per task
         rng, env_rng = jax.random.split(rng)
         reset_rng = jax.random.split(env_rng, num_envs)
         obs, env_state = jax.vmap(lambda k: reset_switch(k, jnp.int32(env_idx)))(reset_rng)
@@ -538,7 +541,8 @@ def main():
     # Evaluation function: greedy argmax Q-values (IGM property makes this correct for QMIX)
     evaluate_env = make_qmix_eval_fn(
         reset_switch, step_switch, network, agents,
-        num_envs=cfg.num_envs, num_steps=cfg.max_episode_steps, use_cnn=cfg.use_cnn
+        num_envs=cfg.num_envs, num_steps=cfg.max_episode_steps, use_cnn=cfg.use_cnn,
+        eval_deterministic=cfg.eval_deterministic, seed=cfg.seed
     )
 
     # Importance function: Q-network only (mixing network is not regularised)
