@@ -8,6 +8,7 @@ from typing import Sequence, Optional, List, Literal
 
 import chex
 import flax
+import flax.linen as nn
 import jax
 import jax.experimental
 import jax.numpy as jnp
@@ -374,13 +375,11 @@ def main():
         ft=FT(),
         agem=AGEM(),
         packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4,
-                        train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
-                        prunable_layers=[], re_init_pruned_weights=cfg.re_init_pruned_weights),
+                      train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
+                      prunable_layers=[nn.Dense, nn.Conv],
+                      re_init_pruned_weights=cfg.re_init_pruned_weights)
     )
     cl = method_map[cfg.cl_method.lower()]
-
-    if cfg.cl_method.lower() == "packnet":
-        raise ValueError("Packnet is not supported for QMIX (value-based method).")
 
     difficulty = cfg.difficulty
     seq_length = cfg.seq_length
@@ -464,6 +463,7 @@ def main():
 
     cfg.num_actors = num_agents * cfg.num_envs
     cfg.num_updates = int(cfg.steps_per_task // cfg.num_steps // cfg.num_envs)
+    cfg.finetune_updates = cfg.finetune_timesteps // cfg.num_steps // cfg.num_envs
 
     # Build CTRolloutManagers for training
     train_envs = [
@@ -728,6 +728,9 @@ def main():
                         g_mem = jax.tree.map(jnp.add, g_mem, _t_grads)
                     grads, _ = agem_project(grads, g_mem)
 
+                if cfg.cl_method.lower() == "packnet":
+                    grads = cl.mask_gradients(cl_state, grads)
+
                 train_state = train_state.apply_gradients(grads=grads)
                 train_state = train_state.replace(grad_steps=train_state.grad_steps + 1)
                 return train_state, (total_loss, td_loss, qvals, cl_penalty)
@@ -932,6 +935,32 @@ def main():
                 _obs_b, _gs, _act_b, _rew, _nxt_b, _ngs, _don,
             )
 
+        if cfg.cl_method.lower() == "packnet":
+            # Unpack runner state
+            train_state, (last_obs, env_state), _rng = runner_state
+
+            # Prune the model and update the parameters
+            train_state, cl_state = cl.on_train_end(train_state, cl_state)
+
+            # create new runner state for fine-tuning:
+            rng, finetune_rng = jax.random.split(rng)
+            runner_state = train_state, (last_obs, env_state), finetune_rng
+
+            # run fine-tuning
+            runner_state, metrics = jax.lax.scan(
+                f=_update_step,
+                init=runner_state,
+                xs=None,
+                length=cfg.finetune_updates
+            )
+
+            train_state, (last_obs, env_state), _rng = runner_state
+            # handle the end of the finetune phase
+            train_state, cl_state = cl.on_finetune_end(train_state, cl_state)
+
+            # add cl_state (packnet_state in this case) to new runner state
+            train_state, (last_obs, env_state), _rng = runner_state
+
         return rng, final_train_state, cl_state
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -1027,8 +1056,11 @@ def main():
             max_tasks=seq_length,
         )
     else:
-        # CL state tracks Q-network params only
-        cl_state = init_cl_state(q_network_params, False, cfg.regularize_heads, cl, cfg)
+        if cfg.cl_method.lower() == "packnet":
+            cl_state = init_cl_state(train_state.params, False, cfg.regularize_heads, cl, cfg)
+        else:
+            cl_state = init_cl_state(q_network_params, False, cfg.regularize_heads, cl, cfg)
+
 
     rng, train_rng = jax.random.split(rng)
     loop_over_envs(train_rng, train_state, cl_state)
