@@ -35,11 +35,11 @@ class MLPEncoder(nn.Module):
                 self.hidden_size,
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
-                name=get_layer_name("", nn.Dense, i+1),
+                name=get_layer_name("q", nn.Dense, i+1),
             )(x)
             x = act(x)
             if self.use_layer_norm:
-                x = nn.LayerNorm(epsilon=1e-5, name=get_layer_name("", nn.LayerNorm, i+1))(x)
+                x = nn.LayerNorm(epsilon=1e-5, name=get_layer_name("q", nn.LayerNorm, i+1))(x)
         return x
 
 
@@ -97,7 +97,7 @@ class QNetwork(nn.Module):
         x = nn.Dense(self.hidden_size,
                      kernel_init=orthogonal(np.sqrt(2)),
                      bias_init=constant(0.0),
-                     name=get_layer_name("", nn.Dense, 4))(x)
+                     name=get_layer_name("q", nn.Dense, 4))(x)
         x = act(x)
 
         # optionally append one-hot task id
@@ -110,6 +110,6 @@ class QNetwork(nn.Module):
         all_q = nn.Dense(out_dim,
                          kernel_init=orthogonal(0.01),
                          bias_init=constant(0.0),
-                         name=get_layer_name("", nn.Dense, head_string))(x)
+                         name=get_layer_name("q", nn.Dense, head_string))(x)
         q_values = choose_head(all_q, self.num_tasks, env_idx) if self.use_multihead else all_q
         return q_values
