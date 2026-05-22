@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import flax.linen as nn
 import numpy as np
 from flax.linen.initializers import constant, orthogonal
+from utils import get_layer_name
 
 
 def choose_head(t: jnp.ndarray, n_heads: int, env_idx):
@@ -34,11 +35,11 @@ class MLPEncoder(nn.Module):
                 self.hidden_size,
                 kernel_init=orthogonal(np.sqrt(2)),
                 bias_init=constant(0.0),
-                name=f"mlp_dense{i + 1}",
+                name=get_layer_name("", nn.Dense, i+1),
             )(x)
             x = act(x)
             if self.use_layer_norm:
-                x = nn.LayerNorm(epsilon=1e-5, name=f"mlp_ln{i + 1}")(x)
+                x = nn.LayerNorm(epsilon=1e-5, name=get_layer_name("", nn.LayerNorm, i+1))(x)
         return x
 
 
@@ -95,7 +96,8 @@ class QNetwork(nn.Module):
         # optional additional layer
         x = nn.Dense(self.hidden_size,
                      kernel_init=orthogonal(np.sqrt(2)),
-                     bias_init=constant(0.0))(x)
+                     bias_init=constant(0.0),
+                     name=get_layer_name("", nn.Dense, 4))(x)
         x = act(x)
 
         # optionally append one-hot task id
@@ -104,9 +106,10 @@ class QNetwork(nn.Module):
             x = jnp.concatenate([x, jax.nn.one_hot(ids, self.num_tasks)], axis=-1)
 
         out_dim = self.action_dim * (self.num_tasks if self.use_multihead else 1)
+        head_string = "multi_head" if self.use_multihead else "single_head"
         all_q = nn.Dense(out_dim,
                          kernel_init=orthogonal(0.01),
                          bias_init=constant(0.0),
-                         name="q_head")(x)
+                         name=get_layer_name("", nn.Dense, head_string))(x)
         q_values = choose_head(all_q, self.num_tasks, env_idx) if self.use_multihead else all_q
         return q_values
