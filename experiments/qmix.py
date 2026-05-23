@@ -21,6 +21,7 @@ from experiments.continual.agem import (
     AGEM, init_qmix_agem_memory, sample_qmix_task_slot,
     compute_qmix_memory_gradient, update_qmix_agem_memory, agem_project,
 )
+from experiments.continual.er_ace import ERACE
 from experiments.continual.base import RegCLMethod
 from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
@@ -109,9 +110,10 @@ class Config:
     importance_mode: str = "online"  # "online", "last" or "multi"
     importance_decay: float = 0.9  # EMA decay for online mode
 
-    # AGEM specific parameters
+    # AGEM / ER-ACE specific parameters
     agem_memory_size: int = 100000
     agem_sample_size: int = 1024
+    er_ace_coef: float = 1.0
 
     # Packnet specific parameters
     train_epochs: int = 8
@@ -360,7 +362,7 @@ def main():
         cfg.cl_method = "ft"
     if cfg.cl_method is None:
         raise ValueError(
-            "cl_method is required (e.g., ewc, mas, l2, ft, agem)."
+            "cl_method is required (e.g., ewc, mas, l2, ft, agem, er_ace)."
         )
     # Default regularization coefficients
     if cfg.reg_coef is None:
@@ -372,6 +374,7 @@ def main():
         l2=L2(),
         ft=FT(),
         agem=AGEM(),
+        er_ace=ERACE(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
         packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4,
                         train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
                         prunable_layers=[], re_init_pruned_weights=cfg.re_init_pruned_weights),
@@ -733,6 +736,33 @@ def main():
                         g_mem = jax.tree.map(jnp.add, g_mem, _t_grads)
                     grads, _ = agem_project(grads, g_mem)
 
+                elif cfg.cl_method.lower() == "er_ace":
+                    # ER-ACE: add memory gradient directly over combined (Q + mixing) params
+                    past_sizes = cl_state.sizes.at[env_idx].set(0)
+                    _max_tasks = cl_state.obs.shape[0]
+                    samples_per_task = max(1, cfg.agem_sample_size // _max_tasks)
+                    g_mem = jax.tree.map(jnp.zeros_like, grads)
+                    for _t in range(_max_tasks):
+                        _t_rng = jax.random.fold_in(rng, _t)
+                        (
+                            _t_obs, _t_global, _t_acts, _t_rews,
+                            _t_nobs, _t_next_global, _t_dones
+                        ) = sample_qmix_task_slot(cl_state, _t, samples_per_task, _t_rng)
+                        _t_grads = compute_qmix_memory_gradient(
+                            network, mixing_network,
+                            train_state.params,
+                            train_state.target_network_params,
+                            cfg.gamma,
+                            _t_obs, _t_global, _t_acts, _t_rews,
+                            _t_nobs, _t_next_global, _t_dones,
+                            env_idx=_t,
+                        )
+                        _mask = (past_sizes[_t] > 0).astype(jnp.float32)
+                        _t_grads = jax.tree.map(lambda g, m=_mask: g * m, _t_grads)
+                        g_mem = jax.tree.map(jnp.add, g_mem, _t_grads)
+                    # ER-ACE: add memory gradient directly (no projection)
+                    grads = jax.tree.map(lambda g, gm: g + cfg.er_ace_coef * gm, grads, g_mem)
+
                 train_state = train_state.apply_gradients(grads=grads)
                 train_state = train_state.replace(grad_steps=train_state.grad_steps + 1)
                 return train_state, (total_loss, td_loss, qvals, cl_penalty)
@@ -858,9 +888,9 @@ def main():
         final_train_state = runner_state[0]
         final_expl_state = runner_state[1]
 
-        # AGEM: collect one final on-policy batch with the trained policy and
+        # AGEM / ER-ACE: collect one final on-policy batch with the trained policy and
         # store it as the memory for this task.
-        if cfg.cl_method.lower() == "agem":
+        if cfg.cl_method.lower() in ("agem", "er_ace"):
             rng, mem_rng = jax.random.split(rng)
 
             def _mem_step(carry, _):
@@ -1022,7 +1052,7 @@ def main():
                 break
 
     # ── Run ──────────────────────────────────────────────────────────────────
-    if cfg.cl_method.lower() == "agem":
+    if cfg.cl_method.lower() in ("agem", "er_ace"):
         cl_state = init_qmix_agem_memory(
             max_size=cfg.agem_memory_size,
             num_agents=num_agents,
