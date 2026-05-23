@@ -101,7 +101,6 @@ class Config:
     use_task_id: bool = True
     use_multihead: bool = True
     normalize_importance: bool = False
-    regularize_heads: bool = False
 
     # Regularization method specific parameters
     importance_episodes: int = 5
@@ -971,7 +970,6 @@ def main():
                 "num_tasks": seq_length,
                 "use_multihead": config.use_multihead,
                 "use_task_id": config.use_task_id,
-                "regularize_heads": config.regularize_heads,
                 "use_layer_norm": config.use_layer_norm,
                 "activation": config.activation,
                 "strategy": config.strategy,
@@ -1034,7 +1032,7 @@ def main():
         )
     else:
         # CL state tracks Q-network params only
-        cl_state = init_cl_state(q_network_params, False, cfg.regularize_heads, cl, cfg)
+        cl_state = init_cl_state(q_network_params, False, not cfg.use_multihead, cl, cfg)
 
     rng, train_rng = jax.random.split(rng)
     loop_over_envs(train_rng, train_state, cl_state)

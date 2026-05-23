@@ -77,7 +77,6 @@ class Config:
     shared_backbone: bool = False
     normalize_importance: bool = False
     regularize_critic: bool = False
-    regularize_heads: bool = False
     reset_optimizer: bool = True
 
     # Regularization method specific parameters
@@ -904,7 +903,6 @@ def main():
                     "big_network": config.big_network,
                     "use_task_id": config.use_task_id,
                     "use_agent_id": config.use_agent_id,
-                    "regularize_heads": config.regularize_heads,
                     "use_layer_norm": config.use_layer_norm,
                     "activation": config.activation,
                     "strategy": config.strategy,
@@ -921,7 +919,7 @@ def main():
 
     # ── Run ───────────────────────────────────────────────────────────────────
     rng, train_rng = jax.random.split(rng)
-    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads, cl, cfg)
+    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, not cfg.use_multihead, cl, cfg)
 
     if cfg.cl_method.lower() in ("agem", "er_ace"):
         obs_dim_agem = temp_env.observation_space().shape

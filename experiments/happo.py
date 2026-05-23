@@ -134,7 +134,6 @@ class Config:
     use_task_id: bool = True
     use_multihead: bool = True
     normalize_importance: bool = False
-    regularize_heads: bool = False
     reset_optimizer: bool = True
 
     # Regularization method specific parameters
@@ -1238,9 +1237,8 @@ def main():
         # CL state tracks actor params only (no critic regularisation).
         # With multihead, each task has its own head columns → don't regularize the head.
         # With a single shared head, regularize it like any other layer.
-        regularize_heads = not cfg.use_multihead
         cl_state = init_cl_state(actor_ts.params, regularize_critic=False,
-                                 regularize_heads=regularize_heads, cl=cl, cfg=cfg)
+                                 regularize_heads=not cfg.use_multihead, cl=cl, cfg=cfg)
 
     loop_over_envs(train_rng, actor_ts, critic_ts, cl_state, envs)
 

@@ -164,7 +164,6 @@ def main():
             shared_backbone = checkpoint_config.get("shared_backbone", False)
             big_network = checkpoint_config.get("big_network", False)
             use_task_id = checkpoint_config.get("use_task_id", True)
-            regularize_heads = checkpoint_config.get("regularize_heads", False)
             use_layer_norm = checkpoint_config.get("use_layer_norm", True)
         else:
             use_cnn = args.use_cnn
@@ -174,7 +173,6 @@ def main():
             shared_backbone = False
             big_network = False
             use_task_id = True
-            regularize_heads = False
             use_layer_norm = True
 
         ActorCritic = CNNActorCritic if use_cnn else MLPActorCritic
@@ -184,7 +182,6 @@ def main():
                           shared_backbone=shared_backbone,
                           big_network=big_network,
                           use_task_id=use_task_id,
-                          regularize_heads=regularize_heads,
                           use_layer_norm=use_layer_norm)
 
         obs_shape = env.observation_space().shape

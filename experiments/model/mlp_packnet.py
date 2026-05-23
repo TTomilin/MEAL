@@ -22,7 +22,6 @@ class ActorCritic(nn.Module):
     shared_backbone: bool = False
     big_network: bool = False
     use_task_id: bool = False
-    regularize_heads: bool = True
     use_layer_norm: bool = False
     track_dormant_ratio: bool = True
     dormant_threshold: float = 0.01

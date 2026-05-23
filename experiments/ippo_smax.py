@@ -93,7 +93,6 @@ class Config:
     shared_backbone: bool = False
     normalize_importance: bool = False
     regularize_critic: bool = False
-    regularize_heads: bool = False
     reset_optimizer: bool = True
 
     importance_episodes: int = 5
@@ -263,7 +262,6 @@ def main():
         cfg.shared_backbone,
         cfg.big_network,
         cfg.use_task_id,
-        cfg.regularize_heads,
         cfg.use_layer_norm,
     )
 
@@ -705,7 +703,7 @@ def main():
                 break
 
     rng, train_rng = jax.random.split(rng)
-    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads, cl, cfg)
+    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, not cfg.use_multihead, cl, cfg)
 
     if cfg.cl_method.lower() in ("agem", "er_ace"):
         obs_shape = temp_env.observation_space(agents[0]).shape

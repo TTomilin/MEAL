@@ -74,7 +74,6 @@ class Config:
     shared_backbone: bool = False
     normalize_importance: bool = False
     regularize_critic: bool = False
-    regularize_heads: bool = False
     reset_optimizer: bool = True
 
     # Regularization method specific parameters
@@ -357,7 +356,7 @@ def main():
     ac_cls = CNNActorCritic if cfg.use_cnn else MLPActorCritic
 
     network = ac_cls(temp_env.action_space().n, cfg.activation, seq_length, cfg.use_multihead,
-                     cfg.shared_backbone, cfg.big_network, cfg.use_task_id, cfg.regularize_heads,
+                     cfg.shared_backbone, cfg.big_network, cfg.use_task_id,
                      cfg.use_layer_norm)
 
     # Get the correct observation dimension by simulating the batchify process
@@ -985,7 +984,6 @@ def main():
                     "shared_backbone": config.shared_backbone,
                     "big_network": config.big_network,
                     "use_task_id": config.use_task_id,
-                    "regularize_heads": config.regularize_heads,
                     "use_layer_norm": config.use_layer_norm,
                     "activation": config.activation,
                     "strategy": config.strategy,
@@ -1006,7 +1004,7 @@ def main():
 
     # Run the model
     rng, train_rng = jax.random.split(rng)
-    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, cfg.regularize_heads, cl, cfg)
+    cl_state = init_cl_state(train_state.params, cfg.regularize_critic, not cfg.use_multihead, cl, cfg)
 
     # Initialize AGEM memory if using AGEM and this is the first environment
     if cfg.cl_method.lower() == "agem":

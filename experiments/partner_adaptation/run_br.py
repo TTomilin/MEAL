@@ -103,7 +103,6 @@ class TrainConfig:
     shared_backbone: bool = False
     normalize_importance: bool = False
     regularize_critic: bool = False
-    regularize_heads: bool = False
 
     # Importance / regularization parameters (EWC, MAS, L2)
     importance_mode: str = "online"   # "online", "last", or "multi"
@@ -292,7 +291,7 @@ def run_training():
         ego_network = ac_cls(
             len(env.action_set), config.activation, seq_length, config.use_multihead,
             config.shared_backbone, config.big_network, config.use_task_id,
-            config.regularize_heads, config.use_layer_norm)
+            config.use_layer_norm)
 
         obs_dim = env.observation_space().shape
         if not config.use_cnn:
@@ -308,7 +307,7 @@ def run_training():
         # Initialize continual learning state if CL method is specified
         cl_state = None
         if cl is not None:
-            cl_state = init_cl_state(ego_params, config.regularize_critic, config.regularize_heads, cl, config)
+            cl_state = init_cl_state(ego_params, config.regularize_critic, not config.use_multihead, cl, config)
 
             # Initialize AGEM memory if using AGEM or ER-ACE
             if config.cl_method.lower() in ("agem", "er_ace"):

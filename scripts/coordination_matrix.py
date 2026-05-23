@@ -218,7 +218,6 @@ def compute_matrix(
         cfg0.get("shared_backbone", False),
         cfg0.get("big_network", False),
         cfg0.get("use_task_id", True),
-        cfg0.get("regularize_heads", False),
         cfg0.get("use_layer_norm", True),
     )
 
