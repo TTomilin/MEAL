@@ -108,7 +108,7 @@ def add_eval_metrics(avg_rewards, avg_soups, layout_names, max_soup_dict, metric
 def build_reg_weights(params, regularize_critic: bool, regularize_heads: bool) -> FrozenDict:
     def _mark(path, x):
         path_str = "/".join(map(str, path)).lower()
-        if not regularize_heads and ("actor_head" in path_str or "critic_head" in path_str):
+        if not regularize_heads and ("actor_head" in path_str or "critic_head" in path_str or "q_head" in path_str):
             return jnp.zeros_like(x)
         if not regularize_critic and "critic" in path_str:
             return jnp.zeros_like(x)
