@@ -678,6 +678,16 @@ def main():
                         _mask = (past_sizes[_t] > 0).astype(jnp.float32)
                         _t_grads = jax.tree.map(lambda g, m=_mask: g * m, _t_grads)
                         g_mem = jax.tree.map(jnp.add, g_mem, _t_grads)
+                    # Zero q_head from g_mem before projection. With multi-head architecture,
+                    # g_mem contains nonzero head gradients for past tasks, so the AGEM
+                    # projection term (-alpha * g_mem) would apply those gradients to past
+                    # heads that the current TD loss never touches. Combined with a reset
+                    # Adam state (v≈0), the effective LR on those heads is ~31× nominal,
+                    # which destroys task 0 performance on the very first gradient step.
+                    # Zeroing head gradients in g_mem restricts AGEM to the encoder only.
+                    def _zero_q_head(path, g):
+                        return jnp.zeros_like(g) if "q_head" in "/".join(str(p) for p in path) else g
+                    g_mem = jax.tree_util.tree_map_with_path(_zero_q_head, g_mem)
                     grads, _ = agem_project(grads, g_mem)
 
                 train_state = train_state.apply_gradients(grads=grads)
