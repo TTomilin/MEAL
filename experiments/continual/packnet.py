@@ -10,9 +10,9 @@ from flax.core.frozen_dict import FrozenDict
 from experiments.continual.base import CLState, CLMethod
 from typing import List
 from collections.abc import Mapping
-from enum import Enum
+from enum import IntEnum
 
-class Index(Enum):
+class Index(IntEnum):
     VARIABLE = -1
     LAYER = -2
     COMPONENT_LOWER = -3
@@ -185,7 +185,7 @@ class Packnet(CLMethod):
     def _param_path_is_prunable(self, path):
         if len(path) > 3:
             # if the parameter dict is four-level, check if component, layer and param are prunable:
-            return (self._param_is_prunable(path[Index.VARIABLE])
+            return (self._param_is_prunable(path[Index.VARIABLE.value])
                     and self._layer_is_prunable(path[Index.LAYER])
                     and self._component_is_prunable(path[Index.COMPONENT_LOWER])
                     and self._component_is_prunable(path[Index.COMPONENT_UPPER]))
