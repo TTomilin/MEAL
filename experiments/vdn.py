@@ -170,7 +170,7 @@ class Config:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def make_vdn_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
-                     num_steps: int, use_cnn: bool):
+                     num_steps: int, use_cnn: bool, eval_deterministic: bool, seed: int):
     """
     Returns a JITted evaluate_env(rng, params, env_idx) -> (avg_reward, avg_soups)
     compatible with evaluate_all_envs().  Uses greedy (argmax) Q-values.
@@ -179,6 +179,8 @@ def make_vdn_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
 
     @jax.jit
     def evaluate_env(cl_state, rng, params, env_idx):
+        if eval_deterministic:
+            rng = jax.random.PRNGKey(env_idx + seed) # get new rng, fixed per task
         rng, env_rng = jax.random.split(rng)
         reset_rng = jax.random.split(env_rng, num_envs)
         obs, env_state = jax.vmap(lambda k: reset_switch(k, jnp.int32(env_idx)))(reset_rng)
@@ -805,14 +807,14 @@ def main():
 
         if cfg.cl_method.lower() == "packnet":
             # Unpack runner state
-            train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+            train_state, (last_obs, env_state), _rng = runner_state
 
             # Prune the model and update the parameters
             train_state, cl_state = cl.on_train_end(train_state, cl_state)
 
             # create new runner state for fine-tuning:
             rng, finetune_rng = jax.random.split(rng)
-            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
+            runner_state = train_state, (last_obs, env_state), finetune_rng
 
             # run fine-tuning
             runner_state, metrics = jax.lax.scan(
@@ -822,12 +824,12 @@ def main():
                 length=cfg.finetune_updates
             )
 
-            train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+            train_state, (last_obs, env_state), _rng = runner_state
             # handle the end of the finetune phase
             train_state, cl_state = cl.on_finetune_end(train_state, cl_state)
 
             # add cl_state (packnet_state in this case) to new runner state
-            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
+            train_state, (last_obs, env_state), _rng = runner_state
 
         final_train_state = runner_state[0]
         final_expl_state = runner_state[1]

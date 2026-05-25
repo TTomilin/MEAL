@@ -178,7 +178,7 @@ class Packnet(CLMethod):
             return not(any([n in layer_name for n in self.forbidden_layer_strings]))
         
     def _component_is_prunable(self, component_name):
-        return component_name == "actor" or component_name == "q"
+        return component_name == "actor" or component_name == "MLPEncoder_0"
     
     def _param_path_is_prunable(self, path):
         if len(path) > 3:
