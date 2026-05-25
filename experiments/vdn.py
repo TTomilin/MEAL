@@ -107,7 +107,6 @@ class Config:
     train_epochs: int = 8
     finetune_epochs: int = 2
     finetune_timesteps: float = 1e7
-    re_init_pruned_weights: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS

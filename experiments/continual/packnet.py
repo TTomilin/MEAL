@@ -10,7 +10,13 @@ from flax.core.frozen_dict import FrozenDict
 from experiments.continual.base import CLState, CLMethod
 from typing import List
 from collections.abc import Mapping
+from enum import Enum
 
+class Index(Enum):
+    VARIABLE = -1
+    LAYER = -2
+    COMPONENT_LOWER = -3
+    COMPONENT_UPPER = -4
 
 @flax.struct.dataclass
 class PacknetState(CLState):
@@ -32,8 +38,7 @@ class Packnet(CLMethod):
                  prune_instructions=0.5, 
                  train_finetune_split=(1,1), 
                  prunable_layers=(nn.Conv, nn.Dense),
-                 norm_layer_types=(nn.BatchNorm, nn.LayerNorm),
-                 re_init_pruned_weights=False
+                 norm_layer_types=(nn.BatchNorm, nn.LayerNorm)
             ):
         '''
         Initializes the Packnet class
@@ -41,7 +46,6 @@ class Packnet(CLMethod):
         @param prune_instructions: the percentage of the network to prune
         @param train_finetune_split: the split between training and finetuning
         @param prunable_layers: the layers that can be pruned
-        @param re_init_pruned_weights: whether to initialize pruned weights to small values after fine-tuning
         '''
         self.seq_length = seq_length
         self.prune_instructions = prune_instructions
@@ -53,9 +57,6 @@ class Packnet(CLMethod):
         self.forbidden_param_strings = ['bias'] # ignore bias parameters
         self.forbidden_layer_strings = ['critic', 'multi_head'] # ignore critic layers and head layers
         self.forbidden_component_strings = ['critic']
-        
-        # wether to re-initialize weights to small values after each fine-tuning:
-        self.re_init_pruned_weights = re_init_pruned_weights
 
     def init_mask_tree(self, params):
         '''
@@ -184,14 +185,14 @@ class Packnet(CLMethod):
     def _param_path_is_prunable(self, path):
         if len(path) > 3:
             # if the parameter dict is four-level, check if component, layer and param are prunable:
-            return (self._param_is_prunable(path[-1])
-                    and self._layer_is_prunable(path[-2])
-                    and self._component_is_prunable(path[-3])
-                    and self._component_is_prunable(path[-4]))
+            return (self._param_is_prunable(path[Index.VARIABLE])
+                    and self._layer_is_prunable(path[Index.LAYER])
+                    and self._component_is_prunable(path[Index.COMPONENT_LOWER])
+                    and self._component_is_prunable(path[Index.COMPONENT_UPPER]))
         else:
             # else, only check if layer and param are prunable:
-            return (self._param_is_prunable(path[-1])
-                    and self._layer_is_prunable(path[-2]))
+            return (self._param_is_prunable(path[Index.VARIABLE])
+                    and self._layer_is_prunable(path[Index.LAYER]))
     
     def _iterate_over_params(self, params, path=()):
         for key, value in params.items():
@@ -222,7 +223,7 @@ class Packnet(CLMethod):
 
         # iterate over all leaves in the parameters:
         for path, leaf in self._iterate_over_params(params):
-            if self._layer_is_for_norm(path[-2]):
+            if self._layer_is_for_norm(path[Index.LAYER]):
                 # if leaf corresponds to normalization layer, mask completely:
                 new_mask_leaf = jnp.ones_like(leaf, dtype=bool)
                 new_mask = self._push_leaf_in_tree(new_mask, path, new_mask_leaf)
@@ -241,7 +242,7 @@ class Packnet(CLMethod):
 
         # iterate over all leaves in the parameters:
         for path, leaf in self._iterate_over_params(params):
-            if self._layer_is_prunable(path[-2]) and "bias" in path[-1]:
+            if self._layer_is_prunable(path[Index.LAYER]) and "bias" in path[Index.VARIABLE]:
                 # if leaf corresponds to bias in prunable layer, mask completely:
                 new_mask_leaf = jnp.ones_like(leaf, dtype=bool)
                 new_mask = self._push_leaf_in_tree(new_mask, path, new_mask_leaf)
@@ -301,8 +302,8 @@ class Packnet(CLMethod):
         prunable_per_layer_dict = {}
         for path, leaf in self._iterate_over_params(params):
             # if layer not yet recorded in dict, add it:
-            if path[-2] not in prunable_per_layer_dict:
-                prunable_per_layer_dict[path[-2]] = list()
+            if path[Index.LAYER] not in prunable_per_layer_dict:
+                prunable_per_layer_dict[path[Index.LAYER]] = list()
             # collect prunable parameters:
             if self._param_path_is_prunable(path):
                 prev_mask_leaf = self._get_leaf_from_tree(combined_mask, path)
@@ -313,7 +314,7 @@ class Packnet(CLMethod):
                 ) # keep only parameters not yet reserved
                 if p.size > 0:
                     # save the absolute values of prunable parameters:
-                    prunable_per_layer_dict[path[-2]].append(p.reshape(-1))
+                    prunable_per_layer_dict[path[Index.LAYER]].append(p.reshape(-1))
 
         # compute the pruning cutoff for each layer:
         cutoff_per_layer_dict = {}
@@ -340,7 +341,7 @@ class Packnet(CLMethod):
 
         # apply the pruning cutoff to each parameter, according to the layer it belongs to:
         for path, leaf in self._iterate_over_params(params):
-            cutoff = cutoff_per_layer_dict[path[-2]]
+            cutoff = cutoff_per_layer_dict[path[Index.LAYER]]
             if self._param_path_is_prunable(path) and cutoff is not None:
                 prev_mask_leaf = self._get_leaf_from_tree(combined_mask, path)
                 new_mask_leaf = jnp.logical_and(
@@ -370,48 +371,7 @@ class Packnet(CLMethod):
 
         # return:
         new_param_dict = new_params
-        return new_param_dict, state     
-
-    def _deterministic_leaf_init(self, task_id: int, path, leaf):
-        '''
-        Create the initial values for a given leaf, depending deterministically
-        on the task_id, layer name, and parameter name.
-        '''
-        layer_name, param_name = str(path[0]), str(path[1])
-        rng_key = jax.random.PRNGKey(task_id + 42)
-        rng_key = jax.random.fold_in(
-            rng_key,
-            hash(layer_name + param_name) & 0xFFFFFFFF # ensure positivity
-        )
-        return (jax.random.normal(rng_key, leaf.shape) * 1e-6)
-    
-    def _get_deterministic_init(self, task_id: int, param_tree: dict):
-        '''
-        Create the deterministic initial values for a given parameter tree and task_id.
-        '''
-        leaf_initiatior = lambda path, leaf: self._deterministic_leaf_init(task_id=task_id, path=path, leaf=leaf)
-        return jax.tree.map_with_path(leaf_initiatior, param_tree)
-    
-    def _initialize_pruned_weights(self, params, state: PacknetState):
-        '''
-        Deterministically sets the pruned weights to small gaussian values based on the current task index,
-        the layer names, and the parameter names. Call this method after fine-tuning and after incrementing 
-        the PacknetState's task index to prevent overriding tuned parameters.
-        '''
-        prev_tasks_mask = self._combine_masks(state.masks, state.current_task) # mask of all tasks < state.current_task
-        small_init = self._get_deterministic_init(state.current_task, params)
-        
-        def init_pruned_weights_leaf(mask, p, init):
-            return jnp.where(mask, p, init)
-
-        new_params = jax.tree_util.tree_map(
-            init_pruned_weights_leaf,
-            prev_tasks_mask,
-            params,
-            small_init
-        )
-
-        return {**params, 'params': new_params}
+        return new_param_dict, state
 
     def _mask_remaining_params(self, params, state: PacknetState):
         '''
@@ -494,11 +454,6 @@ class Packnet(CLMethod):
         )
         # update task id after tuning:
         state = state.replace(current_task=state.current_task+1, train_mode=True)
-        if self.re_init_pruned_weights:
-            # initialize weights to small values:
-            new_params = self._initialize_pruned_weights(train_state.params, state)
-            # update train_state:        
-            train_state = self._update_train_state(train_state, new_params)
         # return train_state and state:
         return train_state, state
     
