@@ -52,6 +52,7 @@ class Packnet(CLMethod):
         self.normalization_layer_type_names = [layer_type.__name__ for layer_type in norm_layer_types]
         self.forbidden_param_strings = ['bias'] # ignore bias parameters
         self.forbidden_layer_strings = ['critic', 'multi_head'] # ignore critic layers and head layers
+        self.forbidden_component_strings = ['critic']
         
         # wether to re-initialize weights to small values after each fine-tuning:
         self.re_init_pruned_weights = re_init_pruned_weights
@@ -178,13 +179,14 @@ class Packnet(CLMethod):
             return not(any([n in layer_name for n in self.forbidden_layer_strings]))
         
     def _component_is_prunable(self, component_name):
-        return component_name == "actor" or component_name == "MLPEncoder_0"
+        return not(any(string in component_name for string in self.forbidden_component_strings))
     
     def _param_path_is_prunable(self, path):
         if len(path) > 3:
             # if the parameter dict is four-level, check if component, layer and param are prunable:
             return (self._param_is_prunable(path[-1])
                     and self._layer_is_prunable(path[-2])
+                    and self._component_is_prunable(path[-3])
                     and self._component_is_prunable(path[-4]))
         else:
             # else, only check if layer and param are prunable:
