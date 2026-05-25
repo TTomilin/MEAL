@@ -185,7 +185,7 @@ class Packnet(CLMethod):
     def _param_path_is_prunable(self, path):
         if len(path) > 3:
             # if the parameter dict is four-level, check if component, layer and param are prunable:
-            return (self._param_is_prunable(path[Index.VARIABLE.value])
+            return (self._param_is_prunable(path[Index.VARIABLE])
                     and self._layer_is_prunable(path[Index.LAYER])
                     and self._component_is_prunable(path[Index.COMPONENT_LOWER])
                     and self._component_is_prunable(path[Index.COMPONENT_UPPER]))
