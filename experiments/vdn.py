@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Sequence, Optional, List, Literal
 
 import flax
+import flax.linen as nn
 import jax
 import jax.experimental
 import jax.numpy as jnp
@@ -362,13 +363,10 @@ def main():
         ft=FT(),
         agem=AGEM(),
         packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4,
-                        train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
-                        prunable_layers=[], re_init_pruned_weights=cfg.re_init_pruned_weights),
-    )
+        train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
+        prunable_layers=[nn.Dense, nn.Conv]
+    ))
     cl = method_map[cfg.cl_method.lower()]
-
-    if cfg.cl_method.lower() == "packnet":
-        raise ValueError("Packnet is not supported for VDN (value-based method).")
 
     difficulty = cfg.difficulty
     seq_length = cfg.seq_length
@@ -452,6 +450,7 @@ def main():
 
     cfg.num_actors = num_agents * cfg.num_envs
     cfg.num_updates = int(cfg.steps_per_task // cfg.num_steps // cfg.num_envs)
+    cfg.finetune_updates = cfg.finetune_timesteps // cfg.num_steps // cfg.num_envs
 
     # Build CTRolloutManagers for training
     train_envs = [
@@ -680,6 +679,9 @@ def main():
                         g_mem = jax.tree.map(jnp.add, g_mem, _t_grads)
                     grads, _ = agem_project(grads, g_mem)
 
+                if cfg.cl_method == "packnet":
+                    grads = cl.mask_gradients(cl_state, grads)
+
                 train_state = train_state.apply_gradients(grads=grads)
                 train_state = train_state.replace(grad_steps=train_state.grad_steps + 1)
                 return train_state, (total_loss, td_loss, qvals, cl_penalty)
@@ -800,6 +802,32 @@ def main():
         runner_state, _ = jax.lax.scan(
             _update_step, runner_state, xs=None, length=cfg.num_updates
         )
+
+        if cfg.cl_method.lower() == "packnet":
+            # Unpack runner state
+            train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+
+            # Prune the model and update the parameters
+            train_state, cl_state = cl.on_train_end(train_state, cl_state)
+
+            # create new runner state for fine-tuning:
+            rng, finetune_rng = jax.random.split(rng)
+            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
+
+            # run fine-tuning
+            runner_state, metrics = jax.lax.scan(
+                f=_update_step,
+                init=runner_state,
+                xs=None,
+                length=cfg.finetune_updates
+            )
+
+            train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+            # handle the end of the finetune phase
+            train_state, cl_state = cl.on_finetune_end(train_state, cl_state)
+
+            # add cl_state (packnet_state in this case) to new runner state
+            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
 
         final_train_state = runner_state[0]
         final_expl_state = runner_state[1]
