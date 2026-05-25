@@ -180,9 +180,19 @@ class Packnet(CLMethod):
             return not(any([n in layer_name for n in self.forbidden_layer_strings]))
         
     def _component_is_prunable(self, component_name):
+        '''
+        Checks if a component is prunable
+        @param component_name: the name of the component
+        returns a boolean indicating whether the component is prunable
+        '''
         return not(any(string in component_name for string in self.forbidden_component_strings))
     
     def _param_path_is_prunable(self, path):
+        '''
+        Checks if a given parameter path is prunable.
+        @param path: a tuple indicating the path to a parameter in a tree dict.
+        returns a boolean indicating whether the parameter is prunable.
+        '''
         if len(path) > 3:
             # if the parameter dict is four-level, check if component, layer and param are prunable:
             return (self._param_is_prunable(path[Index.VARIABLE])
@@ -195,6 +205,12 @@ class Packnet(CLMethod):
                     and self._layer_is_prunable(path[Index.LAYER]))
     
     def _iterate_over_params(self, params, path=()):
+        '''
+        Iterates over all leaves in a given parameter tree dict.
+        @param params the parameter tree dict which has the leaves you want to iterate over.
+        @param path the path of the current leaf, used for recursion
+        returns a generator iterating over the parameter tree dict's leaves.
+        '''
         for key, value in params.items():
             new_path = path + (key,)
             if isinstance(value, Mapping):
@@ -203,6 +219,12 @@ class Packnet(CLMethod):
                 yield new_path, value
 
     def _push_leaf_in_tree(self, tree, path, leaf):
+        '''
+        Puts a specified value at a specific leaf path in a treedict.
+        @param tree the tree in which you want to insert the given leaf value.
+        @param path the path in the tree dict where you want to place the given leaf value.
+        @param leaf the given leaf value.
+        '''
         current = tree
         for key in path[:-1]:
             current = current.setdefault(key, {})
@@ -210,6 +232,11 @@ class Packnet(CLMethod):
         return tree
     
     def _get_leaf_from_tree(self, tree, path):
+        '''
+        Retrieves the value stored at a specified path in a given tree dict. Note that it leaves the tree unchanged.
+        @param tree the tree from which the value must be retrieved.
+        @param path the path at which the leaf that you want to retrieve is located.
+        '''
         if len(path) == 0:
             return tree
         elif isinstance(tree, Mapping):
