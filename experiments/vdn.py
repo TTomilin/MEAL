@@ -137,6 +137,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     max_episode_steps: int = 400  # env episode length; separate from num_steps (collection phase size)
     evaluation: bool = True
+    eval_deterministic: bool = False
     eval_num_episodes: int = 5
     record_video: bool = False
     video_length: int = 250
@@ -513,7 +514,8 @@ def main():
     # Evaluation function (VDN-specific: argmax Q-values)
     evaluate_env = make_vdn_eval_fn(
         reset_switch, step_switch, network, agents,
-        num_envs=cfg.num_envs, num_steps=cfg.max_episode_steps, use_cnn=cfg.use_cnn
+        num_envs=cfg.num_envs, num_steps=cfg.max_episode_steps, use_cnn=cfg.use_cnn,
+        eval_deterministic=cfg.eval_deterministic, seed=cfg.seed
     )
 
     # Importance function: Q-specific version for EWC/MAS, else zeros
