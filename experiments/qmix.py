@@ -189,7 +189,7 @@ def make_qmix_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: 
     num_agents = len(agents)
 
     @jax.jit
-    def evaluate_env(cl_state, rng, q_params, env_idx):
+    def evaluate_env(cl_state, rng, params, env_idx):
         if eval_deterministic:
             rng = jax.random.PRNGKey(env_idx + seed) # get new rng, fixed per task
         rng, env_rng = jax.random.split(rng)
@@ -213,15 +213,15 @@ def make_qmix_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: 
             # Greedy Q-values for all agents (IGM: argmax Q_total = argmax per agent)
             if isinstance(cl, Packnet):
                 # if we use packnet, apply appropriate mask first:
-                masked_q_params = cl.apply_eval_mask(q_params, mask)
+                masked_params = cl.apply_eval_mask(params, mask)
                 q_vals = jax.vmap(
                     lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
-                )(masked_q_params, obs_b)  # (A, num_envs, action_dim)
+                )(masked_params['q'], obs_b)  # (A, num_envs, action_dim)
             else:
                 # if not, use no mask:
                 q_vals = jax.vmap(
                     lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
-                )(q_params, obs_b)  # (A, num_envs, action_dim)
+                )(params['q'], obs_b)  # (A, num_envs, action_dim)
 
             actions_array = jnp.argmax(q_vals, axis=-1)  # (A, num_envs)
             env_act = unbatchify(actions_array, agents, num_envs, num_agents)
@@ -551,7 +551,7 @@ def main():
 
     # Evaluation function: greedy argmax Q-values (IGM property makes this correct for QMIX)
     evaluate_env = make_qmix_eval_fn(
-        reset_switch, step_switch, network, agents,
+        cl, reset_switch, step_switch, network, agents,
         num_envs=cfg.num_envs, num_steps=cfg.max_episode_steps, use_cnn=cfg.use_cnn,
         eval_deterministic=cfg.eval_deterministic, seed=cfg.seed
     )
@@ -827,7 +827,7 @@ def main():
                     if cfg.evaluation:
                         # Pass Q-network params only to eval (mixing network not needed)
                         avg_rewards, avg_soups = evaluate_all_envs(
-                            cl_state, eval_rng, train_state.params["q"], seq_length, evaluate_env
+                            cl_state, eval_rng, train_state.params, seq_length, evaluate_env
                         )
                         metrics = add_eval_metrics(
                             avg_rewards, avg_soups, env_names, max_soup_vals, metrics
@@ -960,7 +960,7 @@ def main():
             # create new runner state for fine-tuning:
             rng, finetune_rng = jax.random.split(rng)
             runner_state = train_state, (last_obs, env_state), finetune_rng
-
+            
             # run fine-tuning
             runner_state, metrics = jax.lax.scan(
                 f=_update_step,
