@@ -169,7 +169,7 @@ class Config:
 # VDN-specific helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-def make_vdn_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
+def make_vdn_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: int,
                      num_steps: int, use_cnn: bool, eval_deterministic: bool, seed: int):
     """
     Returns a JITted evaluate_env(rng, params, env_idx) -> (avg_reward, avg_soups)
@@ -188,6 +188,11 @@ def make_vdn_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
         total_rewards = jnp.zeros((num_envs,), jnp.float32)
         total_soups = jnp.zeros((num_envs,), jnp.float32)
 
+        mask = None
+        if isinstance(cl, Packnet):
+            # if we use packnet, we retrieve appropriate mask first:
+            mask = cl.get_eval_mask(env_idx, cl_state) # note that this collects all masks <= env_idx
+
         def one_step(carry, _):
             env_state, obs, rewards, soups, rng = carry
 
@@ -195,9 +200,17 @@ def make_vdn_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
             obs_b = obs_b.reshape((num_agents, num_envs) + obs_b.shape[1:])
 
             # Greedy Q-values for all agents
-            q_vals = jax.vmap(
-                lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
-            )(params, obs_b)  # (A, num_envs, action_dim)
+            if isinstance(cl, Packnet):
+                # if we use packnet, apply appropriate mask first:
+                masked_params = cl.apply_eval_mask(params, mask)
+                q_vals = jax.vmap(
+                    lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
+                )(masked_params, obs_b)  # (A, num_envs, action_dim)
+            else:
+                # else, don't mask:
+                q_vals = jax.vmap(
+                    lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
+                )(params, obs_b)  # (A, num_envs, action_dim)
 
             actions_array = jnp.argmax(q_vals, axis=-1)  # (A, num_envs)
             env_act = unbatchify(actions_array, agents, num_envs, num_agents)
@@ -512,7 +525,7 @@ def main():
 
     # Evaluation function (VDN-specific: argmax Q-values)
     evaluate_env = make_vdn_eval_fn(
-        reset_switch, step_switch, network, agents,
+        cl, reset_switch, step_switch, network, agents,
         num_envs=cfg.num_envs, num_steps=cfg.max_episode_steps, use_cnn=cfg.use_cnn,
         eval_deterministic=cfg.eval_deterministic, seed=cfg.seed
     )

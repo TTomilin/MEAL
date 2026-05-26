@@ -180,7 +180,7 @@ class Config:
 # QMIX-specific helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-def make_qmix_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
+def make_qmix_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: int,
                       num_steps: int, use_cnn: bool, eval_deterministic: bool, seed: int):
     """
     Returns a JITted evaluate_env(rng, q_params, env_idx) -> (avg_reward, avg_soups).
@@ -199,6 +199,11 @@ def make_qmix_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
         total_rewards = jnp.zeros((num_envs,), jnp.float32)
         total_soups = jnp.zeros((num_envs,), jnp.float32)
 
+        mask = None
+        if isinstance(cl, Packnet):
+            # if we use packnet, we retrieve appropriate mask first:
+            mask = cl.get_eval_mask(env_idx, cl_state) # note that this collects all masks <= env_idx
+
         def one_step(carry, _):
             env_state, obs, rewards, soups, rng = carry
 
@@ -206,9 +211,17 @@ def make_qmix_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
             obs_b = obs_b.reshape((num_agents, num_envs) + obs_b.shape[1:])
 
             # Greedy Q-values for all agents (IGM: argmax Q_total = argmax per agent)
-            q_vals = jax.vmap(
-                lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
-            )(q_params, obs_b)  # (A, num_envs, action_dim)
+            if isinstance(cl, Packnet):
+                # if we use packnet, apply appropriate mask first:
+                masked_q_params = cl.apply_eval_mask(q_params, mask)
+                q_vals = jax.vmap(
+                    lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
+                )(masked_q_params, obs_b)  # (A, num_envs, action_dim)
+            else:
+                # if not, use no mask:
+                q_vals = jax.vmap(
+                    lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
+                )(q_params, obs_b)  # (A, num_envs, action_dim)
 
             actions_array = jnp.argmax(q_vals, axis=-1)  # (A, num_envs)
             env_act = unbatchify(actions_array, agents, num_envs, num_agents)
