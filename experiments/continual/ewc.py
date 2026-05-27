@@ -73,8 +73,9 @@ class EWC(RegCLMethod):
                     obs, state, acc, rng = carry
                     rng, s1, s2 = jax.random.split(rng, 3)
 
-                    # batchify to (A, obs_dim) or (A, H, W, C)
-                    obs_b = batchify(obs, agents, num_agents, not use_cnn)
+                    # Add fake env dim so batchify produces (A, *obs_shape) not (A*H, W, C)
+                    obs_e = jax.tree_util.tree_map(lambda v: jnp.expand_dims(v, 0), obs)
+                    obs_b = batchify(obs_e, agents, num_agents, not use_cnn)
 
                     # forward once
                     pi, _, _ = network.apply(params, obs_b, env_idx=env_idx)
