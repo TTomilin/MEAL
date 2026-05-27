@@ -334,7 +334,7 @@ def main():
 
     # Initialize the network
     rng, network_rng = jax.random.split(rng)
-    init_x = jnp.zeros((1, obs_dim))
+    init_x = jnp.zeros((1, *temp_obs_batch.shape[1:]))
     network_params = network.init(network_rng, init_x)
 
     # Initialize the optimizer
