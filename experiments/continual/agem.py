@@ -483,7 +483,7 @@ def update_agem_memory(agem_sample_size, env_idx, advantages, mem, rng, targets,
     """
 
     rng, mem_rng = jax.random.split(rng)
-    obs_dim = traj_batch.obs.shape[-1]
+    obs_shape = traj_batch.obs.shape[2:]  # (H, W, C) for CNN or (flat_dim,) for MLP
 
     # Flatten ALL (step, actor) pairs so we sample individual transitions,
     # not full time-steps.  Previously the code permuted over num_steps and
@@ -493,7 +493,7 @@ def update_agem_memory(agem_sample_size, env_idx, advantages, mem, rng, targets,
     total = advantages.shape[0] * advantages.shape[1]   # num_steps * num_actors
     idx = jax.random.randint(mem_rng, (agem_sample_size,), 0, total)
 
-    new_obs      = traj_batch.obs.reshape(-1, obs_dim)[idx]   # [S, obs_dim]
+    new_obs      = traj_batch.obs.reshape(-1, *obs_shape)[idx]   # [S, *obs_shape]
     new_actions  = traj_batch.action.reshape(-1)[idx]          # [S]
     new_log_probs = traj_batch.log_prob.reshape(-1)[idx]       # [S]
     new_adv      = advantages.reshape(-1)[idx]                 # [S]
