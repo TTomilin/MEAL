@@ -53,7 +53,7 @@ class CNN(nn.Module):
         x = conv("conv1", x, (3, 3))
         x = conv("conv2", x, (3, 3))
 
-        x = x.reshape((x.shape[0], -1))
+        x = x.mean(axis=(1, 2))  # global avg pool → (batch, channels), env-size-invariant
         x = nn.Dense(64, name=f"{self.name_prefix}_proj",
                      kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
         x = act(x)
