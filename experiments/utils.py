@@ -130,14 +130,9 @@ def init_cl_state(params: FrozenVariableDict, regularize_critic: bool,
         )
     else:
         mask = build_reg_weights(params, regularize_critic, regularize_heads)
-        # L2+MLP: start importance=mask so task-1 penalty acts as weight decay,
-        # preventing over-specialisation. L2+CNN keeps zeros so task-1 is free
-        # (CNN features can't develop properly when anchored to random init).
-        l2_mlp = getattr(cl, 'name', None) == 'l2' and not cfg.use_cnn
-        init_importance = mask if l2_mlp else jax.tree.map(jnp.zeros_like, params)
         return RegCLState(
             old_params=jax.tree.map(lambda x: x.copy(), params),
-            importance=init_importance,
+            importance=jax.tree.map(jnp.zeros_like, params),
             mask=mask
         )
 
