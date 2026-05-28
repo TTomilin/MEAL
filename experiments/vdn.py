@@ -959,8 +959,6 @@ def main():
         for task_idx, (env_rng, train_env, env) in enumerate(
                 zip(env_rngs, train_envs, envs)
         ):
-            if cfg.single_task_idx is not None and task_idx != cfg.single_task_idx:
-                continue
             print(f"Training on task {task_idx + 1}/{seq_length}: {env.layout_name}")
 
             rng, train_state, cl_state = train_on_environment(
@@ -989,9 +987,6 @@ def main():
             )
             save_params(path, train_state, env_kwargs=env.layout,
                         layout_name=env.layout_name, config=cfg)
-
-            if cfg.single_task_idx is not None:
-                break
 
     # ── Run ──────────────────────────────────────────────────────────────────
     if cfg.cl_method.lower() in ("agem", "er_ace"):
