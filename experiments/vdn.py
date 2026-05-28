@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Sequence, Optional, List, Literal
 
 import flax
-import flax.linen as nn
 import jax
 import jax.experimental
 import jax.numpy as jnp
@@ -21,6 +20,7 @@ from experiments.continual.agem import (
     AGEM, init_vdn_agem_memory, sample_vdn_task_slot,
     compute_vdn_memory_gradient, update_vdn_agem_memory, agem_project,
 )
+from experiments.continual.er_ace import ERACE
 from experiments.continual.base import RegCLMethod
 from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
@@ -90,7 +90,6 @@ class Config:
     use_task_id: bool = True
     use_multihead: bool = True
     normalize_importance: bool = False
-    regularize_heads: bool = False
 
     # Regularization method specific parameters
     importance_episodes: int = 5
@@ -99,14 +98,16 @@ class Config:
     importance_mode: str = "online"  # "online", "last" or "multi"
     importance_decay: float = 0.9  # EMA decay for online mode
 
-    # AGEM specific parameters
+    # AGEM / ER-ACE specific parameters
     agem_memory_size: int = 100000
     agem_sample_size: int = 1024
+    er_ace_coef: float = 1.0
 
     # Packnet specific parameters
     train_epochs: int = 8
     finetune_epochs: int = 2
     finetune_timesteps: float = 1e7
+    re_init_pruned_weights: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
@@ -136,7 +137,6 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     max_episode_steps: int = 400  # env episode length; separate from num_steps (collection phase size)
     evaluation: bool = True
-    eval_deterministic: bool = False
     eval_num_episodes: int = 5
     record_video: bool = False
     video_length: int = 250
@@ -169,8 +169,8 @@ class Config:
 # VDN-specific helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-def make_vdn_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: int,
-                     num_steps: int, use_cnn: bool, eval_deterministic: bool, seed: int):
+def make_vdn_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
+                     num_steps: int, use_cnn: bool):
     """
     Returns a JITted evaluate_env(rng, params, env_idx) -> (avg_reward, avg_soups)
     compatible with evaluate_all_envs().  Uses greedy (argmax) Q-values.
@@ -179,19 +179,12 @@ def make_vdn_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: i
 
     @jax.jit
     def evaluate_env(cl_state, rng, params, env_idx):
-        if eval_deterministic:
-            rng = jax.random.PRNGKey(env_idx + seed) # get new rng, fixed per task
         rng, env_rng = jax.random.split(rng)
         reset_rng = jax.random.split(env_rng, num_envs)
         obs, env_state = jax.vmap(lambda k: reset_switch(k, jnp.int32(env_idx)))(reset_rng)
 
         total_rewards = jnp.zeros((num_envs,), jnp.float32)
         total_soups = jnp.zeros((num_envs,), jnp.float32)
-
-        mask = None
-        if isinstance(cl, Packnet):
-            # if we use packnet, we retrieve appropriate mask first:
-            mask = cl.get_eval_mask(env_idx, cl_state) # note that this collects all masks <= env_idx
 
         def one_step(carry, _):
             env_state, obs, rewards, soups, rng = carry
@@ -200,17 +193,9 @@ def make_vdn_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: i
             obs_b = obs_b.reshape((num_agents, num_envs) + obs_b.shape[1:])
 
             # Greedy Q-values for all agents
-            if isinstance(cl, Packnet):
-                # if we use packnet, apply appropriate mask first:
-                masked_params = cl.apply_eval_mask(params, mask)
-                q_vals = jax.vmap(
-                    lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
-                )(masked_params, obs_b)  # (A, num_envs, action_dim)
-            else:
-                # else, don't mask:
-                q_vals = jax.vmap(
-                    lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
-                )(params, obs_b)  # (A, num_envs, action_dim)
+            q_vals = jax.vmap(
+                lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
+            )(params, obs_b)  # (A, num_envs, action_dim)
 
             actions_array = jnp.argmax(q_vals, axis=-1)  # (A, num_envs)
             env_act = unbatchify(actions_array, agents, num_envs, num_agents)
@@ -365,7 +350,7 @@ def main():
         cfg.cl_method = "FT"
     if cfg.cl_method is None:
         raise ValueError(
-            "cl_method is required (e.g., ewc, mas, l2, ft, agem)."
+            "cl_method is required (e.g., ewc, mas, l2, ft, agem, er_ace)."
         )
     # Default regularization coefficients
     if cfg.reg_coef is None:
@@ -377,11 +362,15 @@ def main():
         l2=L2(),
         ft=FT(),
         agem=AGEM(),
+        er_ace=ERACE(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
         packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4,
-        train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
-        prunable_layers=[nn.Dense, nn.Conv]
-    ))
+                        train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
+                        prunable_layers=[], re_init_pruned_weights=cfg.re_init_pruned_weights),
+    )
     cl = method_map[cfg.cl_method.lower()]
+
+    if cfg.cl_method.lower() == "packnet":
+        raise ValueError("Packnet is not supported for VDN (value-based method).")
 
     difficulty = cfg.difficulty
     seq_length = cfg.seq_length
@@ -465,7 +454,6 @@ def main():
 
     cfg.num_actors = num_agents * cfg.num_envs
     cfg.num_updates = int(cfg.steps_per_task // cfg.num_steps // cfg.num_envs)
-    cfg.finetune_updates = cfg.finetune_timesteps // cfg.num_steps // cfg.num_envs
 
     # Build CTRolloutManagers for training
     train_envs = [
@@ -525,9 +513,8 @@ def main():
 
     # Evaluation function (VDN-specific: argmax Q-values)
     evaluate_env = make_vdn_eval_fn(
-        cl, reset_switch, step_switch, network, agents,
-        num_envs=cfg.num_envs, num_steps=cfg.max_episode_steps, use_cnn=cfg.use_cnn,
-        eval_deterministic=cfg.eval_deterministic, seed=cfg.seed
+        reset_switch, step_switch, network, agents,
+        num_envs=cfg.num_envs, num_steps=cfg.max_episode_steps, use_cnn=cfg.use_cnn
     )
 
     # Importance function: Q-specific version for EWC/MAS, else zeros
@@ -693,10 +680,40 @@ def main():
                         _mask = (past_sizes[_t] > 0).astype(jnp.float32)
                         _t_grads = jax.tree.map(lambda g, m=_mask: g * m, _t_grads)
                         g_mem = jax.tree.map(jnp.add, g_mem, _t_grads)
+                    # Zero q_head from g_mem before projection. With multi-head architecture,
+                    # g_mem contains nonzero head gradients for past tasks, so the AGEM
+                    # projection term (-alpha * g_mem) would apply those gradients to past
+                    # heads that the current TD loss never touches. Combined with a reset
+                    # Adam state (v≈0), the effective LR on those heads is ~31× nominal,
+                    # which destroys task 0 performance on the very first gradient step.
+                    # Zeroing head gradients in g_mem restricts AGEM to the encoder only.
+                    def _zero_q_head(path, g):
+                        return jnp.zeros_like(g) if "q_head" in "/".join(str(p) for p in path) else g
+                    g_mem = jax.tree_util.tree_map_with_path(_zero_q_head, g_mem)
                     grads, _ = agem_project(grads, g_mem)
 
-                if cfg.cl_method == "packnet":
-                    grads = cl.mask_gradients(cl_state, grads)
+                elif cfg.cl_method.lower() == "er_ace":
+                    past_sizes = cl_state.sizes.at[env_idx].set(0)
+                    _max_tasks = cl_state.obs.shape[0]
+                    samples_per_task = max(1, cfg.agem_sample_size // _max_tasks)
+                    g_mem = jax.tree.map(jnp.zeros_like, grads)
+                    for _t in range(_max_tasks):
+                        _t_rng = jax.random.fold_in(rng, _t)
+                        _t_obs, _t_acts, _t_rews, _t_nobs, _t_dones = sample_vdn_task_slot(
+                            cl_state, _t, samples_per_task, _t_rng
+                        )
+                        _t_grads = compute_vdn_memory_gradient(
+                            network, train_state.params,
+                            train_state.target_network_params,
+                            cfg.gamma,
+                            _t_obs, _t_acts, _t_rews, _t_nobs, _t_dones,
+                            env_idx=_t,
+                        )
+                        _mask = (past_sizes[_t] > 0).astype(jnp.float32)
+                        _t_grads = jax.tree.map(lambda g, m=_mask: g * m, _t_grads)
+                        g_mem = jax.tree.map(jnp.add, g_mem, _t_grads)
+                    # ER-ACE: add memory gradient directly (no projection)
+                    grads = jax.tree.map(lambda g, gm: g + cfg.er_ace_coef * gm, grads, g_mem)
 
                 train_state = train_state.apply_gradients(grads=grads)
                 train_state = train_state.replace(grad_steps=train_state.grad_steps + 1)
@@ -819,38 +836,12 @@ def main():
             _update_step, runner_state, xs=None, length=cfg.num_updates
         )
 
-        if cfg.cl_method.lower() == "packnet":
-            # Unpack runner state
-            train_state, (last_obs, env_state), _rng = runner_state
-
-            # Prune the model and update the parameters
-            train_state, cl_state = cl.on_train_end(train_state, cl_state)
-
-            # create new runner state for fine-tuning:
-            rng, finetune_rng = jax.random.split(rng)
-            runner_state = train_state, (last_obs, env_state), finetune_rng
-
-            # run fine-tuning
-            runner_state, metrics = jax.lax.scan(
-                f=_update_step,
-                init=runner_state,
-                xs=None,
-                length=cfg.finetune_updates
-            )
-
-            train_state, (last_obs, env_state), _rng = runner_state
-            # handle the end of the finetune phase
-            train_state, cl_state = cl.on_finetune_end(train_state, cl_state)
-
-            # add cl_state (packnet_state in this case) to new runner state
-            train_state, (last_obs, env_state), _rng = runner_state
-
         final_train_state = runner_state[0]
         final_expl_state = runner_state[1]
 
-        # AGEM: collect one final on-policy batch with the trained policy and
+        # AGEM / ER-ACE: collect one final on-policy batch with the trained policy and
         # store it as the memory for this task.
-        if cfg.cl_method.lower() == "agem":
+        if cfg.cl_method.lower() in ("agem", "er_ace"):
             rng, mem_rng = jax.random.split(rng)
 
             def _mem_step(carry, _):
@@ -951,7 +942,6 @@ def main():
                 "num_tasks": seq_length,
                 "use_multihead": config.use_multihead,
                 "use_task_id": config.use_task_id,
-                "regularize_heads": config.regularize_heads,
                 "use_layer_norm": config.use_layer_norm,
                 "activation": config.activation,
                 "strategy": config.strategy,
@@ -1004,7 +994,7 @@ def main():
                 break
 
     # ── Run ──────────────────────────────────────────────────────────────────
-    if cfg.cl_method.lower() == "agem":
+    if cfg.cl_method.lower() in ("agem", "er_ace"):
         obs_dim = int(np.prod(temp_env.observation_space().shape))
         cl_state = init_vdn_agem_memory(
             max_size=cfg.agem_memory_size,
@@ -1013,7 +1003,7 @@ def main():
             max_tasks=seq_length,
         )
     else:
-        cl_state = init_cl_state(train_state.params, False, cfg.regularize_heads, cl, cfg)
+        cl_state = init_cl_state(train_state.params, False, not cfg.use_multihead, cl, cfg)
 
     rng, train_rng = jax.random.split(rng)
     loop_over_envs(train_rng, train_state, cl_state)

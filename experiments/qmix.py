@@ -8,7 +8,6 @@ from typing import Sequence, Optional, List, Literal
 
 import chex
 import flax
-import flax.linen as nn
 import jax
 import jax.experimental
 import jax.numpy as jnp
@@ -22,6 +21,7 @@ from experiments.continual.agem import (
     AGEM, init_qmix_agem_memory, sample_qmix_task_slot,
     compute_qmix_memory_gradient, update_qmix_agem_memory, agem_project,
 )
+from experiments.continual.er_ace import ERACE
 from experiments.continual.base import RegCLMethod
 from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
@@ -75,13 +75,13 @@ class Config:
     eps_finish: float = 0.05
     eps_decay: float = 0.1  # fraction of num_updates over which eps decays
     max_grad_norm: float = 1.0
-    update_epochs: int = 8  # passes over collected data per update
+    update_epochs: int = 1   # passes over collected data per update
     num_minibatches: int = 16  # minibatches per epoch
     lr: float = 1e-3
     anneal_lr: bool = False
     gamma: float = 0.99
     tau: float = 1.0  # target network update rate (1 = hard copy)
-    target_update_interval: int = 1
+    target_update_interval: int = 10
 
     # Reward distribution settings
     sparse_rewards: bool = False  # only shared delivery reward, no shaped rewards
@@ -102,7 +102,6 @@ class Config:
     use_task_id: bool = True
     use_multihead: bool = True
     normalize_importance: bool = False
-    regularize_heads: bool = False
 
     # Regularization method specific parameters
     importance_episodes: int = 5
@@ -111,14 +110,16 @@ class Config:
     importance_mode: str = "online"  # "online", "last" or "multi"
     importance_decay: float = 0.9  # EMA decay for online mode
 
-    # AGEM specific parameters
+    # AGEM / ER-ACE specific parameters
     agem_memory_size: int = 100000
     agem_sample_size: int = 1024
+    er_ace_coef: float = 1.0
 
     # Packnet specific parameters
     train_epochs: int = 8
     finetune_epochs: int = 2
     finetune_timesteps: float = 1e7
+    re_init_pruned_weights: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
@@ -152,7 +153,6 @@ class Config:
     record_video: bool = False
     video_length: int = 250
     log_interval: int = 5
-    eval_deterministic: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # LOGGING PARAMETERS
@@ -180,8 +180,8 @@ class Config:
 # QMIX-specific helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-def make_qmix_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: int,
-                      num_steps: int, use_cnn: bool, eval_deterministic: bool, seed: int):
+def make_qmix_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
+                      num_steps: int, use_cnn: bool):
     """
     Returns a JITted evaluate_env(rng, q_params, env_idx) -> (avg_reward, avg_soups).
     Due to the IGM property, greedy QMIX actions = argmax per individual Q-value.
@@ -189,20 +189,13 @@ def make_qmix_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: 
     num_agents = len(agents)
 
     @jax.jit
-    def evaluate_env(cl_state, rng, params, env_idx):
-        if eval_deterministic:
-            rng = jax.random.PRNGKey(env_idx + seed) # get new rng, fixed per task
+    def evaluate_env(cl_state, rng, q_params, env_idx):
         rng, env_rng = jax.random.split(rng)
         reset_rng = jax.random.split(env_rng, num_envs)
         obs, env_state = jax.vmap(lambda k: reset_switch(k, jnp.int32(env_idx)))(reset_rng)
 
         total_rewards = jnp.zeros((num_envs,), jnp.float32)
         total_soups = jnp.zeros((num_envs,), jnp.float32)
-
-        mask = None
-        if isinstance(cl, Packnet):
-            # if we use packnet, we retrieve appropriate mask first:
-            mask = cl.get_eval_mask(env_idx, cl_state) # note that this collects all masks <= env_idx
 
         def one_step(carry, _):
             env_state, obs, rewards, soups, rng = carry
@@ -211,17 +204,9 @@ def make_qmix_eval_fn(cl, reset_switch, step_switch, network, agents, num_envs: 
             obs_b = obs_b.reshape((num_agents, num_envs) + obs_b.shape[1:])
 
             # Greedy Q-values for all agents (IGM: argmax Q_total = argmax per agent)
-            if isinstance(cl, Packnet):
-                # if we use packnet, apply appropriate mask first:
-                masked_params = cl.apply_eval_mask(params, mask)
-                q_vals = jax.vmap(
-                    lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
-                )(masked_params['q'], obs_b)  # (A, num_envs, action_dim)
-            else:
-                # if not, use no mask:
-                q_vals = jax.vmap(
-                    lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
-                )(params['q'], obs_b)  # (A, num_envs, action_dim)
+            q_vals = jax.vmap(
+                lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
+            )(q_params, obs_b)  # (A, num_envs, action_dim)
 
             actions_array = jnp.argmax(q_vals, axis=-1)  # (A, num_envs)
             env_act = unbatchify(actions_array, agents, num_envs, num_agents)
@@ -377,7 +362,7 @@ def main():
         cfg.cl_method = "ft"
     if cfg.cl_method is None:
         raise ValueError(
-            "cl_method is required (e.g., ewc, mas, l2, ft, agem)."
+            "cl_method is required (e.g., ewc, mas, l2, ft, agem, er_ace)."
         )
     # Default regularization coefficients
     if cfg.reg_coef is None:
@@ -389,11 +374,15 @@ def main():
         l2=L2(),
         ft=FT(),
         agem=AGEM(),
+        er_ace=ERACE(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
         packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4,
-                      train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
-                      prunable_layers=[nn.Dense, nn.Conv])
+                        train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
+                        prunable_layers=[], re_init_pruned_weights=cfg.re_init_pruned_weights),
     )
     cl = method_map[cfg.cl_method.lower()]
+
+    if cfg.cl_method.lower() == "packnet":
+        raise ValueError("Packnet is not supported for QMIX (value-based method).")
 
     difficulty = cfg.difficulty
     seq_length = cfg.seq_length
@@ -477,7 +466,6 @@ def main():
 
     cfg.num_actors = num_agents * cfg.num_envs
     cfg.num_updates = int(cfg.steps_per_task // cfg.num_steps // cfg.num_envs)
-    cfg.finetune_updates = cfg.finetune_timesteps // cfg.num_steps // cfg.num_envs
 
     # Build CTRolloutManagers for training
     train_envs = [
@@ -551,9 +539,8 @@ def main():
 
     # Evaluation function: greedy argmax Q-values (IGM property makes this correct for QMIX)
     evaluate_env = make_qmix_eval_fn(
-        cl, reset_switch, step_switch, network, agents,
-        num_envs=cfg.num_envs, num_steps=cfg.max_episode_steps, use_cnn=cfg.use_cnn,
-        eval_deterministic=cfg.eval_deterministic, seed=cfg.seed
+        reset_switch, step_switch, network, agents,
+        num_envs=cfg.num_envs, num_steps=cfg.max_episode_steps, use_cnn=cfg.use_cnn
     )
 
     # Importance function: Q-network only (mixing network is not regularised)
@@ -666,21 +653,27 @@ def main():
             rew_flat = timesteps.rewards["__all__"].reshape(N)
             don_flat = timesteps.dones["__all__"].reshape(N).astype(jnp.float32)
 
-            # Compute QMIX TD-targets once using the frozen target networks.
+            # Compute QMIX TD-targets (Double-DQN: online selects action, target evaluates).
             tgt_q_params = train_state.target_network_params["q"]
             tgt_mix_params = train_state.target_network_params["mix"]
 
             nxt_b = jnp.stack([nxt_flat[a] for a in agents])  # (A, N, obs_dim)
-            q_next = jax.vmap(
+            # Online network picks the greedy action at s'
+            q_next_online = jax.vmap(
+                lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
+            )(train_state.params["q"], nxt_b)  # (A, N, action_dim)
+            best_actions = jnp.argmax(q_next_online, axis=-1, keepdims=True)  # (A, N, 1)
+            # Target network evaluates that action to avoid overestimation
+            q_next_target = jax.vmap(
                 lambda p, o: network.apply(p, o, env_idx=env_idx), in_axes=(None, 0)
             )(tgt_q_params, nxt_b)  # (A, N, action_dim)
-            q_next_max = jnp.max(q_next, axis=-1)  # (A, N)
+            q_next_max = jnp.take_along_axis(q_next_target, best_actions, axis=-1).squeeze(-1)  # (A, N)
             q_next_max_T = q_next_max.T  # (N, A)
 
             q_total_next = mixing_network.apply(tgt_mix_params, q_next_max_T, ngs_flat)  # (N,)
-            qmix_target = rew_flat + (1 - don_flat) * cfg.gamma * q_total_next
-
-            # shape: (N,) – stop_gradient implicit: uses target_network_params
+            qmix_target = jax.lax.stop_gradient(
+                rew_flat + (1 - don_flat) * cfg.gamma * q_total_next
+            )  # (N,)
 
             def _learn_minibatch(train_state, mb_indices):
                 """One gradient step on a minibatch of on-policy transitions."""
@@ -743,8 +736,32 @@ def main():
                         g_mem = jax.tree.map(jnp.add, g_mem, _t_grads)
                     grads, _ = agem_project(grads, g_mem)
 
-                if cfg.cl_method.lower() == "packnet":
-                    grads = cl.mask_gradients(cl_state, grads)
+                elif cfg.cl_method.lower() == "er_ace":
+                    # ER-ACE: add memory gradient directly over combined (Q + mixing) params
+                    past_sizes = cl_state.sizes.at[env_idx].set(0)
+                    _max_tasks = cl_state.obs.shape[0]
+                    samples_per_task = max(1, cfg.agem_sample_size // _max_tasks)
+                    g_mem = jax.tree.map(jnp.zeros_like, grads)
+                    for _t in range(_max_tasks):
+                        _t_rng = jax.random.fold_in(rng, _t)
+                        (
+                            _t_obs, _t_global, _t_acts, _t_rews,
+                            _t_nobs, _t_next_global, _t_dones
+                        ) = sample_qmix_task_slot(cl_state, _t, samples_per_task, _t_rng)
+                        _t_grads = compute_qmix_memory_gradient(
+                            network, mixing_network,
+                            train_state.params,
+                            train_state.target_network_params,
+                            cfg.gamma,
+                            _t_obs, _t_global, _t_acts, _t_rews,
+                            _t_nobs, _t_next_global, _t_dones,
+                            env_idx=_t,
+                        )
+                        _mask = (past_sizes[_t] > 0).astype(jnp.float32)
+                        _t_grads = jax.tree.map(lambda g, m=_mask: g * m, _t_grads)
+                        g_mem = jax.tree.map(jnp.add, g_mem, _t_grads)
+                    # ER-ACE: add memory gradient directly (no projection)
+                    grads = jax.tree.map(lambda g, gm: g + cfg.er_ace_coef * gm, grads, g_mem)
 
                 train_state = train_state.apply_gradients(grads=grads)
                 train_state = train_state.replace(grad_steps=train_state.grad_steps + 1)
@@ -827,7 +844,7 @@ def main():
                     if cfg.evaluation:
                         # Pass Q-network params only to eval (mixing network not needed)
                         avg_rewards, avg_soups = evaluate_all_envs(
-                            cl_state, eval_rng, train_state.params, seq_length, evaluate_env
+                            cl_state, eval_rng, train_state.params["q"], seq_length, evaluate_env
                         )
                         metrics = add_eval_metrics(
                             avg_rewards, avg_soups, env_names, max_soup_vals, metrics
@@ -871,9 +888,9 @@ def main():
         final_train_state = runner_state[0]
         final_expl_state = runner_state[1]
 
-        # AGEM: collect one final on-policy batch with the trained policy and
+        # AGEM / ER-ACE: collect one final on-policy batch with the trained policy and
         # store it as the memory for this task.
-        if cfg.cl_method.lower() == "agem":
+        if cfg.cl_method.lower() in ("agem", "er_ace"):
             rng, mem_rng = jax.random.split(rng)
 
             def _mem_step(carry, _):
@@ -950,32 +967,6 @@ def main():
                 _obs_b, _gs, _act_b, _rew, _nxt_b, _ngs, _don,
             )
 
-        if cfg.cl_method.lower() == "packnet":
-            # Unpack runner state
-            train_state, (last_obs, env_state), _rng = runner_state
-
-            # Prune the model and update the parameters
-            train_state, cl_state = cl.on_train_end(train_state, cl_state)
-
-            # create new runner state for fine-tuning:
-            rng, finetune_rng = jax.random.split(rng)
-            runner_state = train_state, (last_obs, env_state), finetune_rng
-            
-            # run fine-tuning
-            runner_state, metrics = jax.lax.scan(
-                f=_update_step,
-                init=runner_state,
-                xs=None,
-                length=cfg.finetune_updates
-            )
-
-            train_state, (last_obs, env_state), _rng = runner_state
-            # handle the end of the finetune phase
-            train_state, cl_state = cl.on_finetune_end(train_state, cl_state)
-
-            # add cl_state (packnet_state in this case) to new runner state
-            train_state, (last_obs, env_state), _rng = runner_state
-
         return rng, final_train_state, cl_state
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -1009,7 +1000,6 @@ def main():
                 "num_tasks": seq_length,
                 "use_multihead": config.use_multihead,
                 "use_task_id": config.use_task_id,
-                "regularize_heads": config.regularize_heads,
                 "use_layer_norm": config.use_layer_norm,
                 "activation": config.activation,
                 "strategy": config.strategy,
@@ -1062,7 +1052,7 @@ def main():
                 break
 
     # ── Run ──────────────────────────────────────────────────────────────────
-    if cfg.cl_method.lower() == "agem":
+    if cfg.cl_method.lower() in ("agem", "er_ace"):
         cl_state = init_qmix_agem_memory(
             max_size=cfg.agem_memory_size,
             num_agents=num_agents,
@@ -1071,11 +1061,8 @@ def main():
             max_tasks=seq_length,
         )
     else:
-        if cfg.cl_method.lower() == "packnet":
-            cl_state = init_cl_state(train_state.params, False, cfg.regularize_heads, cl, cfg)
-        else:
-            cl_state = init_cl_state(q_network_params, False, cfg.regularize_heads, cl, cfg)
-
+        # CL state tracks Q-network params only
+        cl_state = init_cl_state(q_network_params, False, not cfg.use_multihead, cl, cfg)
 
     rng, train_rng = jax.random.split(rng)
     loop_over_envs(train_rng, train_state, cl_state)
