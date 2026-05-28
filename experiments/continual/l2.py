@@ -13,18 +13,17 @@ class L2(RegCLMethod):
     name = "l2"
 
     def update_state(self, cl_state: CLState, new_params: FrozenDict, new_importance: FrozenDict) -> CLState:
-        # importance acts as an "has previous task" gate: starts at zeros, set to
-        # mask (uniform 1 for active params) after first task so penalty only
-        # activates from task 2 onward — same gating behaviour as EWC/MAS.
-        return RegCLState(old_params=new_params, importance=cl_state.mask, mask=cl_state.mask)
+        # L2 doesn't use importance — penalty is always active (acts as weight decay
+        # on task 1, rolling regularisation on tasks 2+). Importance stays zeros.
+        return RegCLState(old_params=new_params, importance=cl_state.importance, mask=cl_state.mask)
 
     def penalty(self,
                 params: FrozenDict,
                 cl_state: CLState,
                 coef: float) -> jnp.ndarray:
         diff2 = jax.tree_util.tree_map(
-            lambda p, o, m, imp: m * imp * (p - o) ** 2,
-            params, cl_state.old_params, cl_state.mask, cl_state.importance)
+            lambda p, o, m: m * (p - o) ** 2,
+            params, cl_state.old_params, cl_state.mask)
 
         tot = jax.tree_util.tree_reduce(lambda a, b: a + b.sum(), diff2, 0.)
         denom = jax.tree_util.tree_reduce(lambda a, b: a + b.sum(), cl_state.mask, 0.) + 1e-8
