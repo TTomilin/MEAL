@@ -685,8 +685,8 @@ def main():
                 agent_tgts = jnp.stack([slice_agent(targets, i) for i in range(num_agents)])
 
                 # Critic data (per-env)
-                # traj_batch.global_state: (num_steps, num_envs, global_dim)
-                critic_gs = traj_batch.global_state.reshape(per_agent_bs, -1)
+                # traj_batch.global_state: (num_steps, num_envs, global_dim) or (num_steps, num_envs, C, H, W)
+                critic_gs = traj_batch.global_state.reshape(per_agent_bs, *traj_batch.global_state.shape[2:])
                 # Use agent-0's value/targets for the critic (same as MAPPO; correct for shared rewards)
                 critic_vals = traj_batch.value[:, :cfg.num_envs].reshape(per_agent_bs)
                 critic_tgts = targets[:, :cfg.num_envs].reshape(per_agent_bs)

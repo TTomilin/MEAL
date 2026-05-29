@@ -437,7 +437,7 @@ def main():
                 # batchify gives [agent0_env0..N, agent1_env0..N] (blocked, not interleaved)
                 # jnp.tile gives [env0..N, env0..N] which aligns correctly
                 value = jnp.tile(value_per_env, len(agents))
-                global_state_batch = jnp.tile(global_state, (len(agents), 1))
+                global_state_batch = jnp.tile(global_state, (len(agents),) + (1,) * (global_state.ndim - 1))
 
                 action = pi.sample(seed=_rng)
                 log_prob = pi.log_prob(action)
