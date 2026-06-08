@@ -65,6 +65,7 @@ def main():
                 args.seq_len,
                 args.repeat_sequence,
                 args.seeds,
+                agents=args.agents,
             )
             method_data[method] = data
 

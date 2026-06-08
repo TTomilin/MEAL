@@ -65,6 +65,7 @@ class MPEObstacleVisualizer:
 
         self.fig, self.ax = plt.subplots(figsize=(5, 5))
         self.fig.patch.set_facecolor(self.BG_COLOR)
+        self.fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
         self.ax.set_facecolor(self.BG_COLOR)
         lim = 1.3
         self.ax.set_xlim(-lim, lim)
@@ -125,6 +126,10 @@ class MPEObstacleVisualizer:
 
         self._step_text.set_text(f"Step {frame} | {self.env.map_id}")
 
+    def save_frame(self, save_fname: str):
+        self.fig.savefig(save_fname, dpi=150, pad_inches=0,
+                         facecolor=self.fig.get_facecolor())
+
     def animate(self, save_fname: str, fps: int = 10):
         ani = animation.FuncAnimation(
             self.fig, self._update,
@@ -132,7 +137,8 @@ class MPEObstacleVisualizer:
             interval=1000 // fps,
             blit=False,
         )
-        ani.save(save_fname, writer="pillow", fps=fps)
+        ani.save(save_fname, writer="pillow", fps=fps,
+                 savefig_kwargs={"pad_inches": 0, "facecolor": self.fig.get_facecolor()})
         plt.close(self.fig)
 
 
@@ -205,9 +211,11 @@ def main():
         state_seq = rollout_random(env, num_steps=args.num_steps, seed=args.seed + task_idx)
 
         viz = MPEObstacleVisualizer(env=env, state_seq=state_seq)
-        fname = os.path.join(args.out_dir, f"task_{task_idx:02d}_{env.map_id}.gif")
-        viz.animate(save_fname=fname, fps=args.fps)
-        print(f"    → {fname}")
+        stem = os.path.join(args.out_dir, f"task_{task_idx:02d}_{env.map_id}")
+        viz.save_frame(stem + ".png")
+        print(f"    → {stem}.png")
+        viz.animate(save_fname=stem + ".gif", fps=args.fps)
+        print(f"    → {stem}.gif")
 
     print("Done.")
 

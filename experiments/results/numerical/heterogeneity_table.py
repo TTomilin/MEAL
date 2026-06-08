@@ -64,6 +64,8 @@ def load_method_het(
     seeds: List[int],
 ) -> List[float]:
     """Return one mean-heterogeneity value per seed."""
+    if method in ['EWC', 'MAS', 'L2']:
+        method += "_old"
     base = (
         data_root / algo / method
         / f"level_{level}" / f"agents_{agents}"

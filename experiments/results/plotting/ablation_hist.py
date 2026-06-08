@@ -21,7 +21,7 @@ import pandas as pd
 from scipy.stats import t
 
 from experiments.results.plotting.utils import (
-    create_parser_with_common_args, add_metric_arg, load_series
+    create_parser_with_common_args, add_metric_arg, load_series, METHOD_DISPLAY_NAMES
 )
 
 
@@ -96,13 +96,13 @@ def main() -> None:
 
     for method in args.methods:
         # ---------- original (main) ----------
-        main_dir = base / method / f"level_{args.level}" / f"{args.strategy}_{args.main_seq_len}"
+        main_dir = base / method / f"level_{args.level}" / f"agents_{args.agents}" / f"{args.strategy}_{args.main_seq_len}"
         main_vals = final_scores(main_dir, args.metric, args.seeds, n_tasks=10)
         rows.extend(dict(method=method, version="main", score=v) for v in main_vals)
 
         # ---------- every ablation ----------
         for exp in args.experiments:
-            abl_dir = base / method / exp / f"{args.strategy}_{args.seq_len}"
+            abl_dir = base / method / f"level_{args.level}" / f"agents_{args.agents}" / f"{args.strategy}_{args.seq_len}" / exp
             abl_vals = final_scores(abl_dir, args.metric, args.seeds)
             rows.extend(dict(method=method, version=exp, score=v) for v in abl_vals)
 
@@ -137,7 +137,7 @@ def main() -> None:
         base_colors.extend(base_colors)  # recycle if too many
     palette = {ver: col for ver, col in zip(versions, base_colors)}
 
-    fig, ax = plt.subplots(figsize=(max(6.5, 2 * len(args.methods)), 2.25))
+    fig, ax = plt.subplots(figsize=(max(5.5, 2 * len(args.methods)), 2.25))
 
     for i, ver in enumerate(versions):
         offsets = x - (n_ver - 1) * bar_w / 2 + i * bar_w
@@ -147,11 +147,11 @@ def main() -> None:
 
     # Axis & legend tweaks --------------------------------------
     ax.set_xticks(x)
-    ax.set_xticklabels(args.methods)
-    ax.set_ylabel("Soup Delivered", fontsize=12)
+    ax.set_xticklabels([METHOD_DISPLAY_NAMES.get(method, method) for method in args.methods])
+    ax.set_ylabel("Soup Delivered", fontsize=13)
     ax.set_ylim(bottom=0)  # bars start from bottom
 
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=n_ver // 2, frameon=False, fontsize=10)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=n_ver // 2, frameon=False, fontsize=11)
 
     plt.tight_layout(rect=[0, -0.1, 1, 1])
     out_dir = root / "plots"

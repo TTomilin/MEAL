@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timezone, timedelta
 
 from wandb.apis.public import Run
 
@@ -13,6 +14,8 @@ def cli() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--project", required=True)
     p.add_argument("--output", default="data", help="Base folder for output")
+    p.add_argument("--recent_hours", type=float, default=None,
+                   help="Only include runs created within this many hours")
     p.add_argument("--format", choices=["json", "npz"], default="json", help="Output file format")
     p.add_argument("--seq_length", type=int, default=[])
     p.add_argument("--repeat_sequence", type=int, default=None, help="Repeat sequence value to multiply with seq_length")
@@ -66,8 +69,6 @@ def build_filters(args: argparse.Namespace) -> dict:
     """Server-side filters for wandb.Api().runs()."""
     # base: only finished runs
     f: dict = {"state": "finished"}
-
-    # config.* filters mirroring the old `want` logic
 
     if args.seeds:
         f["config.seed"] = {"$in": args.seeds}
@@ -132,6 +133,10 @@ def build_filters(args: argparse.Namespace) -> dict:
     # complementary_restrictions flag
     if args.complementary_restrictions:
         f["config.complementary_restrictions"] = True
+
+    if args.recent_hours is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=args.recent_hours)
+        f["createdAt"] = {"$gt": cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")}
 
     # wandb tags: these are run-level tags, not config tags
     if args.wandb_tags:
@@ -210,8 +215,6 @@ def unwrap_wandb_config(cfg_like):
 
 def experiment_suffix(cfg: dict) -> str:
     """Return folder name encoding ablation settings. Returns a single suffix."""
-    if cfg.get("big_network", False):
-        return "big_network"
     if cfg.get("separated_agents", False):
         return "separated_agents"
     if cfg.get("non_stationary", False):

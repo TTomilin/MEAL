@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -143,13 +144,34 @@ def extra_metric_filename(key: str, prefix: str, ext: str) -> str:
 
 def fetch_full_series(run: Run, key: str, cfg: dict) -> List[float]:
     """Fetch every recorded value for a single key via scan_history."""
-    page_size = 1e6 if cfg.get("seq_length", 0) > 20 else 1e4
+    page_size = int(1e6) if cfg.get("seq_length", 0) > 20 else int(1e4)
     vals: List[float] = []
     for row in run.scan_history(keys=[key], page_size=page_size):
         v = row.get(key)
         if v is not None:
             vals.append(v)
     return vals
+
+
+def fetch_all_series(run: Run, keys: List[str], cfg: dict) -> dict:
+    """Fetch all keys in parallel scan_history calls."""
+    page_size = int(1e6) if cfg.get("seq_length", 0) > 20 else int(1e4)
+
+    def fetch_one(key: str):
+        vals = []
+        for row in run.scan_history(keys=[key], page_size=page_size):
+            v = row.get(key)
+            if v is not None:
+                vals.append(v)
+        return key, vals
+
+    result: dict = {}
+    with ThreadPoolExecutor(max_workers=min(len(keys), 8)) as executor:
+        futures = {executor.submit(fetch_one, k): k for k in keys}
+        for future in as_completed(futures):
+            key, vals = future.result()
+            result[key] = vals
+    return result
 
 
 def store_array(arr: List[float], path: Path, fmt: str) -> None:
@@ -352,7 +374,7 @@ def main() -> None:
 
         print(f"[info] {run.name}  env={env_name}  →  {out_base}")
 
-        # Build a quick lookup: key → prefix for extra metrics
+        # Build a quick lookup: key → (filename, out_path)
         extra_key_to_prefix = {}
         for prefix in args.extra_metrics:
             prefix_slash = prefix.rstrip("/") + "/"
@@ -360,8 +382,8 @@ def main() -> None:
                 if k.startswith(prefix_slash):
                     extra_key_to_prefix[k] = prefix
 
+        key_to_out: dict = {}
         for key in eval_keys:
-            # Determine filename
             if key == env_cfg.training_key:
                 filename = f"{env_cfg.training_filename}.{ext}"
             elif key == DORMANT_RATIO_KEY:
@@ -370,17 +392,25 @@ def main() -> None:
                 filename = extra_metric_filename(key, extra_key_to_prefix[key], ext)
             else:
                 filename = eval_filename(key, env_cfg, ext)
+            key_to_out[key] = out_base / filename
 
-            out = out_base / filename
-            if out.exists() and not args.overwrite:
+        # Skip keys whose output already exists
+        keys_to_fetch = [k for k, out in key_to_out.items()
+                         if not out.exists() or args.overwrite]
+        for k, out in key_to_out.items():
+            if k not in keys_to_fetch:
                 print(f"→ {out} exists, skip")
-                continue
 
-            series = fetch_full_series(run, key, cfg)
+        if not keys_to_fetch:
+            continue
+
+        # Single scan_history pass for all remaining keys
+        all_series = fetch_all_series(run, keys_to_fetch, cfg)
+        for key, series in all_series.items():
+            out = key_to_out[key]
             if not series:
                 print(f"→ {out} no data, skip")
                 continue
-
             print(f"→ writing {out}")
             store_array(series, out, args.format)
 

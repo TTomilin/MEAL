@@ -88,6 +88,7 @@ class SMAXVisualizer:
         smax = self._inner_env
         self.fig, self.ax = plt.subplots(figsize=(5, 5))
         self.fig.patch.set_facecolor(self.BG_COLOR)
+        self.fig.subplots_adjust(left=0, right=1, bottom=0, top=0.94)
         ax = self.ax
         ax.set_facecolor(self.BG_COLOR)
         ax.set_xlim(0, smax.map_width)
@@ -163,6 +164,10 @@ class SMAXVisualizer:
 
         self._step_text.set_text(f"Step {frame} | {self.map_id}")
 
+    def save_frame(self, save_fname: str):
+        self.fig.savefig(save_fname, dpi=150, pad_inches=0,
+                         facecolor=self.fig.get_facecolor())
+
     def animate(self, save_fname: str, fps: int = 10):
         ani = animation.FuncAnimation(
             self.fig, self._update,
@@ -170,7 +175,8 @@ class SMAXVisualizer:
             interval=1000 // fps,
             blit=False,
         )
-        ani.save(save_fname, writer="pillow", fps=fps)
+        ani.save(save_fname, writer="pillow", fps=fps,
+                 savefig_kwargs={"pad_inches": 0, "facecolor": self.fig.get_facecolor()})
         plt.close(self.fig)
 
 
@@ -215,9 +221,11 @@ def main():
         )
 
         viz = SMAXVisualizer(env=env, state_seq=smax_states, map_id=env.map_id)
-        fname = os.path.join(args.out_dir, f"task_{task_idx:02d}_{env.map_id}.gif")
-        viz.animate(save_fname=fname, fps=args.fps)
-        print(f"    → {fname}")
+        stem = os.path.join(args.out_dir, f"task_{task_idx:02d}_{env.map_id}")
+        viz.save_frame(stem + ".png")
+        print(f"    → {stem}.png")
+        viz.animate(save_fname=stem + ".gif", fps=args.fps)
+        print(f"    → {stem}.gif")
 
     print("Done.")
 

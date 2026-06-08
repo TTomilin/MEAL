@@ -21,7 +21,7 @@ import seaborn as sns
 
 from experiments.results.plotting.utils import (
     smooth_and_ci, add_task_boundaries,
-    save_plot, create_eval_parser
+    save_plot, create_eval_parser, METHOD_DISPLAY_NAMES
 )
 from experiments.results.plotting.utils.data_loading import collect_partner_curves
 
@@ -32,7 +32,9 @@ def parse_args():
         description="Plot per-task evaluation metrics for MARL continual-learning benchmark",
         metric_choices=['reward', 'soup']
     )
-    # Set default metric to 'soup' (overriding the default from create_eval_parser)
+    p.add_argument("--layout_name",  default="cramped_room", help="Overcooked layout name")
+    p.add_argument("--arch",         default="multihead",    choices=["multihead", "singlehead"])
+    p.add_argument("--num_partners", type=int, default=8,    help="Number of eval partners")
     p.set_defaults(metric='soup')
     return p.parse_args()
 
@@ -48,10 +50,11 @@ def plot():
     data_root = Path(__file__).resolve().parent.parent / args.data_root
 
     # Calculate total steps and set up boundaries
-    total_steps = args.seq_len * args.steps_per_task
-    task_colors = sns.color_palette("hls", args.seq_len)
-    boundaries = [i * args.steps_per_task for i in range(args.seq_len + 1)]
-    mids = [(boundaries[i] + boundaries[i + 1]) / 2 for i in range(args.seq_len)]
+    n = args.num_partners
+    total_steps = n * args.steps_per_task
+    task_colors = sns.color_palette("hls", n)
+    boundaries = [i * args.steps_per_task for i in range(n + 1)]
+    mids = [(boundaries[i] + boundaries[i + 1]) / 2 for i in range(n)]
 
     # Set up figure with one subplot per method
     methods = args.methods
@@ -65,7 +68,11 @@ def plot():
         ax = axes[m_idx]
 
         # Collect data for this method
-        envs, curves = collect_partner_curves(data_root, args.algo, method, args.seq_len, args.seeds, args.metric)
+        envs, curves = collect_partner_curves(
+            data_root, args.algo, method,
+            args.layout_name, args.arch, args.num_partners,
+            args.seeds, args.metric,
+        )
 
         # Add task boundaries
         add_task_boundaries(ax, boundaries, color='gray', linewidth=0.5)
@@ -84,16 +91,16 @@ def plot():
         # Set axis limits and labels
         ax.set_xlim(0, total_steps)
         ax.set_ylim(0, None)
-        ax.set_ylabel(f"Normalized Score")
+        ax.set_ylabel(f"Normalized Soup")
         # Only set title if there are multiple methods
         if len(methods) > 1:
-            ax.set_title(method, fontsize=11)
+            ax.set_title(METHOD_DISPLAY_NAMES.get(method, method), fontsize=11)
 
         # Set up secondary x-axis with task labels
         twin = ax.twiny()
         twin.set_xlim(ax.get_xlim())
         twin.set_xticks(mids)
-        labels = [f"Partner {i + 1}" for i in range(args.seq_len)]
+        labels = [f"Partner {i + 1}" for i in range(n)]
         twin.set_xticklabels(labels, fontsize=10)
         twin.tick_params(axis='x', length=0)
 

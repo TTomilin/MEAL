@@ -83,7 +83,7 @@ def collect_env_curves(base: Path, algo: str, method: str, strat: str, seq_len: 
     Returns:
         Tuple of (environment_names, curves_per_environment)
     """
-    folder = base / algo / method / f"level_{level}" / f"agents_{agents}" / f"{strat}_{seq_len}"
+    folder = base / algo / f"{method}_old" / f"level_{level}" / f"agents_{agents}" / f"{strat}_{seq_len}"
     env_names, per_env_seed = [], []
 
     # discover envs
@@ -107,7 +107,7 @@ def collect_env_curves(base: Path, algo: str, method: str, strat: str, seq_len: 
         if not sd.exists():
             continue
         for idx, env in enumerate(env_names):
-            fp = sd / f"{idx}_{env}_{metric}.json"
+            fp = sd / f"{idx}_{env}"
             if not fp.exists():
                 fp = sd / f"{idx}_{env}_{metric}.npz"
             if not fp.exists():
@@ -128,67 +128,53 @@ def collect_env_curves(base: Path, algo: str, method: str, strat: str, seq_len: 
     return env_names, curves
 
 
-def collect_partner_curves(base: Path, algo: str, method: str, seq_len: int, seeds: List[int],
-                       metric: str = "soup") -> Tuple[List[str], List[np.ndarray]]:
+def collect_partner_curves(
+    base: Path,
+    algo: str,
+    method: str,
+    layout_name: str,
+    arch: str,
+    num_partners: int,
+    seeds: List[int],
+    metric: str = "soup",
+) -> Tuple[List[str], List[np.ndarray]]:
     """
-    Collect per-environment curves for per-task evaluation plots.
+    Collect per-partner evaluation curves for partner-adaptation plots.
 
-    Args:
-        base: Base directory for data
-        algo: Algorithm name
-        method: Method name
-        strat: Strategy name
-        seq_len: Sequence length
-        seeds: List of seeds to collect
-        metric: Metric to collect (default: 'reward')
-        level: Difficulty level (default: 1)
+    Path: base/<algo>/<method>/<layout_name>/<arch>/partners_<num_partners>/seed_<seed>/
+      eval_partner_{i}_{metric}.{ext}
 
     Returns:
-        Tuple of (environment_names, curves_per_environment)
+        Tuple of (partner_names, curves_per_partner) where each curve is (n_seeds, T).
     """
-    folder = base / algo / method / f"partners_{seq_len}"
-    env_names, per_env_seed = [], []
+    folder = base / algo / method / layout_name / arch / f"partners_{num_partners}"
+    partner_names: List[str] = [f"partner_{i}" for i in range(num_partners)]
+    per_partner: List[List[np.ndarray]] = [[] for _ in range(num_partners)]
 
-    # discover envs
     for seed in seeds:
         sd = folder / f"seed_{seed}"
         if not sd.exists():
             continue
-        files = sorted(f for f in sd.glob(f"*_{metric}.*") if "training" not in f.name)
-        if not files:
-            continue
-        suffix = f"_{metric}"
-        env_names = [f.name.split('_', 1)[1].rsplit(suffix, 1)[0] for f in files]
-        per_env_seed = [[] for _ in env_names]
-        break
-    if not env_names:
-        raise RuntimeError(f'No data for {method}')
+        for i in range(num_partners):
+            for ext in (".json", ".npz"):
+                fp = sd / f"eval_partner_{i}_{metric}{ext}"
+                if fp.exists():
+                    per_partner[i].append(load_series(fp))
+                    break
 
-    # gather
-    for seed in seeds:
-        sd = folder / f"seed_{seed}"
-        if not sd.exists():
-            continue
-        for idx, env in enumerate(env_names):
-            fp = sd / f"eval_{env}_{metric}.json"
-            if not fp.exists():
-                fp = sd / f"eval_{env}_{metric}.npz"
-            if not fp.exists():
-                continue
-            arr = load_series(fp)
-            per_env_seed[idx].append(arr)
+    if not any(per_partner):
+        raise RuntimeError(f"No partner eval data for {method}/{layout_name}/{arch}")
 
-    T_max = max(max(map(len, curves)) for curves in per_env_seed if curves)
-    curves = []
-    for env_curves in per_env_seed:
-        if env_curves:
-            stacked = np.vstack([np.pad(a, (0, T_max - len(a)), constant_values=np.nan)
-                                 for a in env_curves])
+    T_max = max(len(a) for curves in per_partner for a in curves)
+    result = []
+    for curves in per_partner:
+        if curves:
+            stacked = np.vstack([np.pad(a, (0, T_max - len(a)), constant_values=np.nan) for a in curves])
         else:
             stacked = np.full((1, T_max), np.nan)
-        curves.append(stacked)
+        result.append(stacked)
 
-    return env_names, curves
+    return partner_names, result
 
 
 def collect_br_cumulative_runs(

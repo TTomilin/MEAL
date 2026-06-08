@@ -92,12 +92,16 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--levels",
         nargs="+",
+        type=int,
         default=[1, 2, 3],
         help="Which task‑level sub‑folders to include (only used when --compare_by level).",
     )
 
     # Fine‑tuning of the legend
-    p.add_argument("--legend_anchor", type=float, default=0.79)
+    p.add_argument("--legend_anchor_x", type=float, default=0.5)
+    p.add_argument("--legend_anchor_y", type=float, default=0.98)
+    p.add_argument("--legend_anchor", type=float, default=None,
+                   help="Deprecated alias for --legend_anchor_y")
 
     # GIF animation — for presentation slides
     p.add_argument(
@@ -238,15 +242,17 @@ def _apply_decorations(ax, args, total_steps, ylim_max=None, visible_tasks=None)
         ax_top.xaxis.set_minor_locator(plt.NullLocator())
 
     legend_items = args.methods if args.compare_by == "method" else args.levels
+    n_items = len(legend_items)
+    legend_ncol = -(-n_items // 2) if n_items > 7 else n_items  # ceil(n/2) when > 7
     finalize_plot(
         ax,
         xlabel="Environment Steps",
-        ylabel="Average Normalized Score",
+        ylabel="Average Soup Delivery",
         xlim=(0, visible_steps),
         ylim=(0, ylim_max),
-        legend_loc="lower center",
-        legend_bbox_to_anchor=(0.5, args.legend_anchor),
-        legend_ncol=len(legend_items),
+        legend_loc="upper center",
+        legend_bbox_to_anchor=(args.legend_anchor_x, args.legend_anchor_y),
+        legend_ncol=legend_ncol,
     )
 
 
@@ -372,16 +378,18 @@ def _save_video_segment(args, curves, start_task, end_task, n_frames, out_path):
         ax.set_xlim(0, xlim_right)
         ax.set_ylim(0, y_maxes[frame])
         ax.set_xlabel("Environment Steps")
-        ax.set_ylabel("Average Normalized Score")
+        ax.set_ylabel("Average Soup Delivery")
 
         legend_items = (args.methods if args.compare_by == "method"
                         else args.levels)
+        n_items = len(legend_items)
+        legend_ncol = -(-n_items // 2) if n_items > 7 else n_items
         handles, labels = ax.get_legend_handles_labels()
         if handles:
             ax.legend(
-                loc="lower center",
-                bbox_to_anchor=(0.5, args.legend_anchor),
-                ncol=len(legend_items),
+                loc="upper center",
+                bbox_to_anchor=(args.legend_anchor_x, args.legend_anchor_y),
+                ncol=legend_ncol,
             )
         plt.tight_layout()
 
@@ -412,6 +420,8 @@ def _save_video_segment(args, curves, start_task, end_task, n_frames, out_path):
 
 def plot():
     args = _parse_args()
+    if args.legend_anchor is not None:
+        args.legend_anchor_y = args.legend_anchor
     data_root = Path(__file__).resolve().parent.parent / args.data_root
     total_steps = args.seq_len * args.steps_per_task
 

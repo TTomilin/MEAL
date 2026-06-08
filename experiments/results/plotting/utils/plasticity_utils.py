@@ -154,7 +154,8 @@ def collect_training_data(
         seq_len: int,
         repeats: int,
         seeds: List[int],
-        level: int = 1
+        level: int = 1,
+        agents: int = 2,
 ) -> np.ndarray:
     """
     Collect training data from training_soup files.
@@ -175,7 +176,7 @@ def collect_training_data(
     runs = []
 
     for seed in seeds:
-        run_dir = base / algo / method / f"level_{level}" / folder / f"seed_{seed}"
+        run_dir = base / algo / method / f"level_{level}" / f"agents_{agents}" / folder / f"seed_{seed}"
         if not run_dir.exists():
             print(f"Warning: no directory {run_dir}")
             continue
@@ -215,6 +216,25 @@ def collect_training_data(
                     training_data = np.concatenate(segments)
                 except Exception as e:
                     print(f"Error loading training files in {run_dir}: {e}")
+
+        # New per-env format: {N}_soup.json (no _training_ infix)
+        if training_data is None:
+            training_files = []
+            for ext in [".json", ".npz"]:
+                files = sorted(
+                    run_dir.glob(f"*_soup{ext}"),
+                    key=lambda p: int(p.stem.split("_")[0]),
+                )
+                if files:
+                    training_files = files
+                    break
+
+            if training_files:
+                try:
+                    segments = [load_series(fp) for fp in training_files]
+                    training_data = np.concatenate(segments)
+                except Exception as e:
+                    print(f"Error loading per-env soup files in {run_dir}: {e}")
 
         if training_data is not None:
             runs.append(training_data)

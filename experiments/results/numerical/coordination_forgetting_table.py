@@ -199,6 +199,8 @@ def build_table(
     for method in methods:
         row = {"Method": METHOD_DISPLAY_NAMES.get(method, method)}
         for level in levels:
+            if method in ['EWC', 'MAS', 'L2']:
+                method += "_old"
             res = compute_method_level(
                 data_root, algo, method, level, agents,
                 strategy, seq_len, seeds, window,

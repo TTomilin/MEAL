@@ -88,7 +88,7 @@ def plot():
         # Set axis limits and labels
         ax.set_xlim(0, total_steps)
         ax.set_ylim(0, None)
-        ax.set_ylabel(f"Normalized Score")
+        ax.set_ylabel(f"Normalized Soup")
         # Only set title if there are multiple methods
         if len(methods) > 1:
             ax.set_title(display_name, fontsize=11)

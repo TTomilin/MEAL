@@ -61,12 +61,14 @@ def _calculate_curve_based_forgetting(task_curve: np.ndarray, training_end_idx: 
     if training_end_idx is None or training_end_idx >= len(task_curve):
         training_end_idx = len(task_curve) - 1
 
-    # Use the performance at the end of training as the baseline reference
-    end_of_training_performance = task_curve[training_end_idx - 1]
+    # s*_i: performance at τᵢ (end of training for task i)
+    end_of_training_performance = task_curve[training_end_idx]
 
-    # Only consider performance after the end of training for forgetting calculation
+    if end_of_training_performance < 1e-8:
+        return 0.0
+
+    # t > τᵢ strictly — everything after the training boundary
     if training_end_idx >= len(task_curve) - 1:
-        # Training ends at the last point, so no forgetting can be measured
         return 0.0
 
     post_training_curve = task_curve[training_end_idx + 1:]
@@ -117,8 +119,11 @@ def compute_metrics(
         level: int = 1,
         agents: int = 2,
         lambda_decay: float = 2.0,
+        truncate_tasks: int = None,
 ) -> pd.DataFrame:
     rows: list[dict[str, float]] = []
+
+    effective_tasks = truncate_tasks if truncate_tasks is not None else seq_len
 
     # Load baseline data once for forward transfer calculation
     baseline_data = {}
@@ -127,6 +132,7 @@ def compute_metrics(
         / algo
         / "single"
         / f"level_{level}"
+        / f"agents_{agents}"
         / f"{strategy}_{seq_len}"
     )
 
@@ -135,7 +141,7 @@ def compute_metrics(
         if baseline_seed_dir.exists():
             # Load baseline training data for each task
             baseline_training_files = []
-            for i in range(seq_len):
+            for i in range(effective_tasks):
                 baseline_file = baseline_seed_dir / f"{i}_training_soup.json"
                 if baseline_file.exists():
                     baseline_series = load_series(baseline_file)
@@ -185,13 +191,16 @@ def compute_metrics(
             training = load_series(training_fp)
             n_train = len(training)
             chunk = n_train // seq_len
+            # Truncate training curve to only cover effective_tasks
+            training = training[: effective_tasks * chunk]
+            n_train = len(training)
 
             # 2) Per‑environment evaluation curves
             # Handle missing files by creating expected file paths and loading them
-            # This ensures we always have seq_len series, even if some files are missing
+            # This ensures we always have effective_tasks series, even if some files are missing
             env_series = []
             missing_files = []
-            for i in range(seq_len):
+            for i in range(effective_tasks):
                 fp = sd / f"{i}_soup.json"
                 if fp.exists():
                     env_series.append(load_series(fp))
@@ -241,25 +250,18 @@ def compute_metrics(
             f_vals = []
             final_idx = env_mat.shape[1] - 1
 
-            # Process all series (NaN values have been replaced with zeros)
-            for i in range(seq_len):
+            # Formula: sum over i=1..N-1 (exclude last task — no post-training window)
+            for i in range(effective_tasks - 1):
                 task_curve = env_mat[i, : final_idx + 1]
 
-                # Calculate when training for task i ends in the evaluation timeline
-                # Training for task i ends at (i + 1) * chunk in the training timeline
-                # Map this proportionally to the evaluation timeline
                 training_end_step = (i + 1) * chunk
                 if n_train > 0:
-                    # Map training timeline to evaluation timeline proportionally
                     training_end_idx = int((training_end_step / n_train) * len(task_curve))
-                    # Ensure the index is within bounds
                     training_end_idx = min(training_end_idx, len(task_curve) - 1)
                 else:
-                    # Fallback: use the end of the curve
                     training_end_idx = len(task_curve) - 1
 
-                # Calculate curve-based forgetting using end-of-training performance
-                if any(task_curve > 0.0):  # If end-of-training performance is 0 or negative, no meaningful forgetting can be calculated
+                if any(task_curve > 0.0):
                     curve_forgetting = _calculate_curve_based_forgetting(task_curve, training_end_idx, lambda_decay=lambda_decay)
                     f_vals.append(curve_forgetting)
 
@@ -272,7 +274,7 @@ def compute_metrics(
                 continue
 
             ft_vals = []
-            for i in range(seq_len):
+            for i in range(effective_tasks):
                 # Calculate AUC for CL method (task i)
                 start_idx = i * chunk
                 end_idx = (i + 1) * chunk
@@ -372,7 +374,7 @@ def _fmt(mean: float, ci: float, best: bool, better: str = "max", show_confidenc
     """Return *mean ±CI* formatted for LaTeX, with CI in \scriptsize."""
     if np.isnan(mean):
         return "--"
-    main = f"{mean:.3f}"
+    main = f"{mean:.2f}"
     if best:
         main = rf"\textbf{{{main}}}"
     ci_part = rf"{{\scriptsize$\pm{ci:.2f}$}}" if show_confidence_intervals and not np.isnan(ci) and ci > 0 else ""
@@ -407,6 +409,12 @@ if __name__ == "__main__":
         action="store_false",
         help="Hide confidence intervals in table.",
     )
+    p.add_argument(
+        "--truncate_tasks",
+        type=int,
+        default=None,
+        help="Only use the first N tasks from the sequence (e.g. use 10 from a 20-task run).",
+    )
     args = p.parse_args()
 
     # Handle single level or all levels
@@ -422,6 +430,7 @@ if __name__ == "__main__":
             end_window_evals=args.end_window_evals,
             level=args.level,
             agents=args.agents,
+            truncate_tasks=args.truncate_tasks,
         )
         # Pretty‑print method names
         df["Method"] = df["Method"].replace(METHOD_DISPLAY_NAMES)
@@ -438,6 +447,7 @@ if __name__ == "__main__":
                 seeds=args.seeds,
                 end_window_evals=args.end_window_evals,
                 level=level,
+                truncate_tasks=args.truncate_tasks,
             )
             # Pretty‑print method names
             level_df["Method"] = level_df["Method"].replace(METHOD_DISPLAY_NAMES)

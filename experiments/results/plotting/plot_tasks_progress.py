@@ -284,7 +284,7 @@ def main():
         raise SystemExit("No matching data for the requested method/levels.")
 
     plt.xlabel("Number of tasks encountered")
-    ylabel = "Average Normalized Score" if args.y == "performance" else "Cumulative Forgetting"
+    ylabel = "Average Soup Delivery" if args.y == "performance" else "Cumulative Forgetting"
     plt.ylabel(ylabel)
     if args.title:
         plt.title(args.title)

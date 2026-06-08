@@ -155,24 +155,32 @@ def compute_metrics(
         else:
             ft_vals = []
             baseline_seed_dir = baseline_folder / f"seed_{seed}"
-            # HACK: for SMAX, use eval returns from env_mat (normalised to [0,1]) as the CL
-            # curve so that it is comparable to the kill_fraction baseline in [0,1].
             n_eval = env_mat.shape[1]
             eval_chunk = max(1, n_eval // seq_len)
             eval_max = env_mat.max() if ft_use_eval_normalised else 1.0
             if ft_use_eval_normalised and eval_max < 1e-8:
                 eval_max = 1.0
+
+            # Load CL training curve (overcooked only — SMAX/MPE use eval curves instead)
+            cl_training = None
+            if not ft_use_eval_normalised:
+                cl_train_fp = sd / f"training_{training_metric}.json"
+                if cl_train_fp.exists():
+                    cl_training = load_series(cl_train_fp)
+                else:
+                    print(f"[warn] missing training_{training_metric}.json for {method} seed {seed}")
+
             for task_pos, i in enumerate(present_task_ids):
                 if ft_use_eval_normalised:
                     start_idx = i * eval_chunk
                     end_idx = min((i + 1) * eval_chunk, n_eval)
                     cl_task_curve = env_mat[task_pos, start_idx:end_idx] / eval_max
                 else:
-                    task_fp = baseline_seed_dir / f"{i}_training_{training_metric}.json"
-                    if not task_fp.exists():
-                        print(f"[warn] missing {i}_training_{training_metric}.json for seed {seed} in single/ folder")
+                    if cl_training is None:
                         continue
-                    cl_task_curve = load_series(task_fp)
+                    n_train = len(cl_training)
+                    chunk = max(1, n_train // seq_len)
+                    cl_task_curve = cl_training[i * chunk:(i + 1) * chunk]
 
                 if len(cl_task_curve) > 1:
                     auc_cl = np.trapz(cl_task_curve) / len(cl_task_curve)
@@ -293,7 +301,7 @@ def _fmt(mean: float, ci: float, best: bool, better: str = "max", show_ci: bool 
     """Return *mean ±CI* formatted for LaTeX, with CI in \scriptsize."""
     if np.isnan(mean) or np.isinf(mean):
         return "--"
-    main = f"{mean:.3f}"
+    main = f"{mean:.2f}"
     if best:
         main = rf"\textbf{{{main}}}"
     ci_part = rf"{{\scriptsize$\pm{ci:.2f}$}}" if show_ci and not np.isnan(ci) and ci > 0 else ""

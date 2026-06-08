@@ -31,6 +31,10 @@ def _cli():
                    help="Folder name that stores the single-task traces")
     p.add_argument("--max_tasks", type=int, default=10,
                    help="Maximum number of tasks to plot (default: 10)")
+    p.add_argument("--legend_x", type=float, default=0.7,
+                   help="Legend anchor x position (0=left, 1=right)")
+    p.add_argument("--legend_y", type=float, default=0.875,
+                   help="Legend anchor y position (0=bottom, 1=top)")
     p.set_defaults(confidence=0.9, plot_name="forward_transfer")
     return p.parse_args()
 
@@ -85,7 +89,7 @@ def main():
 
     # prepare Figure: one subplot per method (one row per method)
     fig, axes = plt.subplots(len(args.methods), 1,
-                             figsize=(12, 2.5 * len(args.methods)),
+                             figsize=(11, 2.25 * len(args.methods)),
                              squeeze=False)
     axes = axes.flatten()
 
@@ -101,12 +105,14 @@ def main():
         # CL traces
         cl_runs = collect_training_data(
             data_root, args.algo, method,
-            args.strategy, args.seq_len, args.repeat_sequence, args.seeds, level=args.level
+            args.strategy, args.seq_len, args.repeat_sequence, args.seeds,
+            level=args.level, agents=args.agents,
         )
         # Baseline traces
         base_runs = collect_training_data(
             data_root, args.algo, args.baseline_method,
-            args.strategy, args.seq_len, 1, args.seeds, level=args.level
+            args.strategy, args.seq_len, 1, args.seeds,
+            level=args.level, agents=args.agents,
         )
 
         color = METHOD_COLORS.get(method, "tab:gray")
@@ -157,15 +163,16 @@ def main():
         x_base = np.linspace(0, total_steps, len(mu_base))
 
         # plot curves
-        baseline_line, = ax.plot(x_base, mu_base, color="crimson", lw=1.5, label="IPPO")
-        method_line, = ax.plot(x_cl, mu_cl, color=color, lw=1.5, label=method_display_name(method))
+        baseline_line, = ax.plot(x_base, mu_base, color="crimson", lw=1.5)
+        method_line, = ax.plot(x_cl, mu_cl, color=color, lw=1.5)
 
         # Collect legend handles and labels (method first, baseline last)
+        algo_label = args.algo.upper()
         legend_handles.append(method_line)
-        legend_labels.append(method_display_name(method))
+        legend_labels.append(f"{algo_label} + {method_display_name(method)}")
         if row == 0:
             legend_handles.append(baseline_line)
-            legend_labels.append("IPPO")
+            legend_labels.append(algo_label)
 
         # shaded transfer - interpolate to common grid for comparison
         if len(mu_cl) > 0 and len(mu_base) > 0:
@@ -191,13 +198,13 @@ def main():
             # Calculate ylim from actual data values (will be set after loop)
             pass
         else:
-            ax.set_ylim(0, 1.3)
+            ax.set_ylim(0, None)
 
-        ax.set_ylabel("Normalized Score")
+        ax.set_ylabel("Normalized Soup")
 
         # Add subtitle for each subplot with CL method name (only for multiple methods)
         if len(args.methods) > 1:
-            ax.set_title(method, fontsize=12, pad=10)
+            ax.set_title(method_display_name(method), fontsize=12, pad=10)
 
         # Only show timesteps (scientific notation) on the final/bottom subplot
         if row == len(args.methods) - 1:
@@ -232,13 +239,16 @@ def main():
             # axes[0].set_ylim(y_min - y_padding, y_max + y_padding)
             axes[0].set_ylim(y_min, y_max)
 
-        # Add legend directly on the plot where there is space
-        # Replace underscores with spaces in legend labels
-        axes[0].legend(legend_handles, legend_labels, loc='best', frameon=True, fontsize=12)
-
     y_offset = 0.06 if len(args.methods) == 1 else 0.01
     fig.text(0.5, y_offset, "Environment steps", ha="center", fontsize=14)
-    fig.tight_layout(rect=[0, 0, 1, 1])
+    fig.tight_layout(rect=[0, y_offset - 0.01, 1, 1])
+
+    if len(args.methods) == 1 and legend_handles and legend_labels:
+        if all_data_values:
+            axes[0].set_ylim(min(all_data_values), max(all_data_values))
+
+        fig.legend(legend_handles, legend_labels, frameon=True, fontsize=12, ncols=2,
+                   loc='upper center', bbox_to_anchor=(args.legend_x, args.legend_y))
 
     # Modify filename for single method case
     if len(args.methods) == 1:

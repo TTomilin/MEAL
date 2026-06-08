@@ -19,13 +19,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from experiments.results.numerical.results_table import _calculate_curve_based_forgetting
 from experiments.results.plotting.utils import METHOD_COLORS, METHOD_DISPLAY_NAMES, get_output_path, method_display_name
 
 
 def load_series(fp: Path) -> np.ndarray:
-    """Load a time series from a JSON file."""
     if fp.suffix == '.json':
         return np.array(json.loads(fp.read_text()), dtype=float)
+    if fp.suffix == '.npz':
+        return np.load(fp)['data'].astype(float)
     raise ValueError(f'Unsupported file suffix: {fp.suffix}')
 
 
@@ -49,6 +51,7 @@ def compute_metrics_simplified(
         seeds: List[int],
         end_window_evals: int = 10,
         level: int = 1,
+        agents: int = 2,
 ) -> pd.DataFrame:
     """
     Compute metrics exactly like results_table.py with proper forward transfer calculation.
@@ -62,6 +65,7 @@ def compute_metrics_simplified(
         / algo
         / "single"
         / f"level_{level}"
+        / f"agents_{agents}"
         / f"{strategy}_{seq_len}"
     )
 
@@ -71,8 +75,13 @@ def compute_metrics_simplified(
             # Load baseline training data for each task
             baseline_training_files = []
             for i in range(seq_len):
-                baseline_file = baseline_seed_dir / f"{i}_training_soup.json"
-                if baseline_file.exists():
+                baseline_file = next(
+                    (baseline_seed_dir / f"{i}_training_soup{ext}"
+                     for ext in ('.json', '.npz')
+                     if (baseline_seed_dir / f"{i}_training_soup{ext}").exists()),
+                    None
+                )
+                if baseline_file is not None:
                     baseline_training_files.append(load_series(baseline_file))
                 else:
                     baseline_training_files.append(None)
@@ -86,6 +95,7 @@ def compute_metrics_simplified(
                 / algo
                 / method
                 / f"level_{level}"
+                / f"agents_{agents}"
                 / f"{strategy}_{seq_len}"
         )
 
@@ -103,17 +113,20 @@ def compute_metrics_simplified(
             n_train = len(training)
             chunk = n_train // seq_len
 
-            # 2) Per‑environment evaluation curves
-            env_files = sorted([
-                f for f in sd.glob("*_soup.*") if "training" not in f.name
-            ])
-            if len(env_files) != seq_len:
-                print(
-                    f"[warn] expected {seq_len} env files, found {len(env_files)} "
-                    f"for {method} seed {seed}"
+            # 2) Per‑environment evaluation curves — sort NUMERICALLY by task index
+            env_series = []
+            for i in range(seq_len):
+                fp = next(
+                    (sd / f"{i}_soup{ext}" for ext in (".json", ".npz")
+                     if (sd / f"{i}_soup{ext}").exists()),
+                    None,
                 )
-                continue
-            env_series = [load_series(f) for f in env_files]
+                if fp is None:
+                    print(f"[warn] missing eval file for task {i}, seed {seed}, method {method}")
+                    env_series.append(np.zeros(100))
+                else:
+                    env_series.append(load_series(fp))
+
             L = max(len(s) for s in env_series)
             env_mat = np.vstack([
                 np.pad(s, (0, L - len(s)), constant_values=s[-1]) for s in env_series
@@ -121,6 +134,21 @@ def compute_metrics_simplified(
 
             # Average Performance (AP) – last eval of mean curve
             AP_seeds.append(env_mat.mean(axis=0)[-1])
+
+            # Forgetting – decayed metric (computed for all seeds, independent of baseline)
+            f_vals = []
+            final_idx = env_mat.shape[1] - 1
+            for i in range(seq_len - 1):
+                task_curve = env_mat[i, : final_idx + 1]
+                training_end_step = (i + 1) * chunk
+                if n_train > 0:
+                    training_end_idx = int((training_end_step / n_train) * len(task_curve))
+                    training_end_idx = min(training_end_idx, len(task_curve) - 1)
+                else:
+                    training_end_idx = len(task_curve) - 1
+                if any(task_curve > 0.0):
+                    f_vals.append(_calculate_curve_based_forgetting(task_curve, training_end_idx))
+            F_seeds.append(float(np.nanmean(f_vals)) if f_vals else np.nan)
 
             # Forward Transfer (FT) – normalized area between CL and baseline curves
             if seed not in baseline_data:
@@ -201,15 +229,6 @@ def compute_metrics_simplified(
             else:
                 FT_seeds.append(np.nan)
 
-            # Forgetting (F) – drop from best‑ever to final performance
-            f_vals = []
-            final_idx = env_mat.shape[1] - 1
-            fw_start = max(0, final_idx - end_window_evals + 1)
-            for i in range(seq_len):
-                final_avg = np.nanmean(env_mat[i, fw_start : final_idx + 1])
-                best_perf = np.nanmax(env_mat[i, : final_idx + 1])
-                f_vals.append(max(best_perf - final_avg, 0.0))
-            F_seeds.append(float(np.nanmean(f_vals)))
 
         # Aggregate across seeds
         A_mean, A_ci = _mean_ci(AP_seeds)
@@ -245,6 +264,7 @@ def parse_args():
     parser.add_argument("--seq_len", type=int, default=10, help="Sequence length")
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5], help="List of seeds")
     parser.add_argument("--levels", type=int, nargs="+", default=[1], help="Difficulty levels of the benchmark (can specify multiple levels)")
+    parser.add_argument("--agents", type=int, default=2, help="Number of agents in the environment")
     parser.add_argument(
         "--end_window_evals",
         type=int,
@@ -287,6 +307,7 @@ def main():
             seeds=args.seeds,
             end_window_evals=args.end_window_evals,
             level=level,
+            agents=args.agents,
         )
 
         # Pretty-print method names
