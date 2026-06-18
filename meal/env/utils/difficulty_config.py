@@ -73,6 +73,9 @@ def get_difficulty_params(difficulty: str) -> Dict:
     Raises:
         ValueError: If the difficulty level is not recognized
     """
+    if difficulty is None:
+        raise ValueError("difficulty must be specified. Available levels: "
+                         f"{list(DIFFICULTY_PARAMS.keys())}")
     difficulty_lower = difficulty.lower()
 
     # Handle alternative names
