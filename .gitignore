@@ -27,6 +27,7 @@ model_*
 *.gif
 *.png
 *.pdf
+!docs/assets/**
 *.txt
 *.csv
 /.env
