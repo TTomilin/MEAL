@@ -368,26 +368,20 @@ img{display:block;max-width:100%}
     <h2 class="sec-h2" style="margin-bottom:10px">Three metrics to capture CL dynamics</h2>
     <p style="font-size:15px;color:#5d4f3f;max-width:48em;margin:0 0 28px;line-height:1.5">Raw delivery counts are not directly comparable across layouts of different sizes and complexities, so MEAL normalizes by the optimal single-agent cook–deliver cycle for each task.</p>
     <div class="contrib-grid">
-      <div class="card">
+      <div class="card" style="display:flex;flex-direction:column">
         <div style="font-family:'Silkscreen',monospace;font-size:13px;color:#d35a3b;margin-bottom:10px">S ↑</div>
-        <h3 style="font-family:'Space Grotesk';font-size:18px;font-weight:700;margin:0 0 8px">Average Delivery</h3>
-        <p style="margin:0 0 12px;font-size:13.5px;color:#5d4f3f;line-height:1.55">Mean normalized soup delivery across all tasks at the end of training. Reflects the overall balance between stability and plasticity. Values above 1 indicate effective cooperation that exceeds solo efficiency.</p>
-        <div style="font-family:'DM Mono',monospace;font-size:13px;color:#2c241c;background:#fbeede;border-radius:8px;padding:10px 14px;letter-spacing:.2px">S = <sup>1</sup>&frasl;<sub>N</sub> &sum;<sub>i=1</sub><sup>N</sup> s<sub>N</sub>(i)</div>
-        <p style="margin:8px 0 0;font-size:11.5px;color:#8a7257;line-height:1.5">s<sub>N</sub>(i) — normalized delivery on task i after training on all N tasks</p>
+        <p style="margin:0 0 16px;font-size:13.5px;color:#5d4f3f;line-height:1.55">Mean normalized soup delivery across all tasks at the end of training. Reflects the overall balance between stability and plasticity. Values above 1 indicate effective cooperation that exceeds solo efficiency.</p>
+        <img src="assets/metric_avg_performance.png" alt="Average Performance metric illustration with formula" style="width:100%;border-radius:12px;margin-top:auto">
       </div>
-      <div class="card">
+      <div class="card" style="display:flex;flex-direction:column">
         <div style="font-family:'Silkscreen',monospace;font-size:13px;color:#5f9e7c;margin-bottom:10px">F ↓</div>
-        <h3 style="font-family:'Space Grotesk';font-size:18px;font-weight:700;margin:0 0 8px">Forgetting</h3>
-        <p style="margin:0 0 12px;font-size:13.5px;color:#5d4f3f;line-height:1.55">Performance drop on past tasks due to interference from new training. Measures the gap between peak performance on each task (right after training it) and final performance after the full sequence.</p>
-        <div style="font-family:'DM Mono',monospace;font-size:13px;color:#2c241c;background:#ebf4ef;border-radius:8px;padding:10px 14px;letter-spacing:.2px">F = <sup>1</sup>&frasl;<sub>N&minus;1</sub> &sum;<sub>i=1</sub><sup>N&minus;1</sup> (s<sub>i</sub>(i) &minus; s<sub>N</sub>(i))</div>
-        <p style="margin:8px 0 0;font-size:11.5px;color:#8a7257;line-height:1.5">s<sub>i</sub>(i) — delivery on task i right after training it; s<sub>N</sub>(i) — delivery after the full sequence</p>
+        <p style="margin:0 0 16px;font-size:13.5px;color:#5d4f3f;line-height:1.55">Performance drop on past tasks due to interference from new training. Measures the gap between peak performance right after training a task and final performance after the full sequence.</p>
+        <img src="assets/metric_forgetting.png" alt="Forgetting metric illustration with formula" style="width:100%;border-radius:12px;margin-top:auto">
       </div>
-      <div class="card">
+      <div class="card" style="display:flex;flex-direction:column">
         <div style="font-family:'Silkscreen',monospace;font-size:13px;color:#4f7cc4;margin-bottom:10px">FT ↑</div>
-        <h3 style="font-family:'Space Grotesk';font-size:18px;font-weight:700;margin:0 0 8px">Forward Transfer</h3>
-        <p style="margin:0 0 12px;font-size:13.5px;color:#5d4f3f;line-height:1.55">How much prior experience accelerates learning on new tasks. Measured as normalized improvement in area under the learning curve (AUC) over a single-task baseline. Positive means past tasks help; negative means they interfere.</p>
-        <div style="font-family:'DM Mono',monospace;font-size:12px;color:#2c241c;background:#edf1f9;border-radius:8px;padding:10px 14px;letter-spacing:.2px">FT = <sup>1</sup>&frasl;<sub>N</sub> &sum;<sub>i=1</sub><sup>N</sup> <sup>AUC<sub>i</sub> &minus; AUC<sub>i</sub><sup>b</sup></sup>&frasl;<sub>1 &minus; AUC<sub>i</sub><sup>b</sup></sub></div>
-        <p style="margin:8px 0 0;font-size:11.5px;color:#8a7257;line-height:1.5">AUC<sub>i</sub> — area under learning curve for task i; AUC<sub>i</sub><sup>b</sup> — single-task baseline AUC</p>
+        <p style="margin:0 0 16px;font-size:13.5px;color:#5d4f3f;line-height:1.55">How much prior experience accelerates learning on new tasks. Measured as normalized improvement in area under the learning curve (AUC) over a single-task baseline. Positive means past tasks help; negative means they interfere.</p>
+        <img src="assets/metric_forward_transfer.png" alt="Forward Transfer metric illustration with formula" style="width:100%;border-radius:12px;margin-top:auto">
       </div>
     </div>
   </div>
