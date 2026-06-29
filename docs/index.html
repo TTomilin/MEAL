@@ -279,23 +279,6 @@ img{display:block;max-width:100%}
       <p style="margin:14px 0 0;font-size:13px;color:#7a6a55;line-height:1.5">Long paths between stations. The kitchen is likely to split into separate zones, such that onions and plates must be passed across counters.</p>
     </div>
   </div>
-  <!-- Difficulty results -->
-  <div style="margin-top:40px;display:grid;grid-template-columns:1fr;gap:20px">
-    <div>
-      <h3 style="font-family:'Space Grotesk';font-size:18px;font-weight:700;margin:0 0 8px">Performance compresses with difficulty</h3>
-      <p style="font-size:14px;color:#5d4f3f;margin:0 0 16px;line-height:1.55">Higher difficulty levels compress delivery rates across all CL methods. At Level 3, most methods struggle to maintain meaningful throughput even in early tasks, and the gap between strong and weak baselines widens as kitchens become harder to navigate. Higher difficulty also means higher forgetting: harder kitchens interfere more with one another, and methods that hold forgetting low at Level 1 often see it climb sharply at Level 3.</p>
-    </div>
-    <div class="result-grid">
-      <div class="result-card">
-        <img src="assets/plots/avg_cumulative_new_levels_seq_100_big.png" alt="Cumulative delivery across difficulty levels" style="width:100%;border-radius:10px">
-        <div class="result-caption">Average cumulative soup delivery for all CL methods across Levels 1, 2, and 3 over 100 tasks</div>
-      </div>
-      <div class="result-card">
-        <img src="assets/plots/forward_transfer_vs_forgetting_levels1_2_3.png" alt="Forward transfer vs forgetting by level" style="width:100%;border-radius:10px">
-        <div class="result-caption">Forward transfer vs. forgetting scatter across all methods on Levels 1, 2, and 3</div>
-      </div>
-    </div>
-  </div>
 </div>
 
 <!-- PARTIAL OBSERVABILITY -->
@@ -304,7 +287,7 @@ img{display:block;max-width:100%}
     <div class="label">PARTIAL OBSERVABILITY</div>
     <h2 class="sec-h2">Sensing constraints, like the real world</h2>
     <p style="font-size:15px;color:#5d4f3f;max-width:48em;margin:0 0 28px;line-height:1.5">Although Overcooked is fully observable by design, MEAL introduces a partial observability variant to reflect real-world sensing constraints. Each agent receives only an egocentric observation window, masking all tiles outside a fixed radius. This destabilizes value targets and makes credit assignment harder, while also motivating the use of spatially aware encoders.</p>
-    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-bottom:32px">
+    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px">
       <div class="card" style="padding:0;overflow:hidden">
         <img src="assets/gifs/overcooked_po_episode.gif" alt="Partial observability episode" style="width:100%;border-radius:16px">
         <p style="margin:12px 16px 14px;font-size:13px;color:#7a6a55;line-height:1.45">Each agent sees only tiles within a fixed egocentric window; all other tiles are masked.</p>
@@ -313,13 +296,6 @@ img{display:block;max-width:100%}
         <img src="assets/gifs/double_agent_cramped_room_po.gif" alt="Two agents partial observability" style="width:100%;border-radius:16px">
         <p style="margin:12px 16px 14px;font-size:13px;color:#7a6a55;line-height:1.45">Agents must infer kitchen state from local cues alone, with highlighted view areas shown per agent.</p>
       </div>
-    </div>
-    <!-- PO result -->
-    <h3 style="font-family:'Space Grotesk';font-size:18px;font-weight:700;margin:0 0 8px">A CNN encoder recovers the observability gap</h3>
-    <p style="font-size:14px;color:#5d4f3f;margin:0 0 16px;line-height:1.55">Partial observability lowers delivery by masking distant tiles and destabilizing value targets. Replacing the MLP with a CNN largely recovers this loss, and on Level 2 often surpasses the fully observable baseline. Spatial inductive bias becomes an asset when direct observation of the full grid is unavailable.</p>
-    <div class="result-card" style="max-width:600px">
-      <img src="assets/plots/partial_observability.png" alt="Partial vs full observability" style="width:100%;border-radius:10px">
-      <div class="result-caption">Full (FO) vs. partial observability (PO) with MLP and CNN encoders across Levels 1 and 2</div>
     </div>
   </div>
 </div>
@@ -330,16 +306,9 @@ img{display:block;max-width:100%}
   <h2 class="sec-h2">Learning to cooperate with new teammates</h2>
   <p style="font-size:15px;color:#5d4f3f;max-width:48em;margin:0 0 24px;line-height:1.5">Beyond changing layouts, MEAL exposes a second source of non-stationarity unique to multi-agent settings: changing cooperation partners. Rather than training on a fixed teammate, agents must adapt to a sequence of eight diverse partners, each with a different strategy, while retaining the ability to coordinate with earlier ones.</p>
   <img src="assets/partner_adaptation_illustration.png" alt="Continual partner adaptation: agent faces a new partner each round" style="width:100%;max-width:640px;border-radius:14px;margin-bottom:24px">
-  <div class="card" style="margin-bottom:32px">
+  <div class="card">
     <h3 style="font-family:'Space Grotesk';font-size:16px;font-weight:600;margin:0 0 10px">Partner pool</h3>
     <p style="margin:0;font-size:14px;color:#5d4f3f;line-height:1.6">Partners are drawn from three pools: <strong>hardcoded strategies</strong> (random and static agents), <strong>planning-based agents</strong> (onion-only, plate-only, and a human-like planner with stochastic actions), and <strong>population-trained agents</strong> using Best-Response Diversity (BRDiv), which maximises self-play performance while minimising cross-play compatibility. Each partner is frozen; only the continual learner updates.</p>
-  </div>
-  <!-- Partner adaptation result -->
-  <h3 style="font-family:'Space Grotesk';font-size:18px;font-weight:700;margin:0 0 8px">CL methods yield tighter, higher-scoring partner distributions</h3>
-  <p style="font-size:14px;color:#5d4f3f;margin:0 0 16px;line-height:1.55">Without explicit forgetting prevention, per-partner scores show a long tail of poor performance. CL methods that suppress forgetting yield narrower, higher-scoring distributions, confirming that partner diversity is a genuine non-stationarity challenge distinct from layout changes.</p>
-  <div class="result-card" style="max-width:600px">
-    <img src="assets/plots/partner_adaptation_arch_hist.png" alt="Partner adaptation score distribution" style="width:100%;border-radius:10px">
-    <div class="result-caption">Distribution of per-partner normalized scores across CL methods in the partner adaptation setting</div>
   </div>
 </div>
 
@@ -376,100 +345,136 @@ img{display:block;max-width:100%}
   </div>
 </div>
 
-<!-- EMPIRICAL ANALYSIS -->
+<!-- EVALUATION METRICS -->
 <div class="sec-bg">
   <div style="max-width:1120px;margin:0 auto" class="sec">
-    <div class="label">EMPIRICAL ANALYSIS</div>
-    <h2 class="sec-h2" style="margin-bottom:10px">What the experiments reveal</h2>
-    <p style="font-size:15px;color:#5d4f3f;max-width:50em;margin:0 0 48px;line-height:1.5">Raw delivery counts are not directly comparable across layouts of different sizes and complexities, so MEAL normalizes by the optimal single-agent cook–deliver cycle for each task, yielding three complementary metrics.</p>
-
-    <!-- S metric + plots -->
-    <div style="margin-bottom:52px">
-      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px">
-        <span style="font-family:'Silkscreen',monospace;font-size:14px;color:#d35a3b;flex-shrink:0">S ↑</span>
-        <h3 style="font-family:'Space Grotesk';font-size:20px;font-weight:700;margin:0">Average Delivery</h3>
+    <div class="label">EVALUATION METRICS</div>
+    <h2 class="sec-h2" style="margin-bottom:10px">Three metrics to capture CL dynamics</h2>
+    <p style="font-size:15px;color:#5d4f3f;max-width:48em;margin:0 0 28px;line-height:1.5">Raw delivery counts are not directly comparable across layouts of different sizes and complexities, so MEAL normalizes by the optimal single-agent cook–deliver cycle for each task.</p>
+    <div class="contrib-grid">
+      <div class="card">
+        <div style="font-family:'Silkscreen',monospace;font-size:13px;color:#d35a3b;margin-bottom:10px">S ↑</div>
+        <h3 style="font-family:'Space Grotesk';font-size:18px;font-weight:700;margin:0 0 8px">Average Delivery</h3>
+        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">Mean normalized soup delivery across all tasks at the end of training. Reflects the overall balance between stability and plasticity. Values above 1 indicate effective cooperation that exceeds solo efficiency.</p>
       </div>
-      <p style="font-size:14px;color:#5d4f3f;max-width:52em;margin:0 0 20px;line-height:1.55">Mean normalized soup delivery across all tasks at the end of training. Reflects the overall balance between stability and plasticity. Values above 1 indicate effective cooperation that exceeds the solo single-agent baseline. Neither the MARL algorithm nor the CL method alone determines S: the combination is what counts, and the heatmap below makes this clear.</p>
-      <div class="result-grid">
-        <div class="result-card">
-          <img src="assets/plots/algorithm_comparison.png" alt="Algorithm comparison heatmap" style="width:100%;border-radius:10px">
-          <div class="result-caption">Average delivery heatmap across MARL algorithms and CL method combinations</div>
-        </div>
-        <div class="result-card">
-          <img src="assets/plots/avg_cumulative_new_methods_seq_20_level_2.png" alt="Cumulative delivery all methods" style="width:100%;border-radius:10px">
-          <div class="result-caption">Average cumulative soup delivery for all CL methods, Level 2, 20-task sequence</div>
-        </div>
+      <div class="card">
+        <div style="font-family:'Silkscreen',monospace;font-size:13px;color:#5f9e7c;margin-bottom:10px">F ↓</div>
+        <h3 style="font-family:'Space Grotesk';font-size:18px;font-weight:700;margin:0 0 8px">Forgetting</h3>
+        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">Exponentially weighted performance drop on past tasks due to interference from training on new ones. Earlier tasks are penalized more heavily, capturing the fact that long-term forgetting compounds over time.</p>
+      </div>
+      <div class="card">
+        <div style="font-family:'Silkscreen',monospace;font-size:13px;color:#4f7cc4;margin-bottom:10px">FT ↑</div>
+        <h3 style="font-family:'Space Grotesk';font-size:18px;font-weight:700;margin:0 0 8px">Forward Transfer</h3>
+        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">How much prior experience accelerates learning on new tasks, measured as normalized improvement over a single-task baseline. Positive values mean past tasks help; negative values mean they interfere.</p>
       </div>
     </div>
+  </div>
+</div>
 
-    <!-- F metric + plot -->
-    <div style="margin-bottom:52px">
-      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px">
-        <span style="font-family:'Silkscreen',monospace;font-size:14px;color:#5f9e7c;flex-shrink:0">F ↓</span>
-        <h3 style="font-family:'Space Grotesk';font-size:20px;font-weight:700;margin:0">Forgetting</h3>
+<!-- RESULTS -->
+<div style="max-width:1120px;margin:0 auto" class="sec">
+  <div class="label">EMPIRICAL ANALYSIS</div>
+  <h2 class="sec-h2" style="margin-bottom:10px">What the experiments reveal</h2>
+  <p style="font-size:15px;color:#5d4f3f;max-width:50em;margin:0 0 32px;line-height:1.5">Algorithm choice, team size, difficulty, sequence length, observability, and partner diversity all interact, and their effects only become clear at scale.</p>
+  <div class="result-grid">
+
+    <!-- 1: Baseline Comparison -->
+    <div class="result-card">
+      <div>
+        <span class="result-tag" style="background:#fbeede;color:#a8401f;border:1px solid rgba(168,64,31,.25)">BASELINE COMPARISON</span>
+        <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Algorithm and CL method combinations matter</h3>
+        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">Neither the MARL algorithm nor the CL method alone determines performance: the combination is what counts. Some CL methods pair well with IPPO but hurt MAPPO, and vice versa. PackNet consistently achieves high delivery with near-zero forgetting; regularization methods (EWC, MAS) suppress forgetting but impose strong negative forward transfer.</p>
       </div>
-      <p style="font-size:14px;color:#5d4f3f;max-width:52em;margin:0 0 20px;line-height:1.55">Exponentially weighted performance drop on past tasks due to interference from training on new ones. Earlier tasks are penalized more heavily, capturing the fact that long-term forgetting compounds over time. Short sequences can mask this: methods that look similar at 5 tasks diverge dramatically at 100, as standard EWC over-regularizes and loses plasticity while Online EWC retains capacity through decaying importance weights.</p>
-      <div class="result-card" style="max-width:660px">
-        <img src="assets/plots/ewc_vs_online_ewc_5_vs_100_tasks.png" alt="EWC vs Online EWC at 5 and 100 tasks" style="width:100%;border-radius:10px">
-        <div class="result-caption">EWC vs. Online EWC on 5-task and 100-task Level 1 sequences — method rankings reverse at scale</div>
-      </div>
+      <img src="assets/plots/algorithm_comparison.png" alt="Baseline algorithm comparison heatmap" style="width:100%;border-radius:10px;margin-top:auto">
+      <div class="result-caption">Average delivery heatmap across MARL algorithms and CL method combinations</div>
     </div>
 
-    <!-- FT metric + plot -->
-    <div style="margin-bottom:52px">
-      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px">
-        <span style="font-family:'Silkscreen',monospace;font-size:14px;color:#4f7cc4;flex-shrink:0">FT ↑</span>
-        <h3 style="font-family:'Space Grotesk';font-size:20px;font-weight:700;margin:0">Forward Transfer</h3>
+    <!-- 2: Stability-Plasticity -->
+    <div class="result-card">
+      <div>
+        <span class="result-tag" style="background:#ebf4ef;color:#3d7a5a;border:1px solid rgba(95,158,124,.3)">STABILITY VS PLASTICITY</span>
+        <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Methods occupy distinct stability–plasticity regions</h3>
+        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">All CL methods reveal a clear trade-off when plotted together. Regularizers (EWC, MAS, Online MAS) cluster near zero forgetting but show strongly negative forward transfer. AGEM and FT sit at the opposite extreme: plastic but forgetful. PackNet uniquely achieves low forgetting without sacrificing plasticity.</p>
       </div>
-      <p style="font-size:14px;color:#5d4f3f;max-width:52em;margin:0 0 20px;line-height:1.55">How much prior experience accelerates learning on new tasks, measured as normalized improvement over a single-task baseline. Positive values mean past tasks help; negative values mean they interfere. The plot below shows per-task forward transfer curves: methods with strong regularization tend to show negative FT (they constrain the network so heavily that adapting to new tasks slows down), while PackNet retains plasticity in the free weight capacity.</p>
-      <div class="result-card" style="max-width:660px">
-        <img src="assets/plots/forward_transfer_level_2.png" alt="Forward transfer by method on Level 2" style="width:100%;border-radius:10px">
-        <div class="result-caption">Per-task forward transfer for all CL methods on Level 2, 100-task sequence</div>
-      </div>
+      <img src="assets/plots/avg_cumulative_new_methods_seq_20_level_2.png" alt="All methods cumulative delivery over 20 tasks" style="width:100%;border-radius:10px;margin-top:auto">
+      <div class="result-caption">Average cumulative soup delivery for all CL methods, Level 2, 20-task sequence</div>
     </div>
 
-    <!-- FT vs F scatter -->
-    <div style="margin-bottom:52px">
-      <h3 style="font-family:'Space Grotesk';font-size:20px;font-weight:700;margin:0 0 8px">The stability–plasticity plane</h3>
-      <p style="font-size:14px;color:#5d4f3f;max-width:52em;margin:0 0 20px;line-height:1.55">Plotting all methods across all difficulty levels in the FT vs. F plane reveals a clear trade-off. Regularizers cluster near zero forgetting but show strongly negative forward transfer. AGEM and FT sit at the opposite extreme. PackNet uniquely achieves low forgetting without sacrificing plasticity, occupying its own region across all three levels.</p>
-      <div class="result-card" style="max-width:660px">
-        <img src="assets/plots/forward_transfer_vs_forgetting_levels1_2_3.png" alt="Forward transfer vs forgetting scatter" style="width:100%;border-radius:10px">
-        <div class="result-caption">Forward transfer vs. forgetting scatter across all CL methods on Levels 1, 2, and 3</div>
+    <!-- 3: Sequence Length -->
+    <div class="result-card">
+      <div>
+        <span class="result-tag" style="background:#edf1f9;color:#3a5fa0;border:1px solid rgba(79,124,196,.3)">SEQUENCE LENGTH</span>
+        <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Short sequences hide the divergence</h3>
+        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">EWC and Online EWC look nearly identical at 5 tasks. Over 100 tasks, standard EWC increasingly over-regularizes the shared backbone, saturating early and losing plasticity, while Online EWC retains capacity through exponentially decaying importance weights. Rankings that appear stable at short horizons can reverse entirely at scale.</p>
       </div>
+      <img src="assets/plots/ewc_vs_online_ewc_5_vs_100_tasks.png" alt="EWC vs Online EWC at 5 and 100 tasks" style="width:100%;border-radius:10px;margin-top:auto">
+      <div class="result-caption">EWC vs. Online EWC on 5-task and 100-task Level 1 sequences</div>
     </div>
 
-    <!-- Remaining cards grid -->
-    <div class="result-grid">
-      <!-- Sequence Length -->
-      <div class="result-card">
-        <div>
-          <span class="result-tag" style="background:#edf1f9;color:#3a5fa0;border:1px solid rgba(79,124,196,.3)">SEQUENCE LENGTH</span>
-          <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Short sequences hide the divergence</h3>
-          <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">EWC and Online EWC look nearly identical at 5 tasks. Over 100 tasks, standard EWC increasingly over-regularizes the shared backbone while Online EWC retains capacity through exponentially decaying importance weights. Rankings that appear stable at short horizons can reverse entirely at scale.</p>
-        </div>
-        <img src="assets/plots/ewc_vs_online_ewc_5_vs_100_tasks.png" alt="EWC vs Online EWC at 5 and 100 tasks" style="width:100%;border-radius:10px;margin-top:auto">
-        <div class="result-caption">EWC vs. Online EWC on 5-task and 100-task Level 1 sequences</div>
+    <!-- 4: N-Agent -->
+    <div class="result-card">
+      <div>
+        <span class="result-tag" style="background:#fdf5e6;color:#b06000;border:1px solid rgba(176,96,0,.25)">TEAM SIZE</span>
+        <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Two or three chefs is the sweet spot</h3>
+        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">MEAL extends JaxMARL Overcooked to natively support N agents. A second agent enables parallel cooking, pushing throughput well above the solo baseline. Performance peaks at two agents on Level 1 and three on Level 2, then falls as each additional agent enlarges the joint action space and makes continual coordination harder to retain.</p>
       </div>
-      <!-- N-Agent -->
-      <div class="result-card">
-        <div>
-          <span class="result-tag" style="background:#fdf5e6;color:#b06000;border:1px solid rgba(176,96,0,.25)">TEAM SIZE</span>
-          <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Two or three chefs is the sweet spot</h3>
-          <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">MEAL extends JaxMARL Overcooked to natively support N agents. A second agent enables parallel cooking, pushing throughput well above the solo baseline. Performance peaks at two agents on Level 1 and three on Level 2, then falls as each additional agent enlarges the joint action space and makes continual coordination harder to retain.</p>
-        </div>
-        <img src="assets/plots/overcooked_agents.png" alt="Performance by number of agents" style="width:100%;border-radius:10px;margin-top:auto">
-        <div class="result-caption">Normalized soup delivery by team size on Levels 1 and 2</div>
+      <img src="assets/plots/overcooked_agents.png" alt="Performance by number of agents" style="width:100%;border-radius:10px;margin-top:auto">
+      <div class="result-caption">Normalized soup delivery by team size on Levels 1 and 2</div>
+    </div>
+
+    <!-- 5a: Difficulty Levels — Performance -->
+    <div class="result-card">
+      <div>
+        <span class="result-tag" style="background:#fdf0e8;color:#904010;border:1px solid rgba(144,64,16,.25)">DIFFICULTY LEVELS</span>
+        <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Harder levels compress performance across all methods</h3>
+        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">Performance drops substantially from Level 1 to Level 3. Larger grids and denser obstacles lengthen action sequences and demand tighter coordination. At Level 3, most methods struggle to maintain meaningful throughput even in early tasks, and the gap between strong and weak baselines widens with difficulty.</p>
       </div>
-      <!-- Network Plasticity -->
-      <div class="result-card">
-        <div>
-          <span class="result-tag" style="background:#eef3fb;color:#2a4e8a;border:1px solid rgba(42,78,138,.25)">NETWORK PLASTICITY</span>
-          <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Continual learning erodes network plasticity</h3>
-          <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">As training on sequential tasks accumulates, the effective rank of learned representations declines, making it harder for the network to adapt to new tasks. Methods that explicitly protect capacity (like PackNet) preserve plasticity in active units, while unconstrained fine-tuning leads to progressive rank collapse, silently degrading the network's ability to keep learning.</p>
-        </div>
-        <img src="assets/plots/plasticity_curve.png" alt="Network plasticity over task sequence" style="width:100%;border-radius:10px;margin-top:auto">
-        <div class="result-caption">Effective rank of network representations across the task sequence</div>
+      <img src="assets/plots/avg_cumulative_new_levels_seq_100_big.png" alt="Cumulative delivery across difficulty levels" style="width:100%;border-radius:10px;margin-top:auto">
+      <div class="result-caption">Average cumulative delivery across all CL methods for Levels 1, 2, and 3 over 100 tasks</div>
+    </div>
+
+    <!-- 5b: Difficulty Levels — Forgetting -->
+    <div class="result-card">
+      <div>
+        <span class="result-tag" style="background:#fdf0e8;color:#904010;border:1px solid rgba(144,64,16,.25)">DIFFICULTY LEVELS</span>
+        <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Harder tasks are harder to retain</h3>
+        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">Forgetting and forward transfer both degrade with difficulty. Methods that show near-zero FT at Level 1 turn negative at Level 3, suggesting harder kitchens interfere more with one another. The stability-plasticity trade-off sharpens as tasks become more demanding.</p>
       </div>
+      <img src="assets/plots/forward_transfer_vs_forgetting_levels1_2_3.png" alt="Forward transfer vs forgetting by level" style="width:100%;border-radius:10px;margin-top:auto">
+      <div class="result-caption">Forward transfer vs. forgetting scatter across all methods on Levels 1, 2, and 3</div>
+    </div>
+
+    <!-- 6: Network Plasticity -->
+    <div class="result-card">
+      <div>
+        <span class="result-tag" style="background:#eef3fb;color:#2a4e8a;border:1px solid rgba(42,78,138,.25)">NETWORK PLASTICITY</span>
+        <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Continual learning erodes network plasticity</h3>
+        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">As training on sequential tasks accumulates, the effective rank of learned representations declines, making it harder for the network to adapt to new tasks. Methods that explicitly protect capacity (like PackNet) preserve plasticity in active units, while unconstrained fine-tuning leads to progressive rank collapse.</p>
+      </div>
+      <img src="assets/plots/plasticity_curve.png" alt="Network plasticity over task sequence" style="width:100%;border-radius:10px;margin-top:auto">
+      <div class="result-caption">Effective rank of network representations across the task sequence</div>
+    </div>
+
+    <!-- 7: Partial Observability -->
+    <div class="result-card">
+      <div>
+        <span class="result-tag" style="background:#f0edf8;color:#5040a0;border:1px solid rgba(80,64,160,.25)">PARTIAL OBSERVABILITY</span>
+        <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">A CNN encoder recovers the observability gap</h3>
+        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">Partial observability lowers delivery by masking distant tiles and destabilizing value targets. Replacing the MLP with a CNN largely recovers this loss, and on Level 2 often surpasses the fully observable baseline. Spatial inductive bias becomes an asset when direct observation of the full grid is unavailable.</p>
+      </div>
+      <img src="assets/plots/partial_observability.png" alt="Partial vs full observability" style="width:100%;border-radius:10px;margin-top:auto">
+      <div class="result-caption">Full (FO) vs. partial observability (PO) with MLP and CNN encoders</div>
+    </div>
+
+    <!-- 8: Partner Adaptation -->
+    <div class="result-card">
+      <div>
+        <span class="result-tag" style="background:#f9ebe7;color:#a03020;border:1px solid rgba(160,48,32,.25)">PARTNER ADAPTATION</span>
+        <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Adapting to partners without forgetting</h3>
+        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">The histogram of per-partner scores reveals a long tail of poor performance for methods without explicit forgetting prevention. CL methods that suppress forgetting yield narrower, higher-scoring distributions, confirming that partner diversity is a genuine non-stationarity challenge distinct from layout changes.</p>
+      </div>
+      <img src="assets/plots/partner_adaptation_arch_hist.png" alt="Partner adaptation score distribution histogram" style="width:100%;border-radius:10px;margin-top:auto">
+      <div class="result-caption">Distribution of per-partner normalized scores across CL methods in the partner adaptation setting</div>
     </div>
 
   </div>
