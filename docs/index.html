@@ -91,10 +91,12 @@ img{display:block;max-width:100%}
 @media(min-width:768px){.envs-grid{grid-template-columns:repeat(4,1fr);gap:14px}}
 
 /* ── Results ── */
-.results-findings{display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:24px}
-@media(min-width:640px){.results-findings{grid-template-columns:repeat(2,1fr);gap:20px;margin-bottom:28px}}
-.results-plots{display:grid;grid-template-columns:1fr;gap:16px}
-@media(min-width:640px){.results-plots{grid-template-columns:repeat(2,1fr);gap:20px}}
+.result-grid{display:grid;grid-template-columns:1fr;gap:20px}
+@media(min-width:640px){.result-grid{grid-template-columns:repeat(2,1fr)}}
+.result-card{background:#fff7e9;border:1px solid rgba(124,83,48,.2);border-radius:16px;padding:20px;box-shadow:0 4px 0 rgba(124,83,48,.12);display:flex;flex-direction:column;gap:12px}
+@media(min-width:640px){.result-card{padding:24px;gap:14px}}
+.result-tag{font-family:'Silkscreen',monospace;font-size:9px;letter-spacing:.8px;padding:3px 8px;border-radius:20px;display:inline-block;margin-bottom:2px}
+.result-caption{font-family:'DM Mono',monospace;font-size:11px;color:#8a7257;margin-top:2px}
 
 /* ── Cite ── */
 .cite-grid{display:grid;grid-template-columns:1fr;gap:32px}
@@ -143,7 +145,7 @@ img{display:block;max-width:100%}
       Lifelong learning,<br>one kitchen at a time.
     </h1>
     <p style="font-size:16px;line-height:1.55;color:#5d4f3f;max-width:30em;margin:0 0 14px;font-weight:500">
-      <strong style="color:#2c241c">MEAL</strong> — <strong>M</strong>ulti-agent <strong>E</strong>nvironments for <strong>A</strong>daptive <strong>L</strong>earning. A GPU-accelerated, fully JAX benchmark that trains agents on <strong style="color:#a8401f">long task sequences in hours on a single GPU</strong>.
+      <strong style="color:#2c241c">MEAL</strong> — <strong>M</strong>ulti-agent <strong>E</strong>nvironments for <strong>A</strong>daptive <strong>L</strong>earning. A GPU-accelerated, fully JAX benchmark that trains agents on <strong style="color:#a8401f">sequences of 100+ tasks in a few hours on a single GPU</strong>.
     </p>
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin:20px 0 18px">
       <a href="{{ paperUrl }}" target="_blank" style="text-decoration:none;font-weight:700;font-size:14px;color:#fff;background:#d35a3b;padding:11px 20px;border-radius:11px;box-shadow:0 3px 0 #a8401f">Read the paper →</a>
@@ -161,10 +163,10 @@ img{display:block;max-width:100%}
 <!-- TICKER STRIP -->
 <div style="background:#7c5330;color:#f3e9d2;border-top:3px solid #5f3f24;border-bottom:3px solid #5f3f24">
   <div style="max-width:1120px;margin:0 auto" class="ticker-inner">
-    <div style="display:flex;align-items:baseline;gap:8px"><span style="font-family:'Space Grotesk';font-weight:700;font-size:24px;color:#e0a52e">4</span><span style="font-size:13px;opacity:.85">cooperative environments</span></div>
-    <div style="display:flex;align-items:baseline;gap:8px"><span style="font-family:'Space Grotesk';font-weight:700;font-size:24px;color:#e0a52e">JAX</span><span style="font-size:13px;opacity:.85">hardware accelerated</span></div>
-    <div style="display:flex;align-items:baseline;gap:8px"><span style="font-family:'Space Grotesk';font-weight:700;font-size:24px;color:#e0a52e">1 GPU</span><span style="font-size:13px;opacity:.85">no cluster needed</span></div>
-    <div style="display:flex;align-items:baseline;gap:8px"><span style="font-family:'Space Grotesk';font-weight:700;font-size:24px;color:#e0a52e">10B+</span><span style="font-size:13px;opacity:.85">env steps studied</span></div>
+    <div style="display:flex;align-items:baseline;gap:8px"><span style="font-family:'Space Grotesk';font-weight:700;font-size:24px;color:#e0a52e">3</span><span style="font-size:13px;opacity:.85">difficulty levels</span></div>
+    <div style="display:flex;align-items:baseline;gap:8px"><span style="font-family:'Space Grotesk';font-weight:700;font-size:24px;color:#e0a52e">Partner</span><span style="font-size:13px;opacity:.85">adaptation setting</span></div>
+    <div style="display:flex;align-items:baseline;gap:8px"><span style="font-family:'Space Grotesk';font-weight:700;font-size:24px;color:#e0a52e">Full/PO</span><span style="font-size:13px;opacity:.85">observability modes</span></div>
+    <div style="display:flex;align-items:baseline;gap:8px"><span style="font-family:'Space Grotesk';font-weight:700;font-size:24px;color:#e0a52e">Hetero</span><span style="font-size:13px;opacity:.85">team composition</span></div>
   </div>
 </div>
 
@@ -173,7 +175,7 @@ img{display:block;max-width:100%}
   <div class="tldr-grid">
     <div style="font-family:'Silkscreen',monospace;font-size:12px;letter-spacing:1px;color:#a8401f;padding-top:4px">TL;DR</div>
     <p class="tldr-text">
-      Much of existing research evaluates on 3–10 tasks because CPU-bound simulators make longer runs impractical, and continual learning in <em style="color:#a8401f;font-style:normal">cooperative multi-agent</em> settings is largely unexplored. MEAL closes both gaps and shows that long task sequences reveal failure modes that simply never appear at small scale.
+      Much of existing CRL research evaluates on 3–10 tasks because CPU-bound simulators make longer runs impractical, and continual learning in <em style="color:#a8401f;font-style:normal">cooperative multi-agent</em> settings is largely unexplored. MEAL addresses both gaps and shows that long task sequences reveal failure modes that may not emerge at smaller scales.
     </p>
   </div>
 </div>
@@ -284,19 +286,19 @@ img{display:block;max-width:100%}
   <div class="envs-inner">
     <div style="margin-bottom:22px">
       <div style="font-family:'Silkscreen',monospace;font-size:11px;letter-spacing:1px;color:#e0a52e;margin-bottom:8px">ENVIRONMENTS</div>
-      <h2 style="font-family:'Space Grotesk';font-size:22px;font-weight:700;margin:0 0 10px;color:#f3e9d2">Extending JaxMARL beyond the kitchen</h2>
-      <p style="font-size:14px;color:#b9a888;max-width:52em;margin:0;line-height:1.55">MEAL builds on JaxMARL to bring continual learning to four cooperative multi-agent environments. Overcooked is the primary domain; the remaining three show that the benchmark generalizes across fundamentally different cooperative settings.</p>
+      <h2 style="font-family:'Space Grotesk';font-size:22px;font-weight:700;margin:0 0 10px;color:#f3e9d2">Extending MEAL beyond the kitchen</h2>
+      <p style="font-size:14px;color:#b9a888;max-width:52em;margin:0;line-height:1.55">MEAL brings continual learning to four cooperative multi-agent environments from JaxMARL. We selected Overcooked for the core evaluation and analysis in our work. The other three cover different cooperative settings.</p>
     </div>
     <div class="envs-grid">
       <div class="env-card">
         <img src="assets/gifs/3_agents_2_pots.gif" alt="Overcooked" style="border-radius:8px;width:100%">
         <div style="font-family:'Space Grotesk';font-weight:700;font-size:16px;color:#e0a52e">Overcooked</div>
-        <div style="font-size:13px;color:#cdbfa6;line-height:1.45">Primary domain. Cooperative soup delivery in procedurally generated kitchens.</div>
+        <div style="font-size:13px;color:#cdbfa6;line-height:1.45">Cooperative soup delivery in procedurally generated kitchens.</div>
       </div>
       <div class="env-card">
         <img src="assets/gifs/jaxnav/task_00.gif" alt="JaxNav" style="border-radius:8px;width:100%">
         <div style="font-family:'Space Grotesk';font-weight:700;font-size:16px;color:#5f9e7c">JaxNav</div>
-        <div style="font-size:13px;color:#cdbfa6;line-height:1.45">Multi-robot navigation through obstacle maps, fully JAX-accelerated.</div>
+        <div style="font-size:13px;color:#cdbfa6;line-height:1.45">Multi-robot navigation through randomized obstacle maps.</div>
       </div>
       <div class="env-card">
         <img src="assets/gifs/mpe/task_01_mpe_a4_l3_k8_r0.5_t1.gif" alt="MPE" style="border-radius:8px;width:100%">
@@ -306,7 +308,7 @@ img{display:block;max-width:100%}
       <div class="env-card">
         <img src="assets/gifs/smax/task_06_hzzsh_vs_mZzhZ.gif" alt="SMAX" style="border-radius:8px;width:100%">
         <div style="font-family:'Space Grotesk';font-weight:700;font-size:16px;color:#d8836a">SMAX</div>
-        <div style="font-size:13px;color:#cdbfa6;line-height:1.45">StarCraft II micromanagement, reimplemented in JAX.</div>
+        <div style="font-size:13px;color:#cdbfa6;line-height:1.45">StarCraft II micromanagement in JAX, each task a different unit composition.</div>
       </div>
     </div>
   </div>
@@ -316,26 +318,77 @@ img{display:block;max-width:100%}
 <div class="sec-bg">
   <div style="max-width:1120px;margin:0 auto" class="sec">
     <div class="label">WHAT WE FOUND</div>
-    <h2 class="sec-h2" style="margin-bottom:28px">Findings</h2>
-    <div class="results-findings">
-      <div class="card">
-        <h3 style="font-family:'Space Grotesk';font-size:18px;margin:0 0 8px;font-weight:600">Length separates the field</h3>
-        <p style="margin:0;font-size:14px;color:#5d4f3f;line-height:1.5">The longer the sequence, the further methods separate. <strong>PackNet</strong> strikes the best balance — top average score at every level with near-zero forgetting — while a short benchmark would hide most of this spread.</p>
+    <h2 class="sec-h2" style="margin-bottom:10px">Findings</h2>
+    <p style="font-size:15px;color:#5d4f3f;max-width:50em;margin:0 0 32px;line-height:1.5">Six experiments spanning algorithm comparison, stability-plasticity trade-offs, sequence length effects, team size, partial observability, and continual partner adaptation.</p>
+
+    <div class="result-grid">
+
+      <!-- 1: Baseline Comparison -->
+      <div class="result-card">
+        <div>
+          <span class="result-tag" style="background:#fbeede;color:#a8401f;border:1px solid rgba(168,64,31,.25)">BASELINE COMPARISON</span>
+          <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">PackNet leads across all difficulty levels</h3>
+          <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">PackNet attains the highest average delivery score at every difficulty level while keeping forgetting near zero. Regularization methods (EWC, MAS) suppress forgetting but at the cost of strongly negative forward transfer, interfering with new task learning. AGEM achieves the best forward transfer but pays for it with high forgetting.</p>
+        </div>
+        <img src="assets/plots/algorithm_comparison.png" alt="Baseline algorithm comparison" style="width:100%;border-radius:10px;margin-top:auto">
+        <div class="result-caption">Average soup delivery across CL baselines on Level 1, 20-task sequence</div>
       </div>
-      <div class="card">
-        <h3 style="font-family:'Space Grotesk';font-size:18px;margin:0 0 8px;font-weight:600">Too many cooks</h3>
-        <p style="margin:0;font-size:14px;color:#5d4f3f;line-height:1.5">Throughput peaks at <strong>two or three chefs</strong>, then declines as the kitchen crowds. Every added agent makes continual coordination harder to learn and to retain.</p>
+
+      <!-- 2: Stability-Plasticity -->
+      <div class="result-card">
+        <div>
+          <span class="result-tag" style="background:#ebf4ef;color:#3d7a5a;border:1px solid rgba(95,158,124,.3)">STABILITY VS PLASTICITY</span>
+          <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">A clear stability–plasticity trade-off</h3>
+          <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">Every method occupies a distinct region of the forgetting–transfer plane. Regularizers cluster near zero forgetting but show strongly negative forward transfer. AGEM and FT sit at the opposite extreme: plastic but forgetful. PackNet alone achieves low forgetting alongside near-zero forward transfer across all three levels.</p>
+        </div>
+        <img src="assets/plots/forward_transfer_vs_forgetting_levels1_2_3.png" alt="Forgetting vs forward transfer" style="width:100%;border-radius:10px;margin-top:auto">
+        <div class="result-caption">Forward transfer vs. forgetting across Levels 1, 2, and 3</div>
       </div>
-    </div>
-    <div class="results-plots">
-      <div>
-        <img src="assets/plots/algorithm_comparison.png" alt="Algorithm comparison" style="width:100%;border-radius:14px">
-        <div style="font-family:'DM Mono',monospace;font-size:11px;color:#8a7257;margin-top:8px">Algorithm comparison across sequence lengths</div>
+
+      <!-- 3: Sequence Length -->
+      <div class="result-card">
+        <div>
+          <span class="result-tag" style="background:#edf1f9;color:#3a5fa0;border:1px solid rgba(79,124,196,.3)">SEQUENCE LENGTH</span>
+          <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Short sequences miss the divergence</h3>
+          <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">EWC and Online EWC look nearly identical over 10 tasks. Over 100 tasks, standard EWC increasingly over-regularizes the shared backbone, saturating early and losing plasticity, while Online EWC retains capacity through exponentially decaying importance weights. Method rankings can reverse entirely over longer horizons.</p>
+        </div>
+        <img src="assets/plots/performance_EWC_100_tasks.png" alt="EWC vs Online EWC at 10 and 100 tasks" style="width:100%;border-radius:10px;margin-top:auto">
+        <div class="result-caption">EWC vs. Online EWC on 10-task and 100-task Level 1 sequences</div>
       </div>
-      <div>
-        <img src="assets/plots/forward_transfer_vs_forgetting_levels1_2_3.png" alt="Forgetting vs transfer" style="width:100%;border-radius:14px">
-        <div style="font-family:'DM Mono',monospace;font-size:11px;color:#8a7257;margin-top:8px">Forgetting vs. forward transfer across difficulty levels</div>
+
+      <!-- 4: N-Agent -->
+      <div class="result-card">
+        <div>
+          <span class="result-tag" style="background:#fdf5e6;color:#b06000;border:1px solid rgba(176,96,0,.25)">TEAM SIZE</span>
+          <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Two or three chefs is the sweet spot</h3>
+          <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">A second agent enables parallel cooking, pushing throughput well above the solo baseline. Performance peaks at two agents on Level 1 and three on Level 2, then falls. Each additional agent enlarges the joint action space, muddies credit assignment, and makes continual coordination progressively harder to learn and retain.</p>
+        </div>
+        <img src="assets/plots/overcooked_agents.png" alt="Performance by number of agents" style="width:100%;border-radius:10px;margin-top:auto">
+        <div class="result-caption">Normalized soup delivery by team size on Levels 1 and 2</div>
       </div>
+
+      <!-- 5: Partial Observability -->
+      <div class="result-card">
+        <div>
+          <span class="result-tag" style="background:#f0edf8;color:#5040a0;border:1px solid rgba(80,64,160,.25)">PARTIAL OBSERVABILITY</span>
+          <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">A CNN encoder recovers the observability gap</h3>
+          <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">Partial observability lowers delivery by masking distant tiles and destabilizing value targets. Replacing the MLP with a CNN largely recovers this loss, and on Level 2 often surpasses the fully observable baseline. Spatial inductive bias becomes an asset when direct observation of the full grid is unavailable.</p>
+        </div>
+        <img src="assets/plots/partial_observability.png" alt="Partial vs full observability" style="width:100%;border-radius:10px;margin-top:auto">
+        <div class="result-caption">Full (FO) vs. partial observability (PO) with MLP and CNN encoders</div>
+      </div>
+
+      <!-- 6: Partner Adaptation -->
+      <div class="result-card">
+        <div>
+          <span class="result-tag" style="background:#f9ebe7;color:#a03020;border:1px solid rgba(160,48,32,.25)">PARTNER ADAPTATION</span>
+          <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Adapting to partners without forgetting</h3>
+          <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">MEAL exposes a second axis of non-stationarity: a changing roster of cooperation partners. Agents must adapt to each new partner's strategy while retaining coordination with earlier ones. Methods that suppress forgetting show substantially better retention of partner-specific coordination across all rounds.</p>
+        </div>
+        <img src="assets/plots/partner_per_task_score.png" alt="Continual partner adaptation scores" style="width:100%;border-radius:10px;margin-top:auto">
+        <div class="result-caption">Per-task normalized score across a sequence of 8 diverse cooperation partners</div>
+      </div>
+
     </div>
   </div>
 </div>
