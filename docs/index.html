@@ -286,15 +286,31 @@ img{display:block;max-width:100%}
   <div style="max-width:1120px;margin:0 auto" class="sec">
     <div class="label">PARTIAL OBSERVABILITY</div>
     <h2 class="sec-h2">Sensing constraints, like the real world</h2>
-    <p style="font-size:15px;color:#5d4f3f;max-width:48em;margin:0 0 28px;line-height:1.5">Although Overcooked is fully observable by design, MEAL introduces a partial observability variant to reflect real-world sensing constraints. Each agent receives only an egocentric observation window, masking all tiles outside a fixed radius. This destabilizes value targets and makes credit assignment harder, while also motivating the use of spatially aware encoders.</p>
-    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:16px">
-      <div class="card" style="padding:0;overflow:hidden">
-        <img src="assets/gifs/overcooked_po_episode.gif" alt="Partial observability episode" style="width:100%;border-radius:16px">
-        <p style="margin:12px 16px 14px;font-size:13px;color:#7a6a55;line-height:1.45">Each agent sees only tiles within a fixed egocentric window; all other tiles are masked.</p>
+    <p style="font-size:15px;color:#5d4f3f;max-width:48em;margin:0 0 28px;line-height:1.5">Although Overcooked is fully observable by design, MEAL introduces a partial observability variant. Each agent receives only an egocentric observation window, masking all tiles outside a fixed radius. Because the window size is fixed while the kitchen grows with difficulty, higher levels expose a smaller fraction of the grid — compounding the challenge of coordination and credit assignment.</p>
+    <div class="diff-grid">
+      <div class="card">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px">
+          <span style="font-family:'Space Grotesk';font-weight:700;font-size:16px">Level 1</span>
+          <span style="font-family:'DM Mono',monospace;font-size:11px;color:#a08a6e">EASY</span>
+        </div>
+        <img src="assets/gifs/2_agents_easy.gif" alt="Level 1 partial observability" style="border-radius:10px;width:100%">
+        <p style="margin:12px 0 0;font-size:13px;color:#7a6a55;line-height:1.45">Small kitchen (6–7 grid). The fixed observation window covers most of the layout — agents can usually infer the full state with a few steps.</p>
       </div>
-      <div class="card" style="padding:0;overflow:hidden">
-        <img src="assets/gifs/double_agent_cramped_room_po.gif" alt="Two agents partial observability" style="width:100%;border-radius:16px">
-        <p style="margin:12px 16px 14px;font-size:13px;color:#7a6a55;line-height:1.45">Agents must infer kitchen state from local cues alone, with highlighted view areas shown per agent.</p>
+      <div class="card">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px">
+          <span style="font-family:'Space Grotesk';font-weight:700;font-size:16px">Level 2</span>
+          <span style="font-family:'DM Mono',monospace;font-size:11px;color:#a08a6e">MEDIUM</span>
+        </div>
+        <img src="assets/gifs/2_agents_med.gif" alt="Level 2 partial observability" style="border-radius:10px;width:100%">
+        <p style="margin:12px 0 0;font-size:13px;color:#7a6a55;line-height:1.45">Larger kitchen (8–9 grid). The window now covers a smaller proportion of the grid, requiring agents to navigate blind sections and coordinate without shared state.</p>
+      </div>
+      <div class="card">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px">
+          <span style="font-family:'Space Grotesk';font-weight:700;font-size:16px">Level 3</span>
+          <span style="font-family:'DM Mono',monospace;font-size:11px;color:#a08a6e">HARD</span>
+        </div>
+        <img src="assets/gifs/2_agents_hard.gif" alt="Level 3 partial observability" style="border-radius:10px;width:100%">
+        <p style="margin:12px 0 0;font-size:13px;color:#7a6a55;line-height:1.45">Large, wall-dense kitchen (10–11 grid). The window covers only a narrow corridor of the layout. Agents must act on almost no global information, making credit assignment and long-term planning particularly hard.</p>
       </div>
     </div>
   </div>
@@ -355,17 +371,23 @@ img{display:block;max-width:100%}
       <div class="card">
         <div style="font-family:'Silkscreen',monospace;font-size:13px;color:#d35a3b;margin-bottom:10px">S ↑</div>
         <h3 style="font-family:'Space Grotesk';font-size:18px;font-weight:700;margin:0 0 8px">Average Delivery</h3>
-        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">Mean normalized soup delivery across all tasks at the end of training. Reflects the overall balance between stability and plasticity. Values above 1 indicate effective cooperation that exceeds solo efficiency.</p>
+        <p style="margin:0 0 12px;font-size:13.5px;color:#5d4f3f;line-height:1.55">Mean normalized soup delivery across all tasks at the end of training. Reflects the overall balance between stability and plasticity. Values above 1 indicate effective cooperation that exceeds solo efficiency.</p>
+        <div style="font-family:'DM Mono',monospace;font-size:13px;color:#2c241c;background:#fbeede;border-radius:8px;padding:10px 14px;letter-spacing:.2px">S = <sup>1</sup>&frasl;<sub>N</sub> &sum;<sub>i=1</sub><sup>N</sup> s<sub>N</sub>(i)</div>
+        <p style="margin:8px 0 0;font-size:11.5px;color:#8a7257;line-height:1.5">s<sub>N</sub>(i) — normalized delivery on task i after training on all N tasks</p>
       </div>
       <div class="card">
         <div style="font-family:'Silkscreen',monospace;font-size:13px;color:#5f9e7c;margin-bottom:10px">F ↓</div>
         <h3 style="font-family:'Space Grotesk';font-size:18px;font-weight:700;margin:0 0 8px">Forgetting</h3>
-        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">Exponentially weighted performance drop on past tasks due to interference from training on new ones. Earlier tasks are penalized more heavily, capturing the fact that long-term forgetting compounds over time.</p>
+        <p style="margin:0 0 12px;font-size:13.5px;color:#5d4f3f;line-height:1.55">Performance drop on past tasks due to interference from new training. Measures the gap between peak performance on each task (right after training it) and final performance after the full sequence.</p>
+        <div style="font-family:'DM Mono',monospace;font-size:13px;color:#2c241c;background:#ebf4ef;border-radius:8px;padding:10px 14px;letter-spacing:.2px">F = <sup>1</sup>&frasl;<sub>N&minus;1</sub> &sum;<sub>i=1</sub><sup>N&minus;1</sup> (s<sub>i</sub>(i) &minus; s<sub>N</sub>(i))</div>
+        <p style="margin:8px 0 0;font-size:11.5px;color:#8a7257;line-height:1.5">s<sub>i</sub>(i) — delivery on task i right after training it; s<sub>N</sub>(i) — delivery after the full sequence</p>
       </div>
       <div class="card">
         <div style="font-family:'Silkscreen',monospace;font-size:13px;color:#4f7cc4;margin-bottom:10px">FT ↑</div>
         <h3 style="font-family:'Space Grotesk';font-size:18px;font-weight:700;margin:0 0 8px">Forward Transfer</h3>
-        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">How much prior experience accelerates learning on new tasks, measured as normalized improvement over a single-task baseline. Positive values mean past tasks help; negative values mean they interfere.</p>
+        <p style="margin:0 0 12px;font-size:13.5px;color:#5d4f3f;line-height:1.55">How much prior experience accelerates learning on new tasks. Measured as normalized improvement in area under the learning curve (AUC) over a single-task baseline. Positive means past tasks help; negative means they interfere.</p>
+        <div style="font-family:'DM Mono',monospace;font-size:12px;color:#2c241c;background:#edf1f9;border-radius:8px;padding:10px 14px;letter-spacing:.2px">FT = <sup>1</sup>&frasl;<sub>N</sub> &sum;<sub>i=1</sub><sup>N</sup> <sup>AUC<sub>i</sub> &minus; AUC<sub>i</sub><sup>b</sup></sup>&frasl;<sub>1 &minus; AUC<sub>i</sub><sup>b</sup></sub></div>
+        <p style="margin:8px 0 0;font-size:11.5px;color:#8a7257;line-height:1.5">AUC<sub>i</sub> — area under learning curve for task i; AUC<sub>i</sub><sup>b</sup> — single-task baseline AUC</p>
       </div>
     </div>
   </div>
@@ -374,31 +396,57 @@ img{display:block;max-width:100%}
 <!-- RESULTS -->
 <div style="max-width:1120px;margin:0 auto" class="sec">
   <div class="label">EMPIRICAL ANALYSIS</div>
-  <h2 class="sec-h2" style="margin-bottom:10px">What the experiments reveal</h2>
+  <h2 class="sec-h2" style="margin-bottom:10px">Benchmark results</h2>
   <p style="font-size:15px;color:#5d4f3f;max-width:50em;margin:0 0 32px;line-height:1.5">Algorithm choice, team size, difficulty, sequence length, observability, and partner diversity all interact, and their effects only become clear at scale.</p>
+  <!-- Baseline section: full-width heatmap + 2-col plots below -->
+  <div class="result-card" style="margin-bottom:20px">
+    <span class="result-tag" style="background:#fbeede;color:#a8401f;border:1px solid rgba(168,64,31,.25)">BASELINE COMPARISON</span>
+    <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Algorithm and CL method combinations matter</h3>
+    <p style="margin:0 0 14px;font-size:13.5px;color:#5d4f3f;line-height:1.55">Neither the MARL algorithm nor the CL method alone determines performance: the combination is what counts. Some CL methods pair well with IPPO but hurt MAPPO, and vice versa. PackNet consistently achieves high delivery with near-zero forgetting; regularization methods (EWC, MAS) suppress forgetting but impose strongly negative forward transfer.</p>
+    <img src="assets/plots/algorithm_comparison_hd.png" alt="Baseline algorithm comparison heatmap" style="width:100%;border-radius:10px">
+    <div class="result-caption">Average delivery heatmap across MARL algorithms and CL method combinations</div>
+  </div>
+
+  <!-- 2-col: avg_cumulative | [FT + forgetting stacked] -->
+  <div style="display:grid;grid-template-columns:1fr;gap:20px;margin-bottom:20px">
+    <div style="display:grid;grid-template-columns:1fr;gap:20px">
+      <!-- all methods delivery -->
+      <div class="result-card">
+        <p style="margin:0 0 12px;font-size:13.5px;color:#5d4f3f;line-height:1.55">All IPPO-combined CL methods over a 20-task Level 1 sequence. Methods diverge progressively — what looks like a small gap at task 5 becomes a wide spread by task 20, making long sequences essential for meaningful comparison.</p>
+        <img src="assets/plots/avg_cumulative_new_methods_seq_20_level_1.png" alt="All methods cumulative delivery Level 1" style="width:100%;border-radius:10px;margin-top:auto">
+        <div class="result-caption">Average cumulative soup delivery for all IPPO+CL methods, Level 1, 20-task sequence</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FT and Forgetting side by side, then scatter -->
+  <div class="result-grid" style="margin-bottom:20px">
+    <div class="result-card">
+      <span class="result-tag" style="background:#ebf4ef;color:#3d7a5a;border:1px solid rgba(95,158,124,.3)">FORWARD TRANSFER</span>
+      <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">PackNet leverages past experience</h3>
+      <p style="margin:0 0 12px;font-size:13.5px;color:#5d4f3f;line-height:1.55">PackNet shows positive forward transfer on most tasks — past training accelerates learning on new kitchens. Methods that over-regularize (EWC, MAS) show negative FT: previous task constraints slow down adaptation to new ones.</p>
+      <img src="assets/plots/forward_transfer_packnet_level_2.png" alt="PackNet forward transfer Level 2" style="width:100%;border-radius:10px;margin-top:auto">
+      <div class="result-caption">Per-task forward transfer for PackNet vs. IPPO baseline, Level 2</div>
+    </div>
+    <div class="result-card">
+      <span class="result-tag" style="background:#ebf4ef;color:#3d7a5a;border:1px solid rgba(95,158,124,.3)">FORGETTING</span>
+      <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Performance on old tasks declines over time</h3>
+      <p style="margin:0 0 12px;font-size:13.5px;color:#5d4f3f;line-height:1.55">Online EWC maintains high delivery on the current task but shows a sawtooth pattern across earlier ones — each new training cycle interferes with previously learned behaviors. The gap between current and past-task performance widens as the sequence grows.</p>
+      <img src="assets/plots/per_task_norm_score_Online_EWC_seq_20_level_1.png" alt="Online EWC per-task score Level 1" style="width:100%;border-radius:10px;margin-top:auto">
+      <div class="result-caption">Per-task normalized score for Online EWC over a 20-task Level 1 sequence</div>
+    </div>
+  </div>
+
+  <!-- Stability-plasticity scatter -->
+  <div class="result-card" style="margin-bottom:20px">
+    <span class="result-tag" style="background:#ebf4ef;color:#3d7a5a;border:1px solid rgba(95,158,124,.3)">STABILITY VS PLASTICITY</span>
+    <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Methods occupy distinct stability–plasticity regions</h3>
+    <p style="margin:0 0 12px;font-size:13.5px;color:#5d4f3f;line-height:1.55">Plotting all methods in the FT vs. forgetting plane reveals a clear trade-off. Regularizers (EWC, MAS, Online MAS) cluster near zero forgetting but show strongly negative forward transfer. AGEM and FT sit at the opposite extreme: plastic but forgetful. PackNet uniquely achieves low forgetting without sacrificing plasticity.</p>
+    <img src="assets/plots/forward_transfer_vs_forgetting_level1.png" alt="Forward transfer vs forgetting scatter Level 1" style="width:100%;border-radius:10px">
+    <div class="result-caption">Forward transfer vs. forgetting for all CL methods on Level 1</div>
+  </div>
+
   <div class="result-grid">
-
-    <!-- 1: Baseline Comparison -->
-    <div class="result-card">
-      <div>
-        <span class="result-tag" style="background:#fbeede;color:#a8401f;border:1px solid rgba(168,64,31,.25)">BASELINE COMPARISON</span>
-        <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Algorithm and CL method combinations matter</h3>
-        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">Neither the MARL algorithm nor the CL method alone determines performance: the combination is what counts. Some CL methods pair well with IPPO but hurt MAPPO, and vice versa. PackNet consistently achieves high delivery with near-zero forgetting; regularization methods (EWC, MAS) suppress forgetting but impose strong negative forward transfer.</p>
-      </div>
-      <img src="assets/plots/algorithm_comparison.png" alt="Baseline algorithm comparison heatmap" style="width:100%;border-radius:10px;margin-top:auto">
-      <div class="result-caption">Average delivery heatmap across MARL algorithms and CL method combinations</div>
-    </div>
-
-    <!-- 2: Stability-Plasticity -->
-    <div class="result-card">
-      <div>
-        <span class="result-tag" style="background:#ebf4ef;color:#3d7a5a;border:1px solid rgba(95,158,124,.3)">STABILITY VS PLASTICITY</span>
-        <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Methods occupy distinct stability–plasticity regions</h3>
-        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">All CL methods reveal a clear trade-off when plotted together. Regularizers (EWC, MAS, Online MAS) cluster near zero forgetting but show strongly negative forward transfer. AGEM and FT sit at the opposite extreme: plastic but forgetful. PackNet uniquely achieves low forgetting without sacrificing plasticity.</p>
-      </div>
-      <img src="assets/plots/avg_cumulative_new_methods_seq_20_level_2.png" alt="All methods cumulative delivery over 20 tasks" style="width:100%;border-radius:10px;margin-top:auto">
-      <div class="result-caption">Average cumulative soup delivery for all CL methods, Level 2, 20-task sequence</div>
-    </div>
 
     <!-- 3: Sequence Length -->
     <div class="result-card">
@@ -429,19 +477,19 @@ img{display:block;max-width:100%}
         <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Harder levels compress performance across all methods</h3>
         <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">Performance drops substantially from Level 1 to Level 3. Larger grids and denser obstacles lengthen action sequences and demand tighter coordination. At Level 3, most methods struggle to maintain meaningful throughput even in early tasks, and the gap between strong and weak baselines widens with difficulty.</p>
       </div>
-      <img src="assets/plots/avg_cumulative_new_levels_seq_100_big.png" alt="Cumulative delivery across difficulty levels" style="width:100%;border-radius:10px;margin-top:auto">
-      <div class="result-caption">Average cumulative delivery across all CL methods for Levels 1, 2, and 3 over 100 tasks</div>
+      <img src="assets/plots/performance_EWC_100_tasks.png" alt="EWC performance across 100 tasks" style="width:100%;border-radius:10px;margin-top:auto">
+      <div class="result-caption">Per-task normalized delivery for EWC across a 100-task sequence on Levels 1, 2, and 3</div>
     </div>
 
     <!-- 5b: Difficulty Levels — Forgetting -->
     <div class="result-card">
       <div>
         <span class="result-tag" style="background:#fdf0e8;color:#904010;border:1px solid rgba(144,64,16,.25)">DIFFICULTY LEVELS</span>
-        <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Harder tasks are harder to retain</h3>
-        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">Forgetting and forward transfer both degrade with difficulty. Methods that show near-zero FT at Level 1 turn negative at Level 3, suggesting harder kitchens interfere more with one another. The stability-plasticity trade-off sharpens as tasks become more demanding.</p>
+        <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Forgetting compounds faster at higher difficulty</h3>
+        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">Forgetting accumulates more aggressively on harder levels. The interference between tasks grows as kitchens become larger and more structurally varied — previously learned navigation and coordination strategies are more likely to conflict with new ones, causing faster erosion of past-task performance.</p>
       </div>
-      <img src="assets/plots/forward_transfer_vs_forgetting_levels1_2_3.png" alt="Forward transfer vs forgetting by level" style="width:100%;border-radius:10px;margin-top:auto">
-      <div class="result-caption">Forward transfer vs. forgetting scatter across all methods on Levels 1, 2, and 3</div>
+      <img src="assets/plots/forgetting_Online_EWC_100_tasks.png" alt="Online EWC forgetting across 100 tasks" style="width:100%;border-radius:10px;margin-top:auto">
+      <div class="result-caption">Cumulative forgetting for Online EWC across a 100-task sequence on Levels 1, 2, and 3</div>
     </div>
 
     <!-- 6: Network Plasticity -->
@@ -449,10 +497,10 @@ img{display:block;max-width:100%}
       <div>
         <span class="result-tag" style="background:#eef3fb;color:#2a4e8a;border:1px solid rgba(42,78,138,.25)">NETWORK PLASTICITY</span>
         <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Continual learning erodes network plasticity</h3>
-        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">As training on sequential tasks accumulates, the effective rank of learned representations declines, making it harder for the network to adapt to new tasks. Methods that explicitly protect capacity (like PackNet) preserve plasticity in active units, while unconstrained fine-tuning leads to progressive rank collapse.</p>
+        <p style="margin:0;font-size:13.5px;color:#5d4f3f;line-height:1.55">Forward transfer declines as more tasks are trained, indicating the network progressively loses its ability to leverage past experience. Methods with unconstrained weight updates (FT, fine-tuning) show the steepest plasticity loss. PackNet maintains plasticity by partitioning weights per task — new tasks always get fresh capacity and are unaffected by earlier regularization.</p>
       </div>
-      <img src="assets/plots/plasticity_curve.png" alt="Network plasticity over task sequence" style="width:100%;border-radius:10px;margin-top:auto">
-      <div class="result-caption">Effective rank of network representations across the task sequence</div>
+      <img src="assets/plots/FT_plasticity.png" alt="Forward transfer as plasticity measure" style="width:100%;border-radius:10px;margin-top:auto">
+      <div class="result-caption">Forward transfer as a plasticity proxy across the task sequence, grouped by CL method</div>
     </div>
 
     <!-- 7: Partial Observability -->
