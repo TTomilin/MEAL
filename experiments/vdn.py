@@ -402,7 +402,7 @@ def main():
     network_arch = "cnn" if cfg.use_cnn else "mlp"
     run_name = (
         f"{cfg.alg_name}_{cfg.cl_method}_{difficulty}_{cfg.num_agents}agents"
-        f"_{network_arch}_seq{seq_length}_{strategy}_seed_{seed}_{timestamp}"
+        f"_{network_arch}_seq{len(envs)}_{strategy}_seed_{seed}_{timestamp}"
     )
     exp_dir = os.path.join("runs", run_name)
 
@@ -484,7 +484,7 @@ def main():
         use_layer_norm=cfg.use_layer_norm,
         use_multihead=cfg.use_multihead,
         use_task_id=cfg.use_task_id,
-        num_tasks=seq_length,
+        num_tasks=len(envs),
         encoder_type="cnn" if cfg.use_cnn else "mlp",
     )
     network.apply = jax.jit(network.apply)
@@ -795,7 +795,7 @@ def main():
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
                         avg_rewards, avg_soups = evaluate_all_envs(
-                            cl_state, eval_rng, train_state.params, seq_length, evaluate_env
+                            cl_state, eval_rng, train_state.params, len(envs), evaluate_env
                         )
                         metrics = add_eval_metrics(
                             avg_rewards, avg_soups, env_names, max_soup_vals, metrics
@@ -939,7 +939,7 @@ def main():
         if config is not None:
             meta.update({
                 "use_cnn": config.use_cnn,
-                "num_tasks": seq_length,
+                "num_tasks": len(envs),
                 "use_multihead": config.use_multihead,
                 "use_task_id": config.use_task_id,
                 "use_layer_norm": config.use_layer_norm,
@@ -959,7 +959,7 @@ def main():
         for task_idx, (env_rng, train_env, env) in enumerate(
                 zip(env_rngs, train_envs, envs)
         ):
-            print(f"Training on task {task_idx + 1}/{seq_length}: {env.layout_name}")
+            print(f"Training on task {task_idx + 1}/{len(envs)}: {env.layout_name}")
 
             rng, train_state, cl_state = train_on_environment(
                 env_rng, train_state, train_env, cl_state, task_idx
@@ -995,7 +995,7 @@ def main():
             max_size=cfg.agem_memory_size,
             num_agents=num_agents,
             obs_dim=obs_dim,
-            max_tasks=seq_length,
+            max_tasks=len(envs),
         )
     else:
         cl_state = init_cl_state(train_state.params, False, not cfg.use_multihead, cl, cfg)

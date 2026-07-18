@@ -209,7 +209,7 @@ def main():
     network_tag = "cnn" if cfg.use_cnn else "mlp"
     run_name = (
         f"ippo_mpe_{cfg.cl_method}_{cfg.num_agents}a_{cfg.num_landmarks}l_{cfg.num_obstacles}k"
-        f"_{network_tag}_seq{seq_length}_seed{seed}_{timestamp}"
+        f"_{network_tag}_seq{len(envs)}_seed{seed}_{timestamp}"
     )
     exp_dir = os.path.join("runs", run_name)
 
@@ -258,7 +258,7 @@ def main():
     network = ac_cls(
         temp_env.action_space().n,
         cfg.activation,
-        seq_length,
+        len(envs),
         cfg.use_multihead,
         cfg.shared_backbone,
         cfg.big_network,
@@ -298,7 +298,7 @@ def main():
 
     evaluate_env = make_eval_fn(
         cl, reset_switch, step_switch, network, agents,
-        seq_length, cfg.num_steps, cfg.use_cnn,
+        len(envs), cfg.num_steps, cfg.use_cnn,
         cfg.eval_deterministic, cfg.seed,
     )
     importance_fn = cl.make_importance_fn(
@@ -607,7 +607,7 @@ def main():
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
                         avg_rewards, avg_coverage_fraction, avg_covered = evaluate_all_envs(
-                            cl_state, eval_rng, train_state.params, seq_length, evaluate_env
+                            cl_state, eval_rng, train_state.params, len(envs), evaluate_env
                         )
                         for i, env_name in enumerate(env_names):
                             metrics[f"Evaluation/Returns/{i}_{env_name}"] = avg_rewards[i]
@@ -672,7 +672,7 @@ def main():
             if config is not None:
                 config_data.update({
                     "use_cnn": config.use_cnn,
-                    "num_tasks": seq_length,
+                    "num_tasks": len(envs),
                     "use_multihead": config.use_multihead,
                     "seed": config.seed,
                     "strategy": config.strategy,
@@ -712,7 +712,7 @@ def main():
         obs_shape = temp_env.observation_space().shape
         if not cfg.use_cnn:
             obs_shape = (int(np.prod(obs_shape)),)
-        cl_state = init_agem_memory(cfg.agem_memory_size, obs_shape, max_tasks=seq_length)
+        cl_state = init_agem_memory(cfg.agem_memory_size, obs_shape, max_tasks=len(envs))
 
     loop_over_envs(train_rng, train_state, cl_state, envs)
 

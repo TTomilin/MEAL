@@ -375,7 +375,7 @@ def main():
     network_arch = "cnn" if cfg.use_cnn else "mlp"
     run_name = (
         f"happo_{cfg.cl_method}_{difficulty}_{cfg.num_agents}agents_"
-        f"{network_arch}_seq{seq_length}_{strategy}_seed_{seed}_{timestamp}"
+        f"{network_arch}_seq{len(envs)}_{strategy}_seed_{seed}_{timestamp}"
     )
     exp_dir = os.path.join("runs", run_name)
 
@@ -442,7 +442,7 @@ def main():
     actor_network = Actor(
         action_dim=temp_env.action_space().n,
         activation=cfg.activation,
-        num_tasks=seq_length,
+        num_tasks=len(envs),
         use_multihead=cfg.use_multihead,
         use_task_id=cfg.use_task_id,
         use_cnn=cfg.use_cnn,
@@ -454,7 +454,7 @@ def main():
 
     critic_network = Critic(
         activation=cfg.activation,
-        num_tasks=seq_length,
+        num_tasks=len(envs),
         use_multihead=cfg.use_multihead,
         use_task_id=cfg.use_task_id,
         use_cnn=cfg.use_cnn,
@@ -1093,7 +1093,7 @@ def main():
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
                         avg_rewards, avg_soups, _ = evaluate_all_envs(
-                            cl_state, eval_rng, actor_ts.params, seq_length, evaluate_env
+                            cl_state, eval_rng, actor_ts.params, len(envs), evaluate_env
                         )
                         metrics = add_eval_metrics(
                             avg_rewards, avg_soups, env_names, max_soup_vals, metrics
@@ -1208,7 +1208,7 @@ def main():
             if config is not None:
                 config_dict = convert_frozen_dict({
                     "use_cnn": config.use_cnn,
-                    "num_tasks": seq_length,
+                    "num_tasks": len(envs),
                     "use_multihead": config.use_multihead,
                     "use_task_id": config.use_task_id,
                     "use_layer_norm": config.use_layer_norm,
@@ -1231,7 +1231,7 @@ def main():
         if not cfg.use_cnn:
             obs_dim_for_mem = (int(np.prod(obs_dim_for_mem)),)
         cl_state = init_agem_memory(
-            cfg.agem_memory_size, obs_dim_for_mem, max_tasks=seq_length
+            cfg.agem_memory_size, obs_dim_for_mem, max_tasks=len(envs)
         )
     else:
         # CL state tracks actor params only (no critic regularisation).

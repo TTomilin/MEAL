@@ -299,7 +299,7 @@ def main():
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
     network = "cnn" if cfg.use_cnn else "mlp"
-    run_name = f'{cfg.alg_name}_{cfg.cl_method}_{difficulty}_{cfg.num_agents}agents_{network}_seq{seq_length}_{strategy}_seed_{seed}_{timestamp}'
+    run_name = f'{cfg.alg_name}_{cfg.cl_method}_{difficulty}_{cfg.num_agents}agents_{network}_seq{len(envs)}_{strategy}_seed_{seed}_{timestamp}'
     exp_dir = os.path.join("runs", run_name)
 
     # Initialize WandB
@@ -355,7 +355,7 @@ def main():
 
     ac_cls = CNNActorCritic if cfg.use_cnn else MLPActorCritic
 
-    network = ac_cls(temp_env.action_space().n, cfg.activation, seq_length, cfg.use_multihead,
+    network = ac_cls(temp_env.action_space().n, cfg.activation, len(envs), cfg.use_multihead,
                      cfg.shared_backbone, cfg.big_network, cfg.use_task_id,
                      cfg.use_layer_norm)
 
@@ -398,7 +398,7 @@ def main():
     def step_switch(key, state, actions, task_idx):
         return jax.lax.switch(task_idx, step_fns, key, state, actions)
 
-    evaluate_env = make_eval_fn(reset_switch, step_switch, network, agents, seq_length, cfg.num_steps, cfg.use_cnn)
+    evaluate_env = make_eval_fn(reset_switch, step_switch, network, agents, len(envs), cfg.num_steps, cfg.use_cnn)
 
     importance_fn = cl.make_importance_fn(reset_switch, step_switch, network, agents, cfg.use_cnn,
                                           cfg.importance_episodes, cfg.importance_steps, cfg.normalize_importance,
@@ -822,7 +822,7 @@ def main():
 
                 def log_metrics(metrics, update_step):
                     if cfg.evaluation:
-                        avg_rewards, avg_success = evaluate_all_envs(eval_rng, train_state.params, seq_length,
+                        avg_rewards, avg_success = evaluate_all_envs(eval_rng, train_state.params, len(envs),
                                                                      evaluate_env)
                         for i, env_name in enumerate(env_names):
                             metrics[f"Evaluation/Returns/{i}_{env_name}"] = avg_rewards[i]
@@ -979,7 +979,7 @@ def main():
             if config is not None:
                 config_dict = {
                     "use_cnn": config.use_cnn,
-                    "num_tasks": seq_length,
+                    "num_tasks": len(envs),
                     "use_multihead": config.use_multihead,
                     "shared_backbone": config.shared_backbone,
                     "big_network": config.big_network,
@@ -1013,7 +1013,7 @@ def main():
         if not cfg.use_cnn:
             obs_dim = (np.prod(obs_dim),)
         # Initialize memory buffer
-        cl_state = init_agem_memory(cfg.agem_memory_size, obs_dim, max_tasks=seq_length)
+        cl_state = init_agem_memory(cfg.agem_memory_size, obs_dim, max_tasks=len(envs))
 
     # apply the loop_over_envs function to the environments
     loop_over_envs(train_rng, train_state, cl_state, envs)
