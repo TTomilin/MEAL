@@ -953,7 +953,7 @@ def main():
         print("model saved to", path)
 
     def loop_over_envs(rng, train_state, cl_state):
-        rng, *env_rngs = jax.random.split(rng, seq_length + 1)
+        rng, *env_rngs = jax.random.split(rng, len(envs) + 1)
 
         visualizer = None
         for task_idx, (env_rng, train_env, env) in enumerate(

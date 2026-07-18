@@ -679,7 +679,7 @@ def main():
         print("Model saved to", path)
 
     def loop_over_envs(rng, train_state, cl_state, envs):
-        rng, *env_rngs = jax.random.split(rng, seq_length + 1)
+        rng, *env_rngs = jax.random.split(rng, len(envs) + 1)
         for task_idx, (task_rng, env) in enumerate(zip(env_rngs, envs)):
             if cfg.single_task_idx is not None and task_idx != cfg.single_task_idx:
                 continue

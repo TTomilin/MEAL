@@ -837,7 +837,7 @@ def main():
 
     # ─────────────────────────────────────────────────────────────────────────
     def loop_over_envs(rng, train_state, cl_state, envs):
-        rng, *env_rngs = jax.random.split(rng, seq_length + 1)
+        rng, *env_rngs = jax.random.split(rng, len(envs) + 1)
 
         visualizer = None
         for task_idx, (task_rng, env) in enumerate(zip(env_rngs, envs)):

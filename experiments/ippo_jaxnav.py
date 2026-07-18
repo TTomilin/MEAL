@@ -874,7 +874,7 @@ def main():
         returns the runner state and the metrics
         '''
         # split the random number generator for training on the environments
-        rng, *env_rngs = jax.random.split(rng, seq_length + 1)
+        rng, *env_rngs = jax.random.split(rng, len(envs) + 1)
 
         visualizer = None
         for task_idx, (rng, env) in enumerate(zip(env_rngs, envs)):
