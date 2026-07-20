@@ -517,13 +517,13 @@ def main():
                 def _update_minbatch(carry, batch_info):
                     train_state, cl_state, rng = carry
                     rng, agem_rng = jax.random.split(rng)
-                    (traj_batch, advantages, targets), permutation = batch_info
+                    traj_batch, advantages, targets = batch_info
 
                     def _loss_fn(params, traj_batch, gae, targets):
                         local_obs = traj_batch.obs
                         global_state = traj_batch.global_state
 
-                        pi, _ = actor_network.apply(params['actor'], local_obs, env_idx=env_idx, permutation=permutation)
+                        pi, _ = actor_network.apply(params['actor'], local_obs, env_idx=env_idx)
                         value, _ = critic_network.apply(params['critic'], global_state, env_idx=env_idx)
                         log_prob = pi.log_prob(traj_batch.action)
 
@@ -580,7 +580,7 @@ def main():
                                 )
 
                                 def actor_bc_loss_fn(params, obs=t_obs, acts=t_actions, t=t):
-                                    pi_m, _ = actor_network.apply(params['actor'], obs, env_idx=t, permutation=permutation)
+                                    pi_m, _ = actor_network.apply(params['actor'], obs, env_idx=t)
                                     actor_loss = -jnp.mean(pi_m.log_prob(acts))
                                     entropy_m = jnp.mean(pi_m.entropy())
                                     return actor_loss - cfg.ent_coef * entropy_m, (actor_loss, entropy_m)
@@ -653,7 +653,7 @@ def main():
                             t_actions = jax.lax.stop_gradient(t_actions)
 
                             def actor_bc_loss(params, obs=t_obs, acts=t_actions, task=t):
-                                pi_m, _ = actor_network.apply(params['actor'], obs, env_idx=task, permutation=permutation)
+                                pi_m, _ = actor_network.apply(params['actor'], obs, env_idx=task)
                                 return -jnp.mean(pi_m.log_prob(acts))
 
                             t_grads = jax.grad(actor_bc_loss)(train_state.params)
@@ -695,12 +695,11 @@ def main():
                     lambda x: jnp.reshape(x, [cfg.num_minibatches, -1] + list(x.shape[1:])),
                     shuffled_batch,
                 )
-                batch_info = (minibatches, permutation)
 
                 (train_state, cl_state, rng), loss_information = jax.lax.scan(
                     _update_minbatch,
                     init=(train_state, cl_state, rng),
-                    xs=batch_info,
+                    xs=minibatches,
                 )
 
                 total_loss, grads, agem_stats = loss_information

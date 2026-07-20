@@ -69,7 +69,7 @@ class Actor(nn.Module):
     dormant_threshold: float = 0.01
 
     @nn.compact
-    def __call__(self, x, *, env_idx: int = 0, permutation = None):
+    def __call__(self, x, *, env_idx: int = 0):
         # Choose the activation function based on input parameter.
         act_fn = nn.relu if self.activation == "relu" else nn.tanh
 
@@ -93,9 +93,6 @@ class Actor(nn.Module):
             # So agent_id = batch_position // num_envs
             batch_size = x.shape[0]
             agent_ids = jnp.arange(batch_size) // self.num_envs
-            # if batches were permuted, apply same permutation to well-ordered agent ids to have them correspond to permuted batches:
-            if permutation != None:
-                agent_ids = jax.tree_util.tree_map(lambda x: jnp.take(x, permutation, axis=0), agent_ids)
             agent_onehot = jax.nn.one_hot(agent_ids, self.num_agents)
             x = jnp.concatenate([x, agent_onehot], axis=-1)
 
