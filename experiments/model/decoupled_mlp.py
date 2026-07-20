@@ -88,13 +88,7 @@ class Actor(nn.Module):
 
         # -------- append agent ID one-hot ------------------------------------
         if self.use_agent_id:
-            # Create agent IDs based on batch position
-            # In MAPPO, observations are batched with all envs for agent 0, then all envs for agent 1, etc.
-            # So agent_id = batch_position // num_envs
-            batch_size = x.shape[0]
-            agent_ids = jnp.arange(batch_size) // self.num_envs
-            agent_onehot = jax.nn.one_hot(agent_ids, self.num_agents)
-            x = jnp.concatenate([x, agent_onehot], axis=-1)
+            ...
 
         # First hidden layer
         x = nn.Dense(

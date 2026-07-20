@@ -355,11 +355,16 @@ def main():
     rng = jax.random.PRNGKey(seed)
     rng, actor_rng, critic_rng = jax.random.split(rng, 3)
 
+    if cfg.use_agent_id:
+        actor_init_dim = local_obs_dim + num_agents
+    else:
+        actor_init_dim = local_obs_dim
+
     if cfg.use_cnn:
         actor_init_x = jnp.zeros((1, *local_obs_dim))
         critic_init_x = jnp.zeros((1, *global_obs_dim))
     else:
-        actor_init_x = jnp.zeros((1, local_obs_dim))
+        actor_init_x = jnp.zeros((1, actor_init_dim))
         critic_init_x = jnp.zeros((1, global_obs_dim))
 
     actor_params = actor_network.init(actor_rng, actor_init_x, env_idx=0)
@@ -425,6 +430,8 @@ def main():
                 global_state = create_global_state_for_critic(
                     last_obs, agents, cfg.num_envs, cfg.use_cnn
                 )
+
+                jax.debug.breakpoint() # add one-hot agent_ids here too!!
 
                 # Actor uses local obs; critic uses global state
                 pi, _actor_dormant = actor_network.apply(
@@ -684,6 +691,11 @@ def main():
 
                 batch_size = cfg.minibatch_size * cfg.num_minibatches
                 assert batch_size == cfg.num_steps * cfg.num_actors
+
+                agent_ids = jnp.arange(cfg.num_actors) // len(envs)
+                agent_onehot = jax.nn.one_hot(agent_ids, num_agents)
+                agent_onehot = jnp.broadcast_to(agent_onehot[None, :, :], (cfg.num_steps, cfg.num_actors, num_agents))
+                traj_batch = traj_batch._replace(obs=jnp.concatenate([traj_batch.obs, agent_onehot], axis=-1))
 
                 batch = (traj_batch, advantages, targets)
                 batch = jax.tree_util.tree_map(lambda x: x.reshape((batch_size,) + x.shape[2:]), batch)
