@@ -121,7 +121,7 @@ def init_cl_state(params: FrozenVariableDict, regularize_critic: bool,
                   regularize_heads: bool, cl: CLMethod, cfg) -> CLState:
     if cfg.cl_method == "packnet":
         return PacknetState(
-            masks=cl.init_mask_tree(params["params"]),
+            masks=cl.init_mask_tree(params),
             mask={},
             current_task=0,
             train_mode=True,
@@ -136,7 +136,7 @@ def init_cl_state(params: FrozenVariableDict, regularize_critic: bool,
             mask=mask
         )
 
-ALLOWED_PREFIXES = ['actor', 'critic', 'common']
+ALLOWED_PREFIXES = ['actor', 'critic', 'common', 'q']
 def get_layer_name(actor_or_critic: str, layer_type: Type[nn.Module], suffix: Union[int, str]):
     if actor_or_critic not in ALLOWED_PREFIXES:
         raise ValueError(f"Choose 'actor_or_critic' from {ALLOWED_PREFIXES}")

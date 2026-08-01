@@ -8,7 +8,7 @@ import flax.linen as nn
 import numpy as np
 from flax.linen.initializers import constant, orthogonal
 import distrax
-
+from experiments.utils import get_layer_name
 
 def choose_head(t: jnp.ndarray, n_heads: int, env_idx: int):
     b, tot = t.shape
@@ -101,34 +101,35 @@ class Actor(nn.Module):
             128,
             kernel_init=orthogonal(np.sqrt(2)),
             bias_init=constant(0.0),
-            name="actor_dense1",
+            name=get_layer_name("actor", nn.Dense, 1),
         )(x)
         x = act_fn(x)
         if self.track_dormant_ratio:
             activations.append(x)
         if self.use_layer_norm:
-            x = nn.LayerNorm(name="actor_dense1_ln", epsilon=1e-5)(x)
+            x = nn.LayerNorm(name=get_layer_name("actor", nn.LayerNorm, 1), epsilon=1e-5)(x)
 
         # Second hidden layer
         x = nn.Dense(
             128,
             kernel_init=orthogonal(np.sqrt(2)),
             bias_init=constant(0.0),
-            name="actor_dense2",
+            name=get_layer_name("actor", nn.Dense, 2),
         )(x)
         x = act_fn(x)
         if self.track_dormant_ratio:
             activations.append(x)
         if self.use_layer_norm:
-            x = nn.LayerNorm(name="actor_dense2_ln", epsilon=1e-5)(x)
+            x = nn.LayerNorm(name=get_layer_name("actor", nn.LayerNorm, 2), epsilon=1e-5)(x)
 
         # -------- actor head --------------------------------------------------
+        head_string = "multi_head" if self.use_multihead else "single_head"
         logits_dim = self.action_dim * (self.num_tasks if self.use_multihead else 1)
         all_logits = nn.Dense(
             logits_dim,
             kernel_init=orthogonal(0.01),
             bias_init=constant(0.0),
-            name="actor_head",
+            name=get_layer_name("actor", nn.Dense, head_string),
         )(x)
 
         logits = choose_head(all_logits, self.num_tasks, env_idx) if self.use_multihead else all_logits
@@ -190,34 +191,35 @@ class Critic(nn.Module):
             128,
             kernel_init=orthogonal(np.sqrt(2)),
             bias_init=constant(0.0),
-            name="critic_dense1",
+            name=get_layer_name("critic", nn.Dense, 1),
         )(x)
         critic = activation(critic)
         if self.track_dormant_ratio:
             activations.append(critic)
         if self.use_layer_norm:
-            critic = nn.LayerNorm(name="critic_dense1_ln", epsilon=1e-5)(critic)
+            critic = nn.LayerNorm(name=get_layer_name("critic", nn.LayerNorm, 1), epsilon=1e-5)(critic)
 
         # Second hidden layer
         critic = nn.Dense(
             128,
             kernel_init=orthogonal(np.sqrt(2)),
             bias_init=constant(0.0),
-            name="critic_dense2",
+            name=get_layer_name("critic", nn.Dense, 2),
         )(critic)
         critic = activation(critic)
         if self.track_dormant_ratio:
             activations.append(critic)
         if self.use_layer_norm:
-            critic = nn.LayerNorm(name="critic_dense2_ln", epsilon=1e-5)(critic)
+            critic = nn.LayerNorm(name=get_layer_name("critic", nn.LayerNorm, 2), epsilon=1e-5)(critic)
 
         # -------- critic head -------------------------------------------------
+        head_string = "multi_head" if self.use_multihead else "single_head"
         vdim = 1 * (self.num_tasks if self.use_multihead else 1)
         all_v = nn.Dense(
             vdim,
             kernel_init=orthogonal(1.0),
             bias_init=constant(0.0),
-            name="critic_head",
+            name=get_layer_name("critic", nn.Dense, head_string),
         )(critic)
 
         v = choose_head(all_v, self.num_tasks, env_idx) if self.use_multihead else all_v

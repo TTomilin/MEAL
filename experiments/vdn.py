@@ -107,7 +107,6 @@ class Config:
     train_epochs: int = 8
     finetune_epochs: int = 2
     finetune_timesteps: float = 1e7
-    re_init_pruned_weights: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
@@ -137,6 +136,7 @@ class Config:
     # ═══════════════════════════════════════════════════════════════════════════
     max_episode_steps: int = 400  # env episode length; separate from num_steps (collection phase size)
     evaluation: bool = True
+    eval_deterministic: bool = False
     eval_num_episodes: int = 5
     record_video: bool = False
     video_length: int = 250
@@ -170,7 +170,7 @@ class Config:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def make_vdn_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
-                     num_steps: int, use_cnn: bool):
+                     num_steps: int, use_cnn: bool, eval_deterministic: bool, seed: int):
     """
     Returns a JITted evaluate_env(rng, params, env_idx) -> (avg_reward, avg_soups)
     compatible with evaluate_all_envs().  Uses greedy (argmax) Q-values.
@@ -179,6 +179,8 @@ def make_vdn_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
 
     @jax.jit
     def evaluate_env(cl_state, rng, params, env_idx):
+        if eval_deterministic:
+            rng = jax.random.PRNGKey(env_idx + seed) # get new rng, fixed per task
         rng, env_rng = jax.random.split(rng)
         reset_rng = jax.random.split(env_rng, num_envs)
         obs, env_state = jax.vmap(lambda k: reset_switch(k, jnp.int32(env_idx)))(reset_rng)
@@ -365,7 +367,7 @@ def main():
         er_ace=ERACE(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
         packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4,
                         train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
-                        prunable_layers=[], re_init_pruned_weights=cfg.re_init_pruned_weights),
+                        prunable_layers=[]),
     )
     cl = method_map[cfg.cl_method.lower()]
 
@@ -514,7 +516,8 @@ def main():
     # Evaluation function (VDN-specific: argmax Q-values)
     evaluate_env = make_vdn_eval_fn(
         reset_switch, step_switch, network, agents,
-        num_envs=cfg.num_envs, num_steps=cfg.max_episode_steps, use_cnn=cfg.use_cnn
+        num_envs=cfg.num_envs, num_steps=cfg.max_episode_steps, use_cnn=cfg.use_cnn,
+        eval_deterministic=cfg.eval_deterministic, seed=cfg.seed
     )
 
     # Importance function: Q-specific version for EWC/MAS, else zeros

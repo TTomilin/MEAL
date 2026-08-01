@@ -96,7 +96,6 @@ class Config:
     train_epochs: int = 8
     finetune_epochs: int = 2
     finetune_timesteps: float = 1e7
-    re_init_pruned_weights: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
@@ -229,13 +228,11 @@ def main():
         agem=AGEM(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
         er_ace=ERACE(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
         packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4,
-                        train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
-                        prunable_layers=[], re_init_pruned_weights=cfg.re_init_pruned_weights),
+        train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
+        prunable_layers=[nn.Dense, nn.Conv])
     )
-    cl = method_map[cfg.cl_method.lower()]
 
-    if cfg.cl_method.lower() == "packnet":
-        raise ValueError("Packnet is not supported for MAPPO (decoupled actor/critic networks).")
+    cl = method_map[cfg.cl_method.lower()]
 
     # Create environment sequence
     envs = make_sequence(
@@ -305,6 +302,7 @@ def main():
 
     cfg.num_actors = num_agents * cfg.num_envs
     cfg.num_updates = int(cfg.steps_per_task // cfg.num_steps // cfg.num_envs)
+    cfg.finetune_updates = cfg.finetune_timesteps // cfg.num_steps // cfg.num_envs
     cfg.minibatch_size = (cfg.num_actors * cfg.num_steps) // cfg.num_minibatches
 
     def linear_schedule(count):
@@ -329,6 +327,9 @@ def main():
     else:
         local_obs_dim = obs_dim
         global_obs_dim = (obs_dim[0], obs_dim[1], obs_dim[2] * num_agents)
+
+    if cfg.cl_method == "packnet" and cfg.use_cnn:
+        raise ValueError("Packnet currently doesn't support CNN.")
 
     actor_network = Actor(
         action_dim=temp_env.action_space().n,
@@ -676,6 +677,9 @@ def main():
                         train_state = train_state.apply_gradients(grads=grads)
                         agem_stats = {"er_ace/total_past_samples": jnp.sum(past_sizes).astype(jnp.float32)}
                     else:
+                        # if using packnet, mask before applying gradient:
+                        if cfg.cl_method == "packnet":
+                            grads = cl.mask_gradients(cl_state, grads)
                         train_state = train_state.apply_gradients(grads=grads)
 
                     return (train_state, cl_state, rng), (total_loss, grads, agem_stats)
@@ -832,6 +836,33 @@ def main():
         runner_state, metrics = jax.lax.scan(
             _update_step, runner_state, xs=None, length=cfg.num_updates
         )
+
+        if cfg.cl_method.lower() == "packnet":
+            # Unpack runner state
+            train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+
+            # Prune the model and update the parameters
+            train_state, cl_state = cl.on_train_end(train_state, cl_state)
+
+            # create new runner state for fine-tuning:
+            rng, finetune_rng = jax.random.split(rng)
+            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
+
+            # run fine-tuning
+            runner_state, metrics = jax.lax.scan(
+                f=_update_step,
+                init=runner_state,
+                xs=None,
+                length=cfg.finetune_updates
+            )
+
+            train_state, env_state, last_obs, update_step, steps_for_env, rng, cl_state = runner_state
+            # handle the end of the finetune phase
+            train_state, cl_state = cl.on_finetune_end(train_state, cl_state)
+
+            # add cl_state (packnet_state in this case) to new runner state
+            runner_state = (train_state, env_state, last_obs, update_step, steps_for_env, finetune_rng, cl_state)
+
         return runner_state, metrics
 
     # ─────────────────────────────────────────────────────────────────────────

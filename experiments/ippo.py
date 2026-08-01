@@ -100,7 +100,6 @@ class Config:
     train_epochs: int = 8
     finetune_epochs: int = 2
     finetune_timesteps: int = 1e7
-    re_init_pruned_weights: bool = False
 
     # ═══════════════════════════════════════════════════════════════════════════
     # ENVIRONMENT PARAMETERS
@@ -217,8 +216,7 @@ def main():
                       er_ace=ERACE(memory_size=cfg.agem_memory_size, sample_size=cfg.agem_sample_size),
                       packnet=Packnet(seq_length=cfg.seq_length, prune_instructions=0.4,
                       train_finetune_split=(cfg.train_epochs, cfg.finetune_epochs),
-                      prunable_layers=[nn.Dense, nn.Conv],
-                      re_init_pruned_weights=cfg.re_init_pruned_weights))
+                      prunable_layers=[nn.Dense, nn.Conv]))
 
     cl = method_map[cfg.cl_method.lower()]
 
@@ -712,9 +710,6 @@ def main():
                         grads = jax.tree_util.tree_map(
                             lambda g, eg: g + cfg.er_ace_coef * eg, grads, er_ace_grads
                         )
-                        # If using packnet, mask before applying gradient:
-                        if cfg.cl_method == "packnet":
-                            grads = cl.mask_gradients(cl_state, grads)
                         train_state = train_state.apply_gradients(grads=grads)
                         agem_stats = er_ace_stats
                     else:
