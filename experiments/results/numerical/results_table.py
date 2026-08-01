@@ -319,16 +319,13 @@ def compute_metrics(
                         print(f"[warn] baseline AUC is inf/-inf for task {i}, seed {seed}")
                         continue  # Skip this task
 
-                    # Check if baseline performance is effectively 0
-                    if abs(auc_baseline) < 1e-8:
+                    # Skip if baseline is effectively 0
+                    if auc_baseline < 1e-8:
                         print(f"[info] baseline AUC is effectively 0 ({auc_baseline}) for task {i}, seed {seed}, method {method} - skipping forward transfer calculation")
                         continue  # Skip this task
 
-                    # Use direct ratio approach for forward transfer calculation
-                    # FT_i = (AUC_CL - AUC_baseline) / max(|AUC_baseline|, ε)
-                    epsilon = 1e-8
-                    denominator = max(abs(auc_baseline), epsilon)
-                    ft_i = (auc_cl - auc_baseline) / denominator
+                    # FT_i = (AUC_CL - AUC_baseline) / AUC_baseline
+                    ft_i = (auc_cl - auc_baseline) / auc_baseline
 
                     # Check if the final ft_i is inf/-inf or NaN
                     if np.isnan(ft_i) or np.isinf(ft_i):

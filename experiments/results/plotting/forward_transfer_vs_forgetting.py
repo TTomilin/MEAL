@@ -166,7 +166,7 @@ def compute_metrics_simplified(
                 # AUCi = (1/τ) * ∫ pi(t) dt, where τ is the task duration
                 # Using trapezoidal rule for numerical integration
                 if len(cl_task_curve) > 1:
-                    auc_cl = np.trapz(cl_task_curve) / len(cl_task_curve)
+                    auc_cl = cl_task_curve.mean()
                 else:
                     auc_cl = cl_task_curve[0] if len(cl_task_curve) == 1 else 0.0
 
@@ -190,7 +190,7 @@ def compute_metrics_simplified(
                         continue  # Skip this task
 
                     if len(baseline_task_curve) > 1:
-                        auc_baseline = np.trapz(baseline_task_curve) / len(baseline_task_curve)
+                        auc_baseline = baseline_task_curve.mean()
                     else:
                         auc_baseline = baseline_task_curve[0] if len(baseline_task_curve) == 1 else 0.0
 
@@ -202,16 +202,12 @@ def compute_metrics_simplified(
                         print(f"[warn] baseline AUC is inf/-inf for task {i}, seed {seed}")
                         continue  # Skip this task
 
-                    # Check if baseline performance is effectively 0
-                    if abs(auc_baseline) < 1e-8:
+                    # Skip if baseline is effectively 0
+                    if auc_baseline < 1e-8:
                         print(f"[info] baseline AUC is effectively 0 ({auc_baseline}) for task {i}, seed {seed}, method {method} - skipping forward transfer calculation")
                         continue  # Skip this task
 
-                    # Use direct ratio approach for forward transfer calculation
-                    # FT_i = (AUC_CL - AUC_baseline) / max(|AUC_baseline|, ε)
-                    epsilon = 1e-8
-                    denominator = max(abs(auc_baseline), epsilon)
-                    ft_i = (auc_cl - auc_baseline) / denominator
+                    ft_i = (auc_cl - auc_baseline) / auc_baseline
 
                     # Check if the final ft_i is inf/-inf or NaN
                     if np.isnan(ft_i) or np.isinf(ft_i):
@@ -344,12 +340,12 @@ def main():
                 label = None  # No label - we'll create custom legend
 
             # Plot the point with level-specific marker
-            ax.scatter(ft, forgetting, color=color, s=150, alpha=0.8, label=label, 
+            ax.scatter(ft, forgetting, color=color, s=150, alpha=0.8, label=label,
                       edgecolors='black', linewidth=1, marker=marker)
 
             # Add method name as text annotation only for single level
             if len(args.levels) == 1:
-                ax.annotate(method, (ft, forgetting), xytext=(0, 8), textcoords='offset points', 
+                ax.annotate(method, (ft, forgetting), xytext=(0, 8), textcoords='offset points',
                            fontsize=10, alpha=0.8, ha='center')
 
     # Create custom legend for multiple levels
@@ -362,7 +358,7 @@ def main():
             color = METHOD_COLORS.get(_display_to_internal.get(method, method), '#333333')
 
             # Create a dummy scatter point for the legend
-            handle = ax.scatter([], [], color=color, s=150, alpha=0.8, 
+            handle = ax.scatter([], [], color=color, s=150, alpha=0.8,
                               edgecolors='black', linewidth=1, marker='o', label=method)
             method_handles.append(handle)
 
@@ -376,7 +372,7 @@ def main():
             level_handles.append(handle)
 
         # Create the legend with two columns
-        method_legend = ax.legend(handles=method_handles, title='Methods', 
+        method_legend = ax.legend(handles=method_handles, title='Methods',
                                 loc='upper left', bbox_to_anchor=(1.02, 1), frameon=True)
         level_legend = ax.legend(handles=level_handles, title='Levels',
                                loc='upper left', bbox_to_anchor=(1.02, 0.6), frameon=True)

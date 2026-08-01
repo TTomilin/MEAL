@@ -212,12 +212,11 @@ def compute_metrics(
                     print(f"[warn] baseline AUC is NaN/inf for task {i}, seed {seed}")
                     continue
 
-                if abs(auc_baseline) < 1e-8:
+                if auc_baseline < 1e-8:
                     print(f"[info] baseline AUC ~0 for task {i}, seed {seed}, method {method} – skipping FT")
                     continue
 
-                epsilon = 1e-8
-                ft_i = (auc_cl - auc_baseline) / max(abs(auc_baseline), epsilon)
+                ft_i = (auc_cl - auc_baseline) / auc_baseline
                 if np.isnan(ft_i) or np.isinf(ft_i):
                     print(f"[warn] FT result is NaN/inf for task {i}, seed {seed}, method {method}")
                 else:
