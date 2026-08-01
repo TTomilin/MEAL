@@ -187,20 +187,22 @@ img{display:block;max-width:100%}
 <div style="max-width:1120px;margin:0 auto" class="sec">
   <div class="label">CONTRIBUTIONS</div>
   <div class="contrib-grid">
-    <div class="card">
-      <div style="font-family:'Silkscreen',monospace;font-size:22px;color:#d35a3b;margin-bottom:12px">01</div>
-      <h3 style="font-family:'Space Grotesk';font-size:19px;margin:0 0 10px;font-weight:600">A first, on two fronts</h3>
-      <p style="margin:0;font-size:14px;line-height:1.5;color:#5d4f3f">The first benchmark for continual <strong>multi-agent</strong> RL, and the first continual-RL benchmark with hardware-accelerated execution.</p>
+    <div class="card" style="display:flex;flex-direction:column">
+      <div style="font-family:'Silkscreen',monospace;font-size:22px;color:#d35a3b;margin-bottom:12px">01 JAX</div>
+      <h3 style="font-family:'Space Grotesk';font-size:19px;margin:0 0 10px;font-weight:600">Fast Training</h3>
+      <p style="margin:0;font-size:14px;line-height:1.5;color:#5d4f3f">The GPU-accelerated pipeline enables learning a task in ~2 minutes, making 100-task sequences practical on a single GPU.</p>
+      <img src="assets/JAX.png" alt="JAX fast training illustration" style="width:100%;border-radius:8px;margin-top:auto;padding-top:16px">
     </div>
-    <div class="card">
-      <div style="font-family:'Silkscreen',monospace;font-size:22px;color:#5f9e7c;margin-bottom:12px">02</div>
-      <h3 style="font-family:'Space Grotesk';font-size:19px;margin:0 0 10px;font-weight:600">Endless kitchens</h3>
+    <div class="card" style="display:flex;flex-direction:column">
+      <div style="font-family:'Silkscreen',monospace;font-size:22px;color:#5f9e7c;margin-bottom:12px">02 Scalability</div>
+      <h3 style="font-family:'Space Grotesk';font-size:19px;margin:0 0 10px;font-weight:600">Long Sequences</h3>
       <p style="margin:0;font-size:14px;line-height:1.5;color:#5d4f3f">Procedural task generation with scalable difficulty, yielding a near-infinite supply of uniquely solvable kitchen layouts.</p>
+      <img src="assets/sequences.png" alt="Long task sequences illustration" style="width:100%;border-radius:8px;margin-top:auto;padding-top:16px">
     </div>
-    <div class="card">
-      <div style="font-family:'Silkscreen',monospace;font-size:22px;color:#4f7cc4;margin-bottom:12px">03</div>
-      <h3 style="font-family:'Space Grotesk';font-size:19px;margin:0 0 10px;font-weight:600">Scale changes the story</h3>
-      <p style="margin:0;font-size:14px;line-height:1.5;color:#5d4f3f">Conclusions shift as sequences lengthen, and retaining cooperative behavior is a distinct challenge that worsens with more agents, harder tasks, and changing partners.</p>
+    <div class="card" style="display:flex;flex-direction:column">
+      <div style="font-family:'Silkscreen',monospace;font-size:22px;color:#4f7cc4;margin-bottom:12px">03 CL+MARL</div>
+      <h3 style="font-family:'Space Grotesk';font-size:19px;margin:0 0 10px;font-weight:600">Adaptive Coordination</h3>
+      <p style="margin:0;font-size:14px;line-height:1.5;color:#5d4f3f">First multi-agent benchmark for continual coordination. Retaining cooperation across across partners and layouts.</p>      <img src="assets/cl_marl.png" alt="CL meets MARL illustration" style="width:100%;border-radius:8px;margin-top:auto;padding-top:16px">
     </div>
   </div>
 </div>
