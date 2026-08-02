@@ -45,40 +45,57 @@ pip install -U "jax[cuda11]" -f https://storage.googleapis.com/jax-releases/jax_
 
 ## Quick Start
 
-The main entry points are:
-- IPPO: `experiments/ippo.py`
-- MAPPO: `experiments/mappo.py`
+The single entry point is `experiments/train.py`. It takes the MARL algorithm as the first
+argument (`ippo`, `mappo`, `happo`, `vdn`, `qmix`), then the continual-learning method, then
+the environment (`overcooked`, `mpe`, `smax`, `jaxnav`) as a subcommand. Outer flags must
+come before the `env:...` subcommand token.
 
-### Example: IPPO + EWC on generated medium tasks
+### Example: IPPO + EWC on generated medium Overcooked tasks
 
 ```bash
-python -m experiments.ippo \
+python -m experiments.train ippo \
   --cl-method ewc \
   --seq-length 10 \
-  --strategy generate \
-  --difficulty medium \
-  --num-agents 2 \
   --num-envs 2048 \
   --num-steps 400 \
   --update-epochs 8 \
   --use-wandb true \
   --project MEAL \
-  --seed 1
+  --seed 1 \
+  env:overcooked \
+  --env.strategy generate \
+  --env.difficulty medium \
+  --env.num-agents 2
 ```
 
 ### Example: MAPPO + MAS with CNN encoder and 4 agents
 
 ```bash
-python -m experiments.mappo \
+python -m experiments.train mappo \
   --cl-method mas \
   --use-cnn true \
-  --num-agents 4 \
   --seq-length 8 \
-  --strategy generate \
-  --difficulty hard \
   --use-wandb true \
   --project MEAL \
-  --seed 2
+  --seed 2 \
+  env:overcooked \
+  --env.strategy generate \
+  --env.difficulty hard \
+  --env.num-agents 4
+```
+
+### Example: VDN + PackNet on SMAX
+
+```bash
+python -m experiments.train vdn \
+  --cl-method packnet \
+  --seq-length 5 \
+  --use-wandb true \
+  --project MEAL \
+  --seed 3 \
+  env:smax \
+  --env.num-allies 5 \
+  --env.num-enemies 5
 ```
 
 ### Running Experiments
@@ -107,7 +124,9 @@ More details about MEAL environments can be found in [meal/README.MD](meal/READM
 ## Project Structure
 
 - `experiments/`
-  - `ippo.py`, `mappo.py`: training entry points
+  - `train.py`: single training entry point (algo x cl-method x env)
+  - `algos/`: AbstractAlgo/OnPolicyAlgo/OffPolicyAlgo hierarchy (IPPO, MAPPO, HAPPO, VDN, QMIX)
+  - `envs/`: EnvAdapter per environment (Overcooked, MPE, SMAX, JaxNav)
   - `continual/`: implementations of EWC, MAS, L2, FT, AGEM
   - `results/`: W&B downloaders and plotting scripts
 - `meal/`
@@ -124,10 +143,10 @@ More details about MEAL environments can be found in [meal/README.MD](meal/READM
 ## Citation
 If you use our work in your research, please cite it as follows:
 ```
-@article{tomilin2025meal,
+@article{tomilin2026meal,
   title={MEAL: A Benchmark for Continual Multi-Agent Reinforcement Learning},
-  author={Tomilin, Tristan and van den Boogaard, Luka and Garcin, Samuel and Ruhdorfer, Constantin and Grooten, Bram and Bulling, Andreas and Pechenizkiy, Mykola and Fang, Meng},
-  journal={arXiv preprint arXiv:2406.01234},
-  year={2025}
+  author={Tomilin, Tristan and van den Boogaard, Luka and Garcin, Samuel and Ruhdorfer, Constantin and Grooten, Bram and Kusters, Fabrice and Du, Yali and Bulling, Andreas and Pechenizkiy, Mykola and Fang, Meng},
+  booktitle={Proceedings of the 43rd International Conference on Machine Learning (ICML)},
+  year={2026}
 }
 ```

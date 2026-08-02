@@ -114,7 +114,6 @@ class TrainConfig:
     # AGEM / ER-ACE specific parameters
     agem_memory_size: int = 100000
     agem_sample_size: int = 1024
-    agem_gradient_scale: float = 1.0
     er_ace_coef: float = 1.0
 
     # Eval
