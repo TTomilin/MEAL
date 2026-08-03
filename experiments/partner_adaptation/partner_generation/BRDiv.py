@@ -795,8 +795,7 @@ def get_brdiv_population(config, out, env):
 
 
 def run_brdiv(config):
-    env = make_env(config.env_name, **
-    {"random_agent_start": True, **config.layout})
+    env = make_env(config.env_name, **config.layout)
     env = LogWrapper(env)
     print("Starting BRDiv training...")
     start = time.time()

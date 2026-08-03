@@ -10,9 +10,9 @@ import jax
 import jax.numpy as jnp
 from flax.core import FrozenDict
 
-from meal.env.layouts.presets import cramped_room
+from meal.env.overcooked.layouts.presets import cramped_room
 from meal.env.overcooked import DELIVERY_REWARD
-from meal.env.overcooked_po import OvercookedPO
+from meal.env.overcooked.overcooked_po import OvercookedPO
 from meal.visualization.visualizer_po import OvercookedVisualizerPO
 
 

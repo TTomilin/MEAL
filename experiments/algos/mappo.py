@@ -426,7 +426,6 @@ class MAPPO(OnPolicyAlgo):
                     "use_agent_id": config.use_agent_id,
                     "use_layer_norm": config.use_layer_norm,
                     "activation": config.activation,
-                    "strategy": getattr(config.env, "strategy", None),
                     "seed": config.seed,
                 }
                 config_data.update(convert_frozen_dict(config_dict))

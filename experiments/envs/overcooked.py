@@ -1,5 +1,5 @@
-from dataclasses import dataclass, field
-from typing import Optional, Sequence
+from dataclasses import dataclass
+from typing import Optional
 
 import jax
 import jax.numpy as jnp
@@ -9,20 +9,15 @@ from experiments.envs.base import EnvAdapter
 from experiments.evaluation import evaluate_all_envs as _evaluate_all_envs, make_eval_fn as _make_eval_fn
 from experiments.utils import add_eval_metrics, add_het_metrics, create_visualizer, rollout_for_video
 from meal import make_sequence
-from meal.env.utils.max_soup_calculator import calculate_max_soup
+from meal.env.overcooked.max_soup_calculator import calculate_max_soup
 from meal.wrappers.logging import LogWrapper
 
 
 @dataclass
 class OvercookedEnvConfig:
     env_name: str = "overcooked"  # internal env id; derived from partial_observability below
-    num_agents: int = 2
-    repeat_sequence: int = 1
-    strategy: str = "generate"
-    layouts: Optional[Sequence[str]] = field(default_factory=lambda: [])
-    difficulty: Optional[str] = None
+    difficulty: Optional[str] = "easy"
     random_reset: bool = False
-    random_agent_start: bool = True
     complementary_restrictions: bool = False  # one agent can't pick up onions, other can't pick up plates
     separated_agents: bool = False  # only accept layouts where agents occupy different connected regions
     partial_observability: bool = False  # agents see only a local window instead of the full grid
@@ -58,23 +53,15 @@ class OvercookedAdapter(EnvAdapter):
 
     def build_sequence(self, cfg):
         env_cfg = cfg.env
-        # OffPolicyConfig has both `num_steps` (collection-phase length) and
-        # `max_episode_steps` (env episode length) -- must check the latter first,
-        # since it's the one env construction needs there (matches vdn.py/qmix.py's
-        # `max_steps=cfg.max_episode_steps`, distinct from on-policy's `cfg.num_steps`).
-        max_steps = cfg.max_episode_steps if hasattr(cfg, "max_episode_steps") else cfg.num_steps
+        self.max_steps = cfg.max_episode_steps if cfg.max_episode_steps is not None else 400
         envs = make_sequence(
             sequence_length=cfg.seq_length,
-            strategy=env_cfg.strategy,
             env_id=env_cfg.env_name,
             seed=cfg.seed,
-            num_agents=env_cfg.num_agents,
-            max_steps=max_steps,
+            num_agents=cfg.num_agents if cfg.num_agents is not None else 2,
+            max_steps=self.max_steps,
             random_reset=env_cfg.random_reset,
-            layout_names=env_cfg.layouts,
             difficulty=env_cfg.difficulty,
-            repeat_sequence=env_cfg.repeat_sequence,
-            random_agent_start=env_cfg.random_agent_start,
             complementary_restrictions=env_cfg.complementary_restrictions,
             separated_agents=env_cfg.separated_agents,
             sticky_actions=env_cfg.sticky_actions,
@@ -99,7 +86,7 @@ class OvercookedAdapter(EnvAdapter):
         self.max_soup_vals = self.max_soup_vals[idx:idx + 1]
 
     def run_name_tag(self, cfg) -> str:
-        return f"{cfg.env.difficulty}_{cfg.env.strategy}"
+        return f"{cfg.env.difficulty}"
 
     def make_eval_fn(self, cl, reset_switch, step_switch, network, agents, num_envs,
                      num_steps, use_cnn, eval_deterministic, seed):
@@ -151,7 +138,8 @@ class OvercookedAdapter(EnvAdapter):
             if "visualizer" not in cache:
                 cache["visualizer"] = create_visualizer(env.num_agents, env_cfg.env_name, cfg.renderer_version)
             visualizer = cache["visualizer"]
-            states = rollout_for_video(rng, cfg, train_state, env, network, task_idx, cfg.video_length)
+            states = rollout_for_video(rng, cfg, train_state, env, network, task_idx, cfg.video_length,
+                                       env_adapter=self)
             file_path = f"{exp_dir}/task_{task_idx}_{env.layout_name}.mp4"
             visualizer.animate(states, out_path=file_path, task_idx=task_idx, env=env)
 

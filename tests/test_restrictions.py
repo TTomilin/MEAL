@@ -15,7 +15,7 @@ import jax
 import jax.numpy as jnp
 from flax.core import FrozenDict
 from meal import make_env
-from meal.env.layouts.presets import layout_grid_to_dict
+from meal.env.overcooked.layouts.presets import layout_grid_to_dict
 from meal.env.overcooked import OBJECT_TO_INDEX
 from meal.visualization.visualizer import OvercookedVisualizer
 

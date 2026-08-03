@@ -98,6 +98,6 @@ class EnvAdapter:
     def build_visualizer(self, cfg):
         """Returns a callable `rollout_and_record(rng, state, env, task_idx, exp_dir) ->
         None` that records a video for the given task, or `None` if this env doesn't
-        support video recording (matches today: MPE/SMAX have `record_video` as a dead
-        config field, never implemented)."""
+        support video recording. All 4 current envs (Overcooked, MPE, SMAX, JaxNav)
+        override this; `None` remains the default for any future env that doesn't."""
         return None

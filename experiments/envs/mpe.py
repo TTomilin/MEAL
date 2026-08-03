@@ -2,20 +2,19 @@ from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
+import wandb
 
 from experiments.continual.packnet import Packnet
 from experiments.envs.base import EnvAdapter
-from experiments.utils import batchify, unbatchify
-from meal.env.mpe import make_mpe_sequence
+from experiments.utils import batchify, rollout_for_video, unbatchify
+from meal.env.mpe import MPEObstacleVisualizer, make_mpe_sequence
 from meal.wrappers.logging import LogWrapper
 
 
 @dataclass
 class MPEEnvConfig:
-    num_agents: int = 3
     num_landmarks: int = 3
     num_obstacles: int = 4
-    max_steps: int = 100  # episode length; keep in sync with num_steps
     local_ratio: float = 0.5  # 0=fully global reward, 1=fully local
     partial_observability: bool = False  # not yet implemented for MPE
 
@@ -27,13 +26,14 @@ class MPEAdapter(EnvAdapter):
         env_cfg = cfg.env
         if env_cfg.partial_observability:
             raise NotImplementedError("Partial observability is not implemented for MPE.")
+        self.max_steps = cfg.max_episode_steps if cfg.max_episode_steps is not None else 100
         envs = make_mpe_sequence(
             sequence_length=cfg.seq_length,
             seed=cfg.seed,
-            num_agents=env_cfg.num_agents,
+            num_agents=cfg.num_agents if cfg.num_agents is not None else 3,
             num_landmarks=env_cfg.num_landmarks,
             num_obstacles=env_cfg.num_obstacles,
-            max_steps=env_cfg.max_steps,
+            max_steps=self.max_steps,
             local_ratio=env_cfg.local_ratio,
         )
         for i, env in enumerate(envs):
@@ -45,7 +45,7 @@ class MPEAdapter(EnvAdapter):
 
     def run_name_tag(self, cfg) -> str:
         env_cfg = cfg.env
-        return f"{env_cfg.num_agents}a_{env_cfg.num_landmarks}l_{env_cfg.num_obstacles}k"
+        return f"{env_cfg.num_landmarks}l_{env_cfg.num_obstacles}k"
 
     def make_eval_fn(self, cl, reset_switch, step_switch, network, agents, num_envs,
                      num_steps, use_cnn, eval_deterministic, seed):
@@ -140,3 +140,15 @@ class MPEAdapter(EnvAdapter):
             )
         metrics.pop("terminated", None)
         return metrics
+
+    def build_visualizer(self, cfg):
+        def record_video(rng, train_state, network, env, task_idx, exp_dir):
+            states = rollout_for_video(rng, cfg, train_state, env, network, task_idx,
+                                       cfg.video_length, env_adapter=self)
+            visualizer = MPEObstacleVisualizer(env=env, state_seq=states)
+            file_path = f"{exp_dir}/task_{task_idx}_{env.map_id}.mp4"
+            visualizer.animate(save_fname=file_path)
+            if wandb.run is not None:
+                wandb.log({f"task_{task_idx}": wandb.Video(file_path, format="mp4")})
+
+        return record_video

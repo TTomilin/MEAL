@@ -161,7 +161,7 @@ def _loose_items_from_grid(maze_crop: np.ndarray, ids: Ids) -> List[Tuple["Obj",
 
 def char_grid_to_drawable_state(char_grid: List[List[str]]) -> "DrawableState":
     """Convert character grid to DrawableState for basic grid rendering."""
-    from meal.env.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
+    from meal.env.overcooked.common import FLOOR, WALL, GOAL, ONION_PILE, PLATE_PILE, POT, AGENT
 
     # Character to Tile mapping for direct grid rendering
     char_to_tile = {

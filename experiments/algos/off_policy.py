@@ -38,11 +38,6 @@ class OffPolicyConfig(BaseConfig):
     tau: float = 1.0  # target network update rate (1 = hard copy)
     target_update_interval: int = 1
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # EVALUATION PARAMETERS
-    # ═══════════════════════════════════════════════════════════════════════════
-    max_episode_steps: int = 400  # env episode length; separate from num_steps (collection phase size)
-
 
 class OffPolicyAlgo(AbstractAlgo):
     def single_task_cl_method(self) -> str:
@@ -98,7 +93,6 @@ class OffPolicyAlgo(AbstractAlgo):
                 "use_task_id": config.use_task_id,
                 "use_layer_norm": config.use_layer_norm,
                 "activation": config.activation,
-                "strategy": getattr(config.env, "strategy", None),
                 "seed": config.seed,
             })
             if extra_fields:

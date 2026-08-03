@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 from flax.core import FrozenDict
 
-from meal.env.layouts.presets import cramped_room
+from meal.env.overcooked.layouts.presets import cramped_room
 from meal.env.overcooked import Overcooked, OBJECT_TO_INDEX
 from meal.visualization.visualizer import OvercookedVisualizer
 

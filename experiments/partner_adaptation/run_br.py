@@ -22,8 +22,8 @@ from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
-from meal.env.layouts.presets import overcooked_layouts
-from meal.env.utils.max_soup_calculator import calculate_max_soup
+from meal.env.overcooked.layouts.presets import overcooked_layouts
+from meal.env.overcooked.max_soup_calculator import calculate_max_soup
 from meal.visualization.visualizer import OvercookedVisualizer
 from meal import make_env
 from meal.wrappers.logging import LogWrapper
@@ -251,7 +251,7 @@ def run_training():
     else:
         layouts = read_layouts(config)
         layout_dict = {"layout": frozendict_from_layout_repr(
-            layouts[config.layout_idx]["layout"]), "random_agent_start": True}
+            layouts[config.layout_idx]["layout"])}
 
     config.layout = layout_dict.copy()  # These are env kwargs
     env = make_env(config.env_name, **config.layout, max_steps=config.num_steps)

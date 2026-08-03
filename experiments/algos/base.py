@@ -16,12 +16,13 @@ never a hardcoded env-specific call. See `experiments/envs/base.py` for the adap
 interface.
 """
 import os
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import List, Literal, Optional
 
 import jax
+import jax.numpy as jnp
 
 from experiments.algo_common import init_wandb_and_tensorboard, resolve_reg_coef
 from experiments.envs import EnvConfig, build_env_adapter
@@ -39,13 +40,13 @@ class BaseConfig:
     # NETWORK ARCHITECTURE PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
     activation: str = "relu"
-    use_cnn: bool = False
+    encoder: Literal["mlp", "cnn"] = "mlp"
     use_layer_norm: bool = True
 
     # ═══════════════════════════════════════════════════════════════════════════
     # CONTINUAL LEARNING PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
-    cl_method: Optional[str] = None
+    cl_method: Optional[str] = "ft"
     reg_coef: Optional[float] = None
     use_task_id: bool = True
     use_multihead: bool = True
@@ -71,12 +72,15 @@ class BaseConfig:
     # ═══════════════════════════════════════════════════════════════════════════
     seq_length: int = 20
     single_task_idx: Optional[int] = None
+    num_agents: Optional[int] = None  # None -> each env's own default; SMAX maps this to num_allies
+    repeat_sequence: int = 1  # replay the same task sequence back-to-back this many times
+    max_episode_steps: Optional[int] = None  # env episode length; None -> each env's own default
 
     # ═══════════════════════════════════════════════════════════════════════════
     # EVALUATION PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
     evaluation: bool = True
-    record_video: bool = False
+    record_video: bool = True
     video_length: int = 250
     log_interval: int = 5
     eval_deterministic: bool = False
@@ -101,6 +105,12 @@ class BaseConfig:
     num_actors: int = 0
     num_updates: int = 0
 
+    @property
+    def use_cnn(self) -> bool:
+        """Back-compat accessor: internal code throughout ippo/mappo/happo/vdn/qmix/envs
+        still branches on cfg.use_cnn -- only the CLI-facing field (`encoder`) changed."""
+        return self.encoder == "cnn"
+
 
 class AbstractAlgo:
     """Shared setup/orchestration. Subclasses (OnPolicyAlgo, OffPolicyAlgo) fill in
@@ -119,6 +129,20 @@ class AbstractAlgo:
             )
 
         resolve_reg_coef(cfg)
+
+        env_name = type(cfg.env).__name__.removesuffix("EnvConfig").lower()
+        print(
+            f"\n=== Run config ===\n"
+            f"  algo:          {cfg.alg_name}\n"
+            f"  cl_method:     {cfg.cl_method}"
+            + (f" (reg_coef={cfg.reg_coef:g})" if cfg.reg_coef is not None else "") + "\n"
+            f"  env:           {env_name}\n"
+            f"  env settings:  {asdict(cfg.env)}\n"
+            f"  seq_length:    {cfg.seq_length}\n"
+            f"  seed:          {cfg.seed}\n"
+            f"  encoder:       {cfg.encoder}\n"
+            f"===================\n"
+        )
 
         self.cfg = cfg
         self.rng = jax.random.PRNGKey(cfg.seed)
@@ -139,6 +163,17 @@ class AbstractAlgo:
         self.env_adapter = build_env_adapter(cfg.env)
         envs = self.env_adapter.build_sequence(cfg)
 
+        # repeat_sequence is generic (not env-specific): replay the same base task
+        # sequence back-to-back. Applied here, uniformly for all envs, rather than
+        # inside each adapter's build_sequence.
+        if cfg.repeat_sequence > 1:
+            envs = envs * cfg.repeat_sequence
+            if hasattr(self.env_adapter, "max_soup_vals"):
+                self.env_adapter.max_soup_vals = jnp.tile(
+                    self.env_adapter.max_soup_vals, cfg.repeat_sequence
+                )
+            cfg.seq_length = len(envs)
+
         self.envs = envs
         self.env_names = [self.env_adapter.env_display_name(e) for e in envs]
         self.temp_env = envs[0]
@@ -148,11 +183,11 @@ class AbstractAlgo:
     def setup_logging(self):
         cfg = self.cfg
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
-        network_arch = "cnn" if cfg.use_cnn else "mlp"
+        network_arch = cfg.encoder
         env_tag = self.env_adapter.run_name_tag(cfg)
         self.run_name = (
-            f'{cfg.alg_name}_{cfg.cl_method}_{env_tag}_{self.num_agents}agents_'
-            f'{network_arch}_seq{cfg.seq_length}_seed_{cfg.seed}_{timestamp}'
+            f'{cfg.alg_name}_{cfg.cl_method}_{self.env_adapter.checkpoint_subdir}_{env_tag}_'
+            f'{self.num_agents}agents_{network_arch}_seq{cfg.seq_length}_seed_{cfg.seed}_{timestamp}'
         )
         self.exp_dir = os.path.join("runs", self.run_name)
         self.writer = init_wandb_and_tensorboard(cfg, self.run_name, self.exp_dir)

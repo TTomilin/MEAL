@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
+import wandb
 
 from experiments.continual.packnet import Packnet
 from experiments.envs.base import EnvAdapter
@@ -12,7 +13,6 @@ from meal.wrappers.logging import LogWrapper
 
 @dataclass
 class JaxNavEnvConfig:
-    num_agents: int = 2
     map_dim: int = 7
     partial_observability: bool = False  # not yet implemented for JaxNav
 
@@ -35,11 +35,11 @@ def make_jaxnav_sequence(sequence_length: int, seed: int, num_agents: int, max_s
     return envs
 
 
-def rollout_jaxnav_random(env, num_steps: int, seed: int = 0):
-    """Simple random-policy rollout to debug JaxNav maps (unchanged from ippo_jaxnav.py --
-    this is a decorative/debug visualization, not a trained-policy rollout)."""
-    key = jax.random.PRNGKey(seed)
-    key, reset_key = jax.random.split(key)
+def rollout_jaxnav_trained(rng, cfg, train_state, network, env, task_idx, num_steps, env_adapter):
+    """Trained-policy rollout for JaxNav video, matching the output format
+    JaxNavVisualizer expects. Deterministic pi.mode() action selection, matching
+    JaxNavAdapter.make_eval_fn's own action-selection convention."""
+    rng, reset_key = jax.random.split(rng)
 
     obs, state = env.reset(reset_key)
     obs_seq = [obs]
@@ -47,17 +47,21 @@ def rollout_jaxnav_random(env, num_steps: int, seed: int = 0):
     reward_seq = []
 
     num_agents = env.num_agents
-    done_frames = jnp.full((num_agents,), num_steps - 1, dtype=jnp.int32)
-
-    action_dim = env.action_space().n
     agents = env.agents
+    done_frames = jnp.full((num_agents,), num_steps - 1, dtype=jnp.int32)
+    expected_shape = env_adapter.observation_shape(env, agents)
 
     for t in range(num_steps):
-        key, act_key, step_key = jax.random.split(key, 3)
+        actions = {}
+        for agent_id in agents:
+            obs_v = obs[agent_id]
+            obs_b = jnp.expand_dims(obs_v, axis=0) if obs_v.ndim == len(expected_shape) else obs_v
+            if not cfg.use_cnn:
+                obs_b = jnp.reshape(obs_b, (obs_b.shape[0], -1))
+            pi, _, _ = network.apply(train_state.params, obs_b, env_idx=task_idx)
+            actions[agent_id] = jnp.squeeze(pi.mode(), axis=0)
 
-        acts_vec = jax.random.randint(act_key, (num_agents,), minval=0, maxval=action_dim)
-        actions = {a: acts_vec[i] for i, a in enumerate(agents)}
-
+        rng, step_key = jax.random.split(rng)
         obs, state, reward, done, info = env.step(step_key, state, actions)
 
         obs_seq.append(obs)
@@ -95,12 +99,12 @@ class JaxNavAdapter(EnvAdapter):
         env_cfg = cfg.env
         if env_cfg.partial_observability:
             raise NotImplementedError("Partial observability is not implemented for JaxNav.")
-        max_steps = cfg.max_episode_steps if hasattr(cfg, "max_episode_steps") else cfg.num_steps
+        self.max_steps = cfg.max_episode_steps if cfg.max_episode_steps is not None else 400
         envs = make_jaxnav_sequence(
             sequence_length=cfg.seq_length,
             seed=cfg.seed,
-            num_agents=env_cfg.num_agents,
-            max_steps=max_steps,
+            num_agents=cfg.num_agents if cfg.num_agents is not None else 2,
+            max_steps=self.max_steps,
             map_dim=env_cfg.map_dim,
         )
         for i, env in enumerate(envs):
@@ -190,8 +194,8 @@ class JaxNavAdapter(EnvAdapter):
     def build_visualizer(self, cfg):
         def record_video(rng, train_state, network, env, task_idx, exp_dir):
             raw_env = env._env if isinstance(env, LogWrapper) else env
-            obs_seq, state_seq, reward_seq, done_frames = rollout_jaxnav_random(
-                raw_env, num_steps=cfg.video_length, seed=cfg.seed,
+            obs_seq, state_seq, reward_seq, done_frames = rollout_jaxnav_trained(
+                rng, cfg, train_state, network, raw_env, task_idx, cfg.video_length, self,
             )
             task_name = f"task_{task_idx}_{raw_env.map_id}"
             visualizer = JaxNavVisualizer(
@@ -200,5 +204,7 @@ class JaxNavAdapter(EnvAdapter):
             )
             file_path = f"{exp_dir}/{task_name}.mp4"
             visualizer.animate(save_fname=file_path, view=False)
+            if wandb.run is not None:
+                wandb.log({f"task_{task_idx}": wandb.Video(file_path, format="mp4")})
 
         return record_video

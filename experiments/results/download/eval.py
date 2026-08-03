@@ -224,7 +224,7 @@ def br_arch_string(cfg: dict) -> str:
 
 
 def get_layout_from_config(cfg: dict):
-    from meal.env.layouts.presets import (
+    from meal.env.overcooked.layouts.presets import (
         easy_layouts_legacy, medium_layouts_legacy,
         hard_layouts_legacy, overcooked_layouts,
     )
@@ -251,7 +251,7 @@ def calculate_max_soup(layout_dict, max_steps: int = 400, n_agents: int = 2) -> 
     if layout_dict is None:
         return 1.0
     try:
-        from meal.env.utils.max_soup_calculator import calculate_max_soup as _calc
+        from meal.env.overcooked.max_soup_calculator import calculate_max_soup as _calc
         return _calc(layout_dict, max_steps, n_agents=n_agents)
     except Exception as e:
         print(f"Warning: Failed to calculate max soup: {e}, using default of 1.0")

@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 from flax.core import FrozenDict
 
-from meal.env.layouts.presets import cramped_room
+from meal.env.overcooked.layouts.presets import cramped_room
 from meal.env.overcooked import Overcooked
 from meal.wrappers.slippery_tiles import SlipperyTiles
 from meal.wrappers.sticky_actions import StickyActions

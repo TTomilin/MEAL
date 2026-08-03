@@ -14,14 +14,14 @@ import sys
 from pathlib import Path
 from typing import List, Tuple
 
-from meal.env.layouts import layout_grid_to_dict
+from meal.env.overcooked.layouts import layout_grid_to_dict
 
 # ==== project imports ========================================================
 # put project root on import path so the jax‑marl package can be resolved when
 # running the script directly from the repo root
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
-from meal.env.generation.layout_validator import (
+from meal.env.overcooked.generation.layout_validator import (
     evaluate_grid as original_evaluate,
 )
 

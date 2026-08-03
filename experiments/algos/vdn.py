@@ -251,7 +251,7 @@ class VDN(OffPolicyAlgo):
 
         self.evaluate_env = make_vdn_eval_fn(
             self.reset_switch, self.step_switch, network, self.agents,
-            num_envs=cfg.num_envs, num_steps=cfg.max_episode_steps, use_cnn=cfg.use_cnn,
+            num_envs=cfg.num_envs, num_steps=self.env_adapter.max_steps, use_cnn=cfg.use_cnn,
             eval_deterministic=cfg.eval_deterministic, seed=cfg.seed
         )
 

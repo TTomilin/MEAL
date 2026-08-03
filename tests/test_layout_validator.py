@@ -11,10 +11,10 @@ import jax.numpy as jnp
 from flax.core import FrozenDict
 
 from meal.env import Overcooked
-from meal.env.generation.layout_generator import (
+from meal.env.overcooked.generation.layout_generator import (
     generate_layout, layout_grid_to_dict
 )
-from meal.env.generation.layout_validator import (
+from meal.env.overcooked.generation.layout_validator import (
     evaluate_grid, WALL, FLOOR, AGENT, GOAL, ONION_PILE, POT
 )
 from meal.visualization.visualizer import OvercookedVisualizer

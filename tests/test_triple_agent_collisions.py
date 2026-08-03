@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax.core import FrozenDict
 
-from meal.env.layouts.presets import cramped_room
+from meal.env.overcooked.layouts.presets import cramped_room
 from meal.env.overcooked import Overcooked
 from meal.visualization.visualizer import OvercookedVisualizer
 

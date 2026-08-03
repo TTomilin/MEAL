@@ -227,7 +227,7 @@ def initialize_logging_setup(config, run_name, exp_dir):
     return writer
 
 
-def rollout_for_video(rng, config, train_state, env, network, env_idx=0, max_steps=300):
+def rollout_for_video(rng, config, train_state, env, network, env_idx=0, max_steps=300, env_adapter=None):
     """
     Records a rollout of an episode by running the trained network on the environment.
 
@@ -239,6 +239,9 @@ def rollout_for_video(rng, config, train_state, env, network, env_idx=0, max_ste
         network: Network to use for action selection
         env_idx: Environment/task index for multi-task networks (default: 0)
         max_steps: Maximum number of steps to record (default: 300)
+        env_adapter: EnvAdapter used to resolve `observation_space()` correctly across envs
+            (SMAX requires an `agent` argument that Overcooked/MPE/JaxNav don't accept/need).
+            Falls back to the Overcooked-only no-arg call if omitted.
 
     Returns:
         List of environment states for visualization
@@ -253,7 +256,10 @@ def rollout_for_video(rng, config, train_state, env, network, env_idx=0, max_ste
         obs_dict = {}
         for agent_id, obs_v in obs.items():
             # Determine the expected raw shape for this agent.
-            expected_shape = env.observation_space().shape
+            expected_shape = (
+                env_adapter.observation_shape(env, env.agents)
+                if env_adapter is not None else env.observation_space().shape
+            )
             # If the observation is unbatched, add a batch dimension.
             if obs_v.ndim == len(expected_shape):
                 obs_b = jnp.expand_dims(obs_v, axis=0)  # now (1, ...)

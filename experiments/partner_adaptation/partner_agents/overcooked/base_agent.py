@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from flax import struct
 from jax import lax
 
-from meal.env.common import OBJECT_TO_INDEX
+from meal.env.overcooked.common import OBJECT_TO_INDEX
 from meal.env.overcooked import Actions
 
 

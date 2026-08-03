@@ -41,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from meal import Overcooked
 from meal.wrappers.logging import LogWrapper
-from meal.env.utils.max_soup_calculator import calculate_max_soup
+from meal.env.overcooked.max_soup_calculator import calculate_max_soup
 from experiments.model.mlp import ActorCritic as MLPActorCritic
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.utils import batchify, unbatchify

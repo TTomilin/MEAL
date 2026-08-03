@@ -27,11 +27,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import jax
 import matplotlib
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-import numpy as np
 
-from meal.env.smax import HeuristicEnemySMAX, make_smax_sequence
+from meal.env.smax import HeuristicEnemySMAX, SMAXVisualizer, make_smax_sequence
 
 
 # ---------------------------------------------------------------------------
@@ -62,121 +59,6 @@ def rollout_random_allies(env: HeuristicEnemySMAX, num_steps: int, seed: int = 0
 
     return smax_states
 
-
-# ---------------------------------------------------------------------------
-# Visualizer
-# ---------------------------------------------------------------------------
-
-class SMAXVisualizer:
-    """Animate a sequence of SMAX inner states (unit positions, health, alive)."""
-
-    ALLY_COLOR   = "#4fc3f7"  # light blue
-    ENEMY_COLOR  = "#ef9a9a"  # light red
-    DEAD_ALPHA   = 0.15
-    BG_COLOR     = "#1a1a2e"
-
-    def __init__(self, env: HeuristicEnemySMAX, state_seq: list, map_id: str):
-        self._inner_env = env._env   # underlying SMAX instance
-        self.state_seq = state_seq
-        self.map_id = map_id
-        self._init_figure()
-
-    def _init_figure(self):
-        from matplotlib.patches import Circle
-
-        smax = self._inner_env
-        self.fig, self.ax = plt.subplots(figsize=(5, 5))
-        self.fig.patch.set_facecolor(self.BG_COLOR)
-        self.fig.subplots_adjust(left=0, right=1, bottom=0, top=0.94)
-        ax = self.ax
-        ax.set_facecolor(self.BG_COLOR)
-        ax.set_xlim(0, smax.map_width)
-        ax.set_ylim(0, smax.map_height)
-        ax.set_aspect("equal")
-        ax.set_xticks([])
-        ax.set_yticks([])
-
-        state0 = self.state_seq[0]
-
-        # Build patches for all units
-        self._patches = []
-        self._labels  = []
-
-        for i in range(smax.num_allies):
-            pos = np.array(state0.unit_positions[i])
-            r   = float(smax.unit_type_radiuses[state0.unit_types[i]])
-            sh  = smax.unit_type_shorthands[int(state0.unit_types[i])]
-            c = Circle(pos, r, facecolor=self.ALLY_COLOR, edgecolor="white",
-                       linewidth=0.8, zorder=2)
-            ax.add_patch(c)
-            txt = ax.text(pos[0], pos[1], sh, ha="center", va="center",
-                          fontsize=5, color="black", fontweight="bold", zorder=3)
-            self._patches.append(c)
-            self._labels.append(txt)
-
-        for i in range(smax.num_enemies):
-            idx = i + smax.num_allies
-            pos = np.array(state0.unit_positions[idx])
-            r   = float(smax.unit_type_radiuses[state0.unit_types[idx]])
-            sh  = smax.unit_type_shorthands[int(state0.unit_types[idx])]
-            c = Circle(pos, r, facecolor=self.ENEMY_COLOR, edgecolor="white",
-                       linewidth=0.8, zorder=2)
-            ax.add_patch(c)
-            txt = ax.text(pos[0], pos[1], sh, ha="center", va="center",
-                          fontsize=5, color="black", fontweight="bold", zorder=3)
-            self._patches.append(c)
-            self._labels.append(txt)
-
-        # Title shows map_id
-        self._step_text = ax.text(
-            0.5, 1.02, f"Step 0 | {self.map_id}",
-            transform=ax.transAxes,
-            ha="center", va="bottom",
-            fontsize=7, color="white",
-        )
-
-    def _update(self, frame: int):
-        smax  = self._inner_env
-        state = self.state_seq[frame]
-
-        for i in range(smax.num_allies):
-            pos   = np.array(state.unit_positions[i])
-            alive = bool(state.unit_alive[i])
-            p     = self._patches[i]
-            t     = self._labels[i]
-            p.center = tuple(pos)
-            t.set_position(pos)
-            p.set_alpha(1.0 if alive else self.DEAD_ALPHA)
-            t.set_alpha(1.0 if alive else 0.0)
-
-        for i in range(smax.num_enemies):
-            idx   = i + smax.num_allies
-            pos   = np.array(state.unit_positions[idx])
-            alive = bool(state.unit_alive[idx])
-            pidx  = smax.num_allies + i
-            p     = self._patches[pidx]
-            t     = self._labels[pidx]
-            p.center = tuple(pos)
-            t.set_position(pos)
-            p.set_alpha(1.0 if alive else self.DEAD_ALPHA)
-            t.set_alpha(1.0 if alive else 0.0)
-
-        self._step_text.set_text(f"Step {frame} | {self.map_id}")
-
-    def save_frame(self, save_fname: str):
-        self.fig.savefig(save_fname, dpi=150, pad_inches=0,
-                         facecolor=self.fig.get_facecolor())
-
-    def animate(self, save_fname: str, fps: int = 10):
-        ani = animation.FuncAnimation(
-            self.fig, self._update,
-            frames=len(self.state_seq),
-            interval=1000 // fps,
-            blit=False,
-        )
-        ani.save(save_fname, writer="pillow", fps=fps,
-                 savefig_kwargs={"pad_inches": 0, "facecolor": self.fig.get_facecolor()})
-        plt.close(self.fig)
 
 
 # ---------------------------------------------------------------------------

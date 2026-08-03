@@ -1,8 +1,5 @@
 from meal.env import Overcooked, OvercookedPO
-from meal.env.generation.layout_generator import generate_layout
-from meal.env.generation.sequence_loader import create_sequence
-from meal.env.layouts.presets import overcooked_layouts
-from meal.env.utils.difficulty_config import DIFFICULTY_PARAMS
+from meal.env.overcooked import generate_layout, create_sequence, overcooked_layouts, DIFFICULTY_PARAMS
 
 # Environment registry
 registered_envs = ["overcooked", "overcooked_po"]

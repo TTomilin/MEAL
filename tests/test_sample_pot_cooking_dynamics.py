@@ -6,9 +6,9 @@ import jax
 import jax.numpy as jnp
 from flax.core import FrozenDict
 
-from meal.env.common import OBJECT_TO_INDEX, OBJECT_INDEX_TO_VEC
+from meal.env.overcooked.common import OBJECT_TO_INDEX, OBJECT_INDEX_TO_VEC
 from meal.env.overcooked import Overcooked, POT_READY_STATUS
-from meal.env.layouts.presets import cramped_room
+from meal.env.overcooked.layouts.presets import cramped_room
 
 # Add project root to path
 sys.path.insert(0, os.path.abspath(

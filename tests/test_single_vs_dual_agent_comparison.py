@@ -20,7 +20,7 @@ import numpy as np
 import pygame
 from flax.core import FrozenDict
 
-from meal.env.layouts.presets import cramped_room, asymm_advantages, coord_ring, layout_grid_to_dict
+from meal.env.overcooked.layouts.presets import cramped_room, asymm_advantages, coord_ring, layout_grid_to_dict
 from meal.env.overcooked import Overcooked, DELIVERY_REWARD
 from meal.visualization.visualizer import OvercookedVisualizer
 

@@ -1,4 +1,7 @@
+from typing import Union
+
 import tyro
+from typing_extensions import Annotated
 
 from experiments.algos.happo import HAPPO, HAPPOConfig
 from experiments.algos.ippo import IPPO, IPPOConfig
@@ -7,20 +10,25 @@ from experiments.algos.qmix import QMIX, QMIXConfig
 from experiments.algos.vdn import VDN, VDNConfig
 
 ALGOS = {
-    "ippo": (IPPO, IPPOConfig),
-    "mappo": (MAPPO, MAPPOConfig),
-    "happo": (HAPPO, HAPPOConfig),
-    "vdn": (VDN, VDNConfig),
-    "qmix": (QMIX, QMIXConfig),
+    IPPOConfig: IPPO,
+    MAPPOConfig: MAPPO,
+    HAPPOConfig: HAPPO,
+    VDNConfig: VDN,
+    QMIXConfig: QMIX,
 }
+
+AlgoConfig = Union[
+    Annotated[IPPOConfig, tyro.conf.subcommand("ippo")],
+    Annotated[MAPPOConfig, tyro.conf.subcommand("mappo")],
+    Annotated[HAPPOConfig, tyro.conf.subcommand("happo")],
+    Annotated[VDNConfig, tyro.conf.subcommand("vdn")],
+    Annotated[QMIXConfig, tyro.conf.subcommand("qmix")],
+]
 
 
 def main():
-    cfg = tyro.extras.subcommand_cli_from_dict(
-        {name: config_cls for name, (_, config_cls) in ALGOS.items()}
-    )
-    algo_cls = {config_cls: algo_cls for algo_cls, config_cls in ALGOS.values()}[type(cfg)]
-    algo_cls(cfg).run()
+    cfg = tyro.cli(AlgoConfig, default=IPPOConfig())
+    ALGOS[type(cfg)](cfg).run()
 
 
 if __name__ == "__main__":

@@ -2,11 +2,12 @@ from dataclasses import dataclass
 
 import jax
 import jax.numpy as jnp
+import wandb
 
 from experiments.continual.packnet import Packnet
 from experiments.envs.base import EnvAdapter
-from experiments.utils import batchify, unbatchify
-from meal.env.smax import make_smax_sequence
+from experiments.utils import batchify, rollout_for_video, unbatchify
+from meal.env.smax import SMAXVisualizer, make_smax_sequence
 from meal.wrappers.logging import LogWrapper
 
 
@@ -14,7 +15,6 @@ from meal.wrappers.logging import LogWrapper
 class SMAXEnvConfig:
     num_allies: int = 5
     num_enemies: int = 5
-    max_steps: int = 100  # episode length; keep in sync with num_steps
     enemy_shoots: bool = True
     partial_observability: bool = False  # not yet implemented for SMAX
 
@@ -26,12 +26,14 @@ class SMAXAdapter(EnvAdapter):
         env_cfg = cfg.env
         if env_cfg.partial_observability:
             raise NotImplementedError("Partial observability is not implemented for SMAX.")
+        num_allies = cfg.num_agents if cfg.num_agents is not None else env_cfg.num_allies
+        self.max_steps = cfg.max_episode_steps if cfg.max_episode_steps is not None else 100
         envs = make_smax_sequence(
             sequence_length=cfg.seq_length,
             seed=cfg.seed,
-            num_allies=env_cfg.num_allies,
+            num_allies=num_allies,
             num_enemies=env_cfg.num_enemies,
-            max_steps=env_cfg.max_steps,
+            max_steps=self.max_steps,
             enemy_shoots=env_cfg.enemy_shoots,
         )
         for i, env in enumerate(envs):
@@ -46,7 +48,8 @@ class SMAXAdapter(EnvAdapter):
 
     def run_name_tag(self, cfg) -> str:
         env_cfg = cfg.env
-        return f"{env_cfg.num_allies}v{env_cfg.num_enemies}"
+        num_allies = cfg.num_agents if cfg.num_agents is not None else env_cfg.num_allies
+        return f"{num_allies}v{env_cfg.num_enemies}"
 
     def make_eval_fn(self, cl, reset_switch, step_switch, network, agents, num_envs,
                      num_steps, use_cnn, eval_deterministic, seed):
@@ -138,3 +141,21 @@ class SMAXAdapter(EnvAdapter):
             )
         metrics.pop("terminated", None)
         return metrics
+
+    def build_visualizer(self, cfg):
+        def record_video(rng, train_state, network, env, task_idx, exp_dir):
+            # `env` is LogWrapper(HeuristicEnemySMAX(...)); LogWrapper.unwrap_env_state
+            # strips one level (LogEnvState -> HeuristicEnemySMAX's own State), which
+            # still has a nested `.state` holding the raw SMAX inner state that
+            # SMAXVisualizer actually renders.
+            states = rollout_for_video(rng, cfg, train_state, env, network, task_idx,
+                                       cfg.video_length, env_adapter=self)
+            inner_states = [s.state for s in states]
+            map_id = env.map_id
+            visualizer = SMAXVisualizer(env=env._env, state_seq=inner_states, map_id=map_id)
+            file_path = f"{exp_dir}/task_{task_idx}_{map_id}.mp4"
+            visualizer.animate(save_fname=file_path)
+            if wandb.run is not None:
+                wandb.log({f"task_{task_idx}": wandb.Video(file_path, format="mp4")})
+
+        return record_video

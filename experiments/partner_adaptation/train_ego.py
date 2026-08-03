@@ -61,7 +61,7 @@ def train_ppo_ego_agent(
     # ------------------------------
     def make_ppo_train(config):
         '''agent 0 is the ego agent while agent 1 is the confederate'''
-        from meal.env.utils.max_soup_calculator import calculate_max_soup
+        from meal.env.overcooked.max_soup_calculator import calculate_max_soup
         num_agents = env.num_agents
         assert num_agents == 2, "This snippet assumes exactly 2 agents."
 
