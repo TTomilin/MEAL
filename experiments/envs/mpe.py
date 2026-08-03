@@ -17,6 +17,7 @@ class MPEEnvConfig:
     num_obstacles: int = 4
     max_steps: int = 100  # episode length; keep in sync with num_steps
     local_ratio: float = 0.5  # 0=fully global reward, 1=fully local
+    partial_observability: bool = False  # not yet implemented for MPE
 
 
 class MPEAdapter(EnvAdapter):
@@ -24,6 +25,8 @@ class MPEAdapter(EnvAdapter):
 
     def build_sequence(self, cfg):
         env_cfg = cfg.env
+        if env_cfg.partial_observability:
+            raise NotImplementedError("Partial observability is not implemented for MPE.")
         envs = make_mpe_sequence(
             sequence_length=cfg.seq_length,
             seed=cfg.seed,

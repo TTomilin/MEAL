@@ -130,6 +130,8 @@ class HAPPO(OnPolicyAlgo):
             use_task_id=cfg.use_task_id,
             use_cnn=cfg.use_cnn,
             use_layer_norm=cfg.use_layer_norm,
+            hidden_size=cfg.hidden_size,
+            num_layers=cfg.num_layers,
             use_agent_id=cfg.use_agent_id,
             num_agents=num_agents,
             num_envs=cfg.num_envs,
@@ -141,6 +143,8 @@ class HAPPO(OnPolicyAlgo):
             use_task_id=cfg.use_task_id,
             use_cnn=cfg.use_cnn,
             use_layer_norm=cfg.use_layer_norm,
+            hidden_size=cfg.hidden_size,
+            num_layers=cfg.num_layers,
         )
 
         rng, actor_rng, critic_rng = jax.random.split(self.rng, 3)

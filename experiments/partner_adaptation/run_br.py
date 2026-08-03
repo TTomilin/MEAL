@@ -91,7 +91,8 @@ class TrainConfig:
     activation: str = "relu"
     use_cnn: bool = False
     use_layer_norm: bool = True
-    big_network: bool = False
+    hidden_size: int = 128
+    num_layers: int = 2
 
     # ═══════════════════════════════════════════════════════════════════════════
     # CONTINUAL LEARNING PARAMETERS
@@ -289,7 +290,7 @@ def run_training():
 
         ego_network = ac_cls(
             len(env.action_set), config.activation, seq_length, config.use_multihead,
-            config.shared_backbone, config.big_network, config.use_task_id,
+            config.shared_backbone, config.hidden_size, config.num_layers, config.use_task_id,
             config.use_layer_norm)
 
         obs_dim = env.observation_space().shape

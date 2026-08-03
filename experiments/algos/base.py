@@ -76,7 +76,6 @@ class BaseConfig:
     # EVALUATION PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
     evaluation: bool = True
-    eval_num_episodes: int = 5
     record_video: bool = False
     video_length: int = 250
     log_interval: int = 5
@@ -95,7 +94,6 @@ class BaseConfig:
     # EXPERIMENT PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
     seed: int = 1
-    num_seeds: int = 1
 
     # ═══════════════════════════════════════════════════════════════════════════
     # RUNTIME COMPUTED PARAMETERS

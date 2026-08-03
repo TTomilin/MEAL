@@ -60,6 +60,8 @@ class Actor(nn.Module):
     use_task_id: bool = False
     use_cnn: bool = False
     use_layer_norm: bool = False
+    hidden_size: int = 128
+    num_layers: int = 2
     # agent ID one-hot encoding
     use_agent_id: bool = False
     num_agents: int = 2
@@ -96,31 +98,19 @@ class Actor(nn.Module):
             agent_onehot = jax.nn.one_hot(agent_ids, self.num_agents)
             x = jnp.concatenate([x, agent_onehot], axis=-1)
 
-        # First hidden layer
-        x = nn.Dense(
-            128,
-            kernel_init=orthogonal(np.sqrt(2)),
-            bias_init=constant(0.0),
-            name=get_layer_name("actor", nn.Dense, 1),
-        )(x)
-        x = act_fn(x)
-        if self.track_dormant_ratio:
-            activations.append(x)
-        if self.use_layer_norm:
-            x = nn.LayerNorm(name=get_layer_name("actor", nn.LayerNorm, 1), epsilon=1e-5)(x)
-
-        # Second hidden layer
-        x = nn.Dense(
-            128,
-            kernel_init=orthogonal(np.sqrt(2)),
-            bias_init=constant(0.0),
-            name=get_layer_name("actor", nn.Dense, 2),
-        )(x)
-        x = act_fn(x)
-        if self.track_dormant_ratio:
-            activations.append(x)
-        if self.use_layer_norm:
-            x = nn.LayerNorm(name=get_layer_name("actor", nn.LayerNorm, 2), epsilon=1e-5)(x)
+        # Hidden layers
+        for i in range(self.num_layers):
+            x = nn.Dense(
+                self.hidden_size,
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+                name=get_layer_name("actor", nn.Dense, i + 1),
+            )(x)
+            x = act_fn(x)
+            if self.track_dormant_ratio:
+                activations.append(x)
+            if self.use_layer_norm:
+                x = nn.LayerNorm(name=get_layer_name("actor", nn.LayerNorm, i + 1), epsilon=1e-5)(x)
 
         # -------- actor head --------------------------------------------------
         head_string = "multi_head" if self.use_multihead else "single_head"
@@ -161,6 +151,8 @@ class Critic(nn.Module):
     use_task_id: bool = False
     use_cnn: bool = False
     use_layer_norm: bool = False
+    hidden_size: int = 128
+    num_layers: int = 2
     # dormant neuron tracking
     track_dormant_ratio: bool = True
     dormant_threshold: float = 0.01
@@ -186,31 +178,20 @@ class Critic(nn.Module):
             task_onehot = jax.nn.one_hot(ids, self.num_tasks)
             x = jnp.concatenate([x, task_onehot], axis=-1)
 
-        # First hidden layer
-        critic = nn.Dense(
-            128,
-            kernel_init=orthogonal(np.sqrt(2)),
-            bias_init=constant(0.0),
-            name=get_layer_name("critic", nn.Dense, 1),
-        )(x)
-        critic = activation(critic)
-        if self.track_dormant_ratio:
-            activations.append(critic)
-        if self.use_layer_norm:
-            critic = nn.LayerNorm(name=get_layer_name("critic", nn.LayerNorm, 1), epsilon=1e-5)(critic)
-
-        # Second hidden layer
-        critic = nn.Dense(
-            128,
-            kernel_init=orthogonal(np.sqrt(2)),
-            bias_init=constant(0.0),
-            name=get_layer_name("critic", nn.Dense, 2),
-        )(critic)
-        critic = activation(critic)
-        if self.track_dormant_ratio:
-            activations.append(critic)
-        if self.use_layer_norm:
-            critic = nn.LayerNorm(name=get_layer_name("critic", nn.LayerNorm, 2), epsilon=1e-5)(critic)
+        # Hidden layers
+        critic = x
+        for i in range(self.num_layers):
+            critic = nn.Dense(
+                self.hidden_size,
+                kernel_init=orthogonal(np.sqrt(2)),
+                bias_init=constant(0.0),
+                name=get_layer_name("critic", nn.Dense, i + 1),
+            )(critic)
+            critic = activation(critic)
+            if self.track_dormant_ratio:
+                activations.append(critic)
+            if self.use_layer_norm:
+                critic = nn.LayerNorm(name=get_layer_name("critic", nn.LayerNorm, i + 1), epsilon=1e-5)(critic)
 
         # -------- critic head -------------------------------------------------
         head_string = "multi_head" if self.use_multihead else "single_head"

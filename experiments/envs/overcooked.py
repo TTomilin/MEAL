@@ -15,17 +15,17 @@ from meal.wrappers.logging import LogWrapper
 
 @dataclass
 class OvercookedEnvConfig:
-    env_name: str = "overcooked"  # or "overcooked_po" for the partially-observable variant
+    env_name: str = "overcooked"  # internal env id; derived from partial_observability below
     num_agents: int = 2
     repeat_sequence: int = 1
     strategy: str = "generate"
     layouts: Optional[Sequence[str]] = field(default_factory=lambda: [])
-    env_kwargs: Optional[Sequence[dict]] = None
     difficulty: Optional[str] = None
     random_reset: bool = False
     random_agent_start: bool = True
     complementary_restrictions: bool = False  # one agent can't pick up onions, other can't pick up plates
     separated_agents: bool = False  # only accept layouts where agents occupy different connected regions
+    partial_observability: bool = False  # agents see only a local window instead of the full grid
 
     # Non-stationarity environment parameters
     sticky_actions: bool = False
@@ -35,12 +35,12 @@ class OvercookedEnvConfig:
     non_stationary: bool = False  # shortcut: enable all 4 non-stationarity knobs above
 
     # Reward distribution settings
-    reward_shaping: bool = True
-    reward_shaping_horizon: float = 2.5e7
     sparse_rewards: bool = False  # only shared reward for soup delivery
     individual_rewards: bool = False  # only respective agent gets reward for their actions
 
     def __post_init__(self):
+        if self.partial_observability:
+            self.env_name = "overcooked_po"
         if self.non_stationary:
             self.sticky_actions = True
             self.slippery_tiles = True

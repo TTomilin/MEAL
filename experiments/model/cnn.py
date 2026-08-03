@@ -76,7 +76,8 @@ class ActorCritic(nn.Module):
     num_tasks: int = 1
     use_multihead: bool = False
     shared_backbone: bool = True
-    big_network: bool = False
+    hidden_size: int = 128
+    num_layers: int = 2
     use_task_id: bool = False
     use_layer_norm: bool = False
     track_dormant_ratio: bool = True
@@ -114,13 +115,15 @@ class ActorCritic(nn.Module):
             critic_emb = jnp.concatenate([critic_emb, task_onehot], axis=-1)
 
         # ─── actor branch ────────────────────────────────────────────────
-        a = nn.Dense(128, name="actor_dense1",
-                     kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(actor_emb)
-        a = act_fn(a)
-        if self.track_dormant_ratio:
-            all_activations.append(a)
-        if self.use_layer_norm:
-            a = nn.LayerNorm(name="actor_dense1_ln", epsilon=1e-5)(a)
+        a = actor_emb
+        for i in range(self.num_layers):
+            a = nn.Dense(self.hidden_size, name=f"actor_dense{i + 1}",
+                        kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(a)
+            a = act_fn(a)
+            if self.track_dormant_ratio:
+                all_activations.append(a)
+            if self.use_layer_norm:
+                a = nn.LayerNorm(name=f"actor_dense{i + 1}_ln", epsilon=1e-5)(a)
 
         logits_dim = self.action_dim * (self.num_tasks if self.use_multihead else 1)
         logits_all = nn.Dense(logits_dim, name="actor_head",
@@ -129,13 +132,15 @@ class ActorCritic(nn.Module):
         pi = distrax.Categorical(logits=logits)
 
         # ─── critic branch ───────────────────────────────────────────────
-        c = nn.Dense(128, name="critic_dense1",
-                     kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(critic_emb)
-        c = act_fn(c)
-        if self.track_dormant_ratio:
-            all_activations.append(c)
-        if self.use_layer_norm:
-            c = nn.LayerNorm(name="critic_dense1_ln", epsilon=1e-5)(c)
+        c = critic_emb
+        for i in range(self.num_layers):
+            c = nn.Dense(self.hidden_size, name=f"critic_dense{i + 1}",
+                        kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(c)
+            c = act_fn(c)
+            if self.track_dormant_ratio:
+                all_activations.append(c)
+            if self.use_layer_norm:
+                c = nn.LayerNorm(name=f"critic_dense{i + 1}_ln", epsilon=1e-5)(c)
 
         vdim = 1 * (self.num_tasks if self.use_multihead else 1)
         v_all = nn.Dense(vdim, name="critic_head",

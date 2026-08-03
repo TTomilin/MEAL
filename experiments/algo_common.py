@@ -53,6 +53,7 @@ def init_wandb_and_tensorboard(cfg, run_name, exp_dir) -> SummaryWriter:
         wandb.login(key=os.environ.get("WANDB_API_KEY"))
         wandb.init(
             project=cfg.project,
+            entity=cfg.entity or None,
             config=asdict(cfg),
             sync_tensorboard=True,
             mode=cfg.wandb_mode,

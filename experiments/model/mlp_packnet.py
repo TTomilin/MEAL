@@ -20,7 +20,8 @@ class ActorCritic(nn.Module):
     num_tasks: int = 1
     use_multihead: bool = False
     shared_backbone: bool = False
-    big_network: bool = False
+    hidden_size: int = 128
+    num_layers: int = 2
     use_task_id: bool = False
     use_layer_norm: bool = False
     track_dormant_ratio: bool = True
@@ -47,7 +48,7 @@ class ActorCritic(nn.Module):
     @nn.compact
     def __call__(self, x, *, env_idx: int = 0):
         act = self._act()
-        hid = 256 if self.big_network else 128
+        hid = self.hidden_size
 
         per_layer_ratios = []  # collect to average later
 
@@ -59,7 +60,7 @@ class ActorCritic(nn.Module):
 
         # -------- shared trunk ------------------------------------------------
         if self.shared_backbone:
-            for layer in range(2 + self.big_network):  # 2 or 3 layers
+            for layer in range(self.num_layers):
                 x = self._dense(hid, get_layer_name("common", nn.Dense, layer+1), np.sqrt(2))(x)
                 x = act(x)
                 if self.track_dormant_ratio:
@@ -72,7 +73,7 @@ class ActorCritic(nn.Module):
             # separate trunks – duplicate code for actor / critic
             def branch(prefix, inp):
                 ratios = []
-                for layer in range(2 + self.big_network):
+                for layer in range(self.num_layers):
                     inp = self._dense(
                         hid, get_layer_name(prefix, nn.Dense, layer+1), np.sqrt(2))(inp)
                     inp = act(inp)

@@ -30,7 +30,6 @@ from experiments.utils import Transition, batchify, init_cl_state, unbatchify
 @dataclass
 class IPPOConfig(OnPolicyConfig):
     alg_name: Literal["ippo", "mappo"] = "ippo"
-    big_network: bool = False
     shared_backbone: bool = False
     regularize_critic: bool = False
 
@@ -77,7 +76,7 @@ class IPPO(OnPolicyAlgo):
 
         network = ac_cls(self.temp_env.action_space(self.agents[0]).n, cfg.activation, cfg.seq_length,
                          cfg.use_multihead,
-                         cfg.shared_backbone, cfg.big_network, cfg.use_task_id,
+                         cfg.shared_backbone, cfg.hidden_size, cfg.num_layers, cfg.use_task_id,
                          cfg.use_layer_norm)
 
         rng, reset_rng = jax.random.split(self.rng)
@@ -343,7 +342,8 @@ class IPPO(OnPolicyAlgo):
                     "num_tasks": self.cfg.seq_length,
                     "use_multihead": config.use_multihead,
                     "shared_backbone": config.shared_backbone,
-                    "big_network": config.big_network,
+                    "hidden_size": config.hidden_size,
+                    "num_layers": config.num_layers,
                     "use_task_id": config.use_task_id,
                     "use_layer_norm": config.use_layer_norm,
                     "activation": config.activation,

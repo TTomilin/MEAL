@@ -14,6 +14,7 @@ from meal.wrappers.logging import LogWrapper
 class JaxNavEnvConfig:
     num_agents: int = 2
     map_dim: int = 7
+    partial_observability: bool = False  # not yet implemented for JaxNav
 
 
 def make_jaxnav_sequence(sequence_length: int, seed: int, num_agents: int, max_steps: int, map_dim: int):
@@ -92,6 +93,8 @@ class JaxNavAdapter(EnvAdapter):
 
     def build_sequence(self, cfg):
         env_cfg = cfg.env
+        if env_cfg.partial_observability:
+            raise NotImplementedError("Partial observability is not implemented for JaxNav.")
         max_steps = cfg.max_episode_steps if hasattr(cfg, "max_episode_steps") else cfg.num_steps
         envs = make_jaxnav_sequence(
             sequence_length=cfg.seq_length,

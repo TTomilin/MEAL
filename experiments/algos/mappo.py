@@ -30,7 +30,6 @@ class MAPPOConfig(OnPolicyConfig):
     alg_name: Literal["ippo", "mappo"] = "mappo"
     use_agent_id: bool = True  # MAPPO-specific: append agent one-hot to actor obs
     log_interval: int = 75
-    big_network = False
     shared_backbone: bool = False
     regularize_critic: bool = False
 
@@ -108,6 +107,8 @@ class MAPPO(OnPolicyAlgo):
             use_task_id=cfg.use_task_id,
             use_cnn=cfg.use_cnn,
             use_layer_norm=cfg.use_layer_norm,
+            hidden_size=cfg.hidden_size,
+            num_layers=cfg.num_layers,
             use_agent_id=cfg.use_agent_id,
             num_agents=num_agents,
             num_envs=cfg.num_envs,
@@ -119,6 +120,8 @@ class MAPPO(OnPolicyAlgo):
             use_task_id=cfg.use_task_id,
             use_cnn=cfg.use_cnn,
             use_layer_norm=cfg.use_layer_norm,
+            hidden_size=cfg.hidden_size,
+            num_layers=cfg.num_layers,
         )
 
         rng, actor_rng, critic_rng = jax.random.split(self.rng, 3)
@@ -417,7 +420,8 @@ class MAPPO(OnPolicyAlgo):
                     "num_tasks": self.cfg.seq_length,
                     "use_multihead": config.use_multihead,
                     "shared_backbone": config.shared_backbone,
-                    "big_network": config.big_network,
+                    "hidden_size": config.hidden_size,
+                    "num_layers": config.num_layers,
                     "use_task_id": config.use_task_id,
                     "use_agent_id": config.use_agent_id,
                     "use_layer_norm": config.use_layer_norm,

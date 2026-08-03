@@ -162,7 +162,8 @@ def main():
             num_tasks = checkpoint_config.get("num_tasks", args.sequence_length)
             use_multihead = checkpoint_config.get("use_multihead", True)
             shared_backbone = checkpoint_config.get("shared_backbone", False)
-            big_network = checkpoint_config.get("big_network", False)
+            hidden_size = checkpoint_config.get("hidden_size", 128)
+            num_layers = checkpoint_config.get("num_layers", 2)
             use_task_id = checkpoint_config.get("use_task_id", True)
             use_layer_norm = checkpoint_config.get("use_layer_norm", True)
         else:
@@ -171,7 +172,8 @@ def main():
             num_tasks = args.sequence_length
             use_multihead = True
             shared_backbone = False
-            big_network = False
+            hidden_size = 128
+            num_layers = 2
             use_task_id = True
             use_layer_norm = True
 
@@ -180,7 +182,8 @@ def main():
                           num_tasks=num_tasks,
                           use_multihead=use_multihead,
                           shared_backbone=shared_backbone,
-                          big_network=big_network,
+                          hidden_size=hidden_size,
+                          num_layers=num_layers,
                           use_task_id=use_task_id,
                           use_layer_norm=use_layer_norm)
 

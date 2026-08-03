@@ -16,6 +16,7 @@ class SMAXEnvConfig:
     num_enemies: int = 5
     max_steps: int = 100  # episode length; keep in sync with num_steps
     enemy_shoots: bool = True
+    partial_observability: bool = False  # not yet implemented for SMAX
 
 
 class SMAXAdapter(EnvAdapter):
@@ -23,6 +24,8 @@ class SMAXAdapter(EnvAdapter):
 
     def build_sequence(self, cfg):
         env_cfg = cfg.env
+        if env_cfg.partial_observability:
+            raise NotImplementedError("Partial observability is not implemented for SMAX.")
         envs = make_smax_sequence(
             sequence_length=cfg.seq_length,
             seed=cfg.seed,
