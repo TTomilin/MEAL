@@ -404,12 +404,12 @@ img{display:block;max-width:100%}
 
         <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">MARL Algorithm and CL method combinations matter</h3>
         <p style="margin:0 0 4px;font-size:13.5px;color:#5d4f3f;line-height:1.55">Neither the MARL algorithm nor the CL method alone determines performance. The pairing counts. AGEM only works well with IPPO, while HAPPO pairs the best with EWC. MAPPO appears to be least compatible.</p>
-        <img src="assets/plots/algorithm_comparison_hd.png" alt="Baseline algorithm comparison heatmap" style="width:100%;border-radius:10px">
+        <img src="assets/plots/algorithm_comparison.png" alt="Baseline algorithm comparison heatmap" style="width:100%;border-radius:10px">
         <div class="result-caption">Average delivery heatmap across MARL algorithms and CL method combinations</div>
 
         <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Shorter sequences hide how methods diverge</h3>
         <p style="margin:8px 0 4px;font-size:13.5px;color:#5d4f3f;line-height:1.55">The performance of IPPO-combined CL methods progressively spreads out. What looks like a small gap after task 5 becomes a wider spread by task 20. PackNet, followed by Online EWC and Online MAS consistently achieve high delivery. The naïve Fine-Tuning (FT) baseline displays complete amnesia.</p>
-        <img src="assets/plots/avg_cumulative_new_methods_seq_20_level_1.png" alt="All methods cumulative delivery Level 1" style="width:100%;border-radius:10px">
+        <img src="assets/plots/avg_cumulative_soup_seq_20_level_1.png" alt="All methods cumulative delivery Level 1" style="width:100%;border-radius:10px">
         <div class="result-caption"> Normalized average soup delivery for all IPPO+CL methods on Level 1</div>
       </div>
 
@@ -445,7 +445,7 @@ img{display:block;max-width:100%}
         <span class="result-tag" style="background:#ebf4ef;color:#3d7a5a;border:1px solid rgba(95,158,124,.3)">Stability vs Plasticity</span>
         <h3 style="font-family:'Space Grotesk';font-size:17px;font-weight:700;margin:8px 0 6px">Methods occupy distinct stability–plasticity regions</h3>
         <p style="margin:0 0 4px;font-size:13.5px;color:#5d4f3f;line-height:1.55">Plotting all methods in the forward transfer vs. forgetting plane reveals a clear trade-off. Regularization-based methods excel at low forgetting. EWC and MAS sacrifice transfer to achieve this. AGEM sits at the opposite extreme: plastic but forgetful. PackNet yields the best trade-off.</p>
-        <img src="assets/plots/forward_transfer_vs_forgetting_level1.png" alt="Forward transfer vs forgetting scatter Level 1" style="width:68%;border-radius:10px;margin:auto">
+        <img src="assets/plots/forward_transfer_vs_forgetting_level_1.png" alt="Forward transfer vs forgetting scatter Level 1" style="width:68%;border-radius:10px;margin:auto">
         <div class="result-caption">Forward transfer vs. forgetting for all CL methods on Level 1</div>
       </div>
 

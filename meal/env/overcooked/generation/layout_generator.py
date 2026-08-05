@@ -369,7 +369,7 @@ def main(argv=None):
     parser.add_argument("--num-envs", type=int, default=1, help="number of environments to generate")
     parser.add_argument("--show", action="store_true", help="preview with matplotlib")
     parser.add_argument("--oc", action="store_true", help="open JAX‑MARL Overcooked viewer")
-    parser.add_argument("--save", action="store_true", help="save PNG to assets/screenshots/generated/")
+    parser.add_argument("--save", action="store_true", help="save PNG to docs/assets/screenshots/generated/")
     parser.add_argument(
         "--separated-agents",
         action="store_true",
@@ -409,7 +409,7 @@ def main(argv=None):
 
     if args.save and layouts:
         # Determine the base output directory
-        base_dir = Path(__file__).parent.parent.parent.parent / "assets" / "screenshots"
+        base_dir = Path(__file__).resolve().parents[4] / "docs" / "assets" / "screenshots"
         separate_agents_str = "separated" if args.separated_agents else ""
 
         # Create difficulty-specific directory if difficulty is specified

@@ -4,10 +4,10 @@ Generating new Overcooked layouts:
 
 ```bash
 # Generate and visualize a random environment
-python -m meal.env.generation.layout_generator --show
+python -m meal.env.overcooked.generation.layout_generator --show
 
 # Generate and store the visualization of a random medium environment
-python -m meal.env.generation.layout_generator --save --difficulty medium
+python -m meal.env.overcooked.generation.layout_generator --save --difficulty medium
 ```
 
 Example of environment generation steps
@@ -21,10 +21,10 @@ Example of environment generation steps
       <th>Step 4: Place Agents & Clean Up</th>
     </tr>
     <tr>
-      <td><img src="../assets/screenshots/env_generation/step_1.png" width="100%" /></td>
-      <td><img src="../assets/screenshots/env_generation/step_2.png" width="100%" /></td>
-      <td><img src="../assets/screenshots/env_generation/step_3.png" width="100%" /></td>
-      <td><img src="../assets/screenshots/env_generation/step_4.png" width="100%" /></td>
+      <td><img src="../docs/assets/screenshots/env_generation/step_1.png" width="100%" /></td>
+      <td><img src="../docs/assets/screenshots/env_generation/step_2.png" width="100%" /></td>
+      <td><img src="../docs/assets/screenshots/env_generation/step_3.png" width="100%" /></td>
+      <td><img src="../docs/assets/screenshots/env_generation/step_4.png" width="100%" /></td>
     </tr>
     <tr>
       <td>Create empty grid with border walls</td>

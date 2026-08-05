@@ -144,7 +144,8 @@ def make_env(map_dim: int, num_agents: int, max_steps: int, seed: int, name: str
 # -------------------------------------------------------------------------
 if __name__ == "__main__":
     base_key = jax.random.PRNGKey(0)
-    out_dir = Path.cwd() / "assets" / "screenshots" / "jaxnav"
+    repo_root = Path(__file__).resolve().parents[3]
+    out_dir = repo_root / "docs" / "assets" / "screenshots" / "jaxnav"
     print(f"[JaxNav] Saving example layouts (full render) to: {out_dir}")
 
     # (name, map_dim, num_agents, max_steps, rollout_steps)

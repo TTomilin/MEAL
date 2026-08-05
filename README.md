@@ -8,9 +8,13 @@ difficulty level, and reward settings.
 <div align="center">
   <table>
     <tr>
-      <td style="padding: 4px; width: 33%"><img src="./assets/gifs/med_1.gif" width="100%" /></td>
-      <td style="padding: 4px; width: 33%"><img src="./assets/gifs/med_2.gif" width="100%" /></td>
-      <td style="padding: 4px; width: 33%"><img src="./assets/gifs/med_3.gif" width="100%" /></td>
+      <th>Overcooked</th><th>MPE</th><th>SMAX</th><th>JaxNav</th>
+    </tr>
+    <tr>
+      <td style="padding: 4px; width: 25%"><img src="./docs/assets/gifs/2_agents_med.gif" width="100%" /></td>
+      <td style="padding: 4px; width: 25%"><img src="./docs/assets/gifs/MPE.gif" width="100%" /></td>
+      <td style="padding: 4px; width: 25%"><img src="./docs/assets/gifs/SMAX.gif" width="100%" /></td>
+      <td style="padding: 4px; width: 25%"><img src="./docs/assets/gifs/JaxNav.gif" width="100%" /></td>
     </tr>
   </table>
 </div>
@@ -103,23 +107,17 @@ For running experiments, please refer to [experiments/README.MD](experiments/REA
 
 ## Environments
 
-MEAL composes continual learning sequences from generated task layouts. The layouts can be created across difficulty levels. 
-The level affects the grid size, obstacle density, and severity of non-stationary components. Example layouts:
+MEAL benchmarks continual learning across four environments, each with its own README covering
+observation/action space, reward structure, how CL task diversity is generated, and every
+`--env.*` flag it exposes:
 
-<div align="center">
-  <table>
-    <tr>
-      <th>Easy</th><th>Medium</th><th>Hard</th>
-    </tr>
-    <tr>
-      <td><img src="assets/screenshots/easy/gen_1.png" width="100%" /></td>
-      <td><img src="assets/screenshots/med/gen_1.png" width="100%" /></td>
-      <td><img src="assets/screenshots/hard/gen_1.png" width="100%" /></td>
-    </tr>
-  </table>
-</div>
+- [Overcooked](meal/env/overcooked/README.md) — cooperative kitchen, procedurally generated layouts
+- [MPE](meal/env/mpe/README.md) — particle-agent coverage with obstacles
+- [SMAX](meal/env/smax/README.md) — StarCraft-style unit-composition battles
+- [JaxNav](meal/env/jaxnav/README.md) — multi-robot 2D navigation
 
-More details about MEAL environments can be found in [meal/README.MD](meal/README.MD).
+For details on how Overcooked layouts themselves are procedurally generated, see
+[meal/README.MD](meal/README.MD).
 
 ## Project Structure
 

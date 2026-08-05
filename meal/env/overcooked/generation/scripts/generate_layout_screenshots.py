@@ -9,8 +9,9 @@ from meal.env.overcooked.layouts.presets import hard_layouts, medium_layouts, ea
 from meal.visualization.visualizer import OvercookedVisualizer
 
 
-def save_start_states(grouped_layouts, base_dir: str = "../../assets/screenshots"):
-    screenshots_dir = Path(__file__).resolve().parent.parent.parent.parent.parent / "assets" / "screenshots"
+def save_start_states(grouped_layouts, base_dir: str = None):
+    repo_root = Path(__file__).resolve().parents[5]
+    screenshots_dir = Path(base_dir) if base_dir else repo_root / "docs" / "assets" / "screenshots"
     key = jax.random.PRNGKey(0)
     vis = OvercookedVisualizer()
 

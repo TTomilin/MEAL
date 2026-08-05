@@ -30,7 +30,7 @@ from meal.visualization.visualizer import OvercookedVisualizer
 
 # ──────────────────────────────────────────────────────────────────────────
 # Configurable output folder
-OUT_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "assets" / "screenshots" / "env_generation"
+OUT_DIR = Path(__file__).resolve().parents[5] / "docs" / "assets" / "screenshots" / "env_generation"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ──────────────────────────────────────────────────────────────────────────

@@ -96,7 +96,7 @@ View size grows with `--env.difficulty` (`view_ahead`/`view_sides`/`view_behind`
 Generated layout where agents start in disconnected regions, forcing them to coordinate
 through a shared pass-through point rather than moving freely around each other:
 
-![Overcooked separated agents](../../../assets/screenshots/easy/separated/2_agents_gen_1.png)
+![Overcooked separated agents](../../../docs/assets/screenshots/easy/2_agents_separated.png)
 
 ## Example
 
