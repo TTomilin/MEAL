@@ -1,3 +1,5 @@
+"""Layout-grid validation: `evaluate_grid` must reject unreachable/unenclosed
+kitchens and accept well-formed ones."""
 from meal.env.overcooked.layouts.presets import evaluate_grid
 
 

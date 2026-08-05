@@ -29,7 +29,10 @@ class StickyActions(JaxMARLWrapper):
         obs, env_state = self._env.reset(key)
         state = StickyActionsState(
             env_state,
-            {agent: jnp.zeros((1,), dtype=jnp.int32) for agent in self._env.agents}
+            # Scalar per agent, matching the shape of a real per-agent action
+            # (env.step_env takes scalars); a (1,)-shaped init would silently
+            # broadcast every subsequent action up to shape (1,) via jnp.where.
+            {agent: jnp.zeros((), dtype=jnp.int32) for agent in self._env.agents}
         )
         return obs, state
 
@@ -57,7 +60,7 @@ class StickyActions(JaxMARLWrapper):
             key, state.env_state, effective_action
         )
 
-        # info = {**info, "applied_action": effective_action}
+        info = {**info, "applied_action": effective_action}
 
         new_state = StickyActionsState(
             env_state=env_state,

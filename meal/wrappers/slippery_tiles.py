@@ -156,6 +156,7 @@ class SlipperyTiles(JaxMARLWrapper):
         obs, env_state, reward, done, info = self._env.step(
             env_key, state.env_state, effective_action
         )
+        info = {**info, "applied_action": effective_action, "slipped": should_slip}
 
         # Update slip state from new positions
         new_state = self._update_slip_state(state, env_state)
@@ -211,6 +212,7 @@ class SlipperyTiles(JaxMARLWrapper):
         obs, env_state, rew, done, info = self._env.step_env(
             env_key, state.env_state, effective_actions
         )
+        info = {**info, "applied_action": effective_actions, "slipped": should_slip}
 
         # Update slip state
         new_state = self._update_slip_state(state, env_state)

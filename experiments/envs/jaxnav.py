@@ -27,7 +27,10 @@ def make_jaxnav_sequence(sequence_length: int, seed: int, num_agents: int, max_s
             act_type="Discrete",
             max_steps=max_steps,
             map_id="Grid-Rand-Poly",
-            map_params={"map_size": (map_dim, map_dim)},
+            # valid_path_check rejects start/goal samples that aren't actually
+            # connected by free space, so an obstacle layout can never wall an
+            # agent's start off from its goal.
+            map_params={"map_size": (map_dim, map_dim), "valid_path_check": True},
         )
         key, k_layout = jax.random.split(key)
         env.map_obj._fixed_map = env.map_obj.sample_map(k_layout)

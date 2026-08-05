@@ -107,9 +107,6 @@ class Overcooked(MultiAgentEnv):
                 raise ValueError(f"Unknown layout_name '{layout_name}'. Available: {sorted(layouts.keys())}")
             self.layout = FrozenDict(layouts[layout_name])
             self.layout_name = layout_name
-
-            names = [f"file_{i}" for i in range(len(env_kwargs))]
-            self.layout_name = names[task_id]
         # 3) otherwise: generate by difficulty
         else:
             grid, self.layout = generate_layout(num_agents=num_agents, difficulty=difficulty, **env_kwargs)
@@ -148,6 +145,18 @@ class Overcooked(MultiAgentEnv):
         self.max_steps = max_steps
         self.task_id = task_id
         self.agent_restrictions = agent_restrictions or {}
+        # Precompute per-agent restriction arrays so process_interact can index them
+        # by the *traced* player_idx it receives from lax.scan (a Python-level
+        # f-string dict lookup there would silently never match, since the tracer's
+        # repr is not "0"/"1"/...).
+        self.agent_cannot_pick_onions = jnp.array([
+            self.agent_restrictions.get(f"agent_{i}_cannot_pick_onions", False)
+            for i in range(num_agents)
+        ])
+        self.agent_cannot_pick_plates = jnp.array([
+            self.agent_restrictions.get(f"agent_{i}_cannot_pick_plates", False)
+            for i in range(num_agents)
+        ])
         self.random_pot_size = random_pot_size
         self.random_cook_time = random_cook_time
 
@@ -753,16 +762,11 @@ class Overcooked(MultiAgentEnv):
         base_pickup_condition = is_table * ~table_is_empty * inv_is_empty * jnp.logical_or(object_is_pile,
                                                                                            object_is_pickable)
 
-        # Apply agent restrictions if they exist
-        agent_key = f"agent_{player_idx}"
-        can_pick_onions = jnp.array(True)
-        can_pick_plates = jnp.array(True)
-
-        if self.agent_restrictions:
-            can_pick_onions = jnp.array(not self.agent_restrictions.get(
-                f"{agent_key}_cannot_pick_onions", False))
-            can_pick_plates = jnp.array(not self.agent_restrictions.get(
-                f"{agent_key}_cannot_pick_plates", False))
+        # Apply agent restrictions if they exist. player_idx is a traced value here
+        # (process_interact runs inside a lax.scan over agents), so restrictions must
+        # be looked up via array indexing rather than a Python dict keyed by string.
+        can_pick_onions = ~self.agent_cannot_pick_onions[player_idx]
+        can_pick_plates = ~self.agent_cannot_pick_plates[player_idx]
 
         # Check if the object being picked up is restricted
         picking_up_onion = jnp.logical_or(object_on_table == OBJECT_TO_INDEX["onion_pile"],

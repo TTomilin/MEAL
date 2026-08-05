@@ -127,7 +127,10 @@ def make_env(map_dim: int, num_agents: int, max_steps: int, seed: int, name: str
         act_type="Discrete",
         max_steps=max_steps,
         map_id="Grid-Rand-Poly",
-        map_params={"map_size": (map_dim, map_dim)},
+        # valid_path_check rejects start/goal samples that aren't actually
+        # connected by free space (otherwise an obstacle layout can wall an
+        # agent's start off from its goal entirely).
+        map_params={"map_size": (map_dim, map_dim), "valid_path_check": True},
     )
 
     # Fix the map so rerenders use the same layout

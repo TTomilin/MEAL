@@ -66,3 +66,9 @@ exclude = []
 
 [tool.setuptools]
 include-package-data = true
+
+[tool.pytest.ini_options]
+# Ensures `meal` is importable during collection regardless of cwd, since the
+# editable install's finder mapping does not cover the top-level `meal` package.
+pythonpath = ["."]
+testpaths = ["tests"]

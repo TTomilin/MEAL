@@ -77,7 +77,7 @@ def main():
     print("-" * 40)
     
     for i, env in enumerate(envs):
-        print(f"Environment {i + 1}: {env.task_name}")
+        print(f"Environment {i + 1}: {env.layout_name}")
         print(f"  Task ID: {env.task_id}")
         print(f"  Difficulty: {env.difficulty}")
 

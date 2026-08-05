@@ -1,6 +1,7 @@
 import ast
 import json
 import os
+import textwrap
 
 import jax.numpy as jnp
 from flax.core.frozen_dict import FrozenDict
@@ -255,8 +256,12 @@ def evaluate_grid(grid):
 
     valid = True
 
-    # Check if the grid's rows are of equal length
-    rows = grid.strip().split('\n')
+    # Check if the grid's rows are of equal length. `grid.strip()` alone would
+    # only remove the *first* line's leading indentation (since it strips the
+    # whole string's ends, not per line), spuriously failing the width check
+    # below for any indented-for-readability grid literal; dedent first so
+    # common leading whitespace is stripped from every line consistently.
+    rows = textwrap.dedent(grid).strip().split('\n')
     width = len(rows[0])
     for row in rows:
         if len(row) != width:

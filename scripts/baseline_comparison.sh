@@ -1,84 +1,55 @@
 #!/bin/bash
+# Reproduces the CL-method baseline comparison: paper Section 5.1, Table 2,
+# Figures 3 & 4 (soup delivery / forgetting / forward transfer per method,
+# per difficulty level).
+#
+# Sweeps 8 CL methods x 3 difficulty levels x 5 seeds = 120 IPPO runs on
+# Overcooked, 20-task sequences. All PPO/network hyperparameters are left at
+# their defaults, which already match paper Table 6 (steps_per_task=1e8,
+# num_envs=2048, num_steps=400, update_epochs=8, num_minibatches=16, ...);
+# reg_coef is likewise left unset so it auto-resolves to the paper's values
+# (EWC 1e11, MAS 1e9, L2 1e7 -- see resolve_reg_coef in experiments/algo_common.py).
+#
+# "EWC"/"MAS" (Table 2) vs "Online EWC"/"Online MAS" differ only in
+# --importance-mode: multi (cumulative Fisher/importance, the classic
+# formulation) vs online (exponential running average, the default).
+#
+# Usage: see scripts/_common.sh (RUN=1 to actually submit; MEAL_LOCAL=1 to
+# skip SLURM; default is a dry preview).
+set -uo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+source ./_common.sh
 
-algo=( IPPO MAPPO )
-methods=( L2 EWC MAS AGEM )
-strategies=( generate )
-models=( no-use-cnn )
-task_ids=( use-task-id )
-multiheads=( use-multihead )
-layer_norms=( use-layer-norm )
-agents=( 1 2 3 4 )
-seeds=( 1 2 3 4 5 )
-difficulties=( easy medium hard )
-env_name=overcooked_n_agent
-seq_length=20
-ewc_mode=multi
+difficulties=(easy medium hard)
+seeds=(1 2 3 4 5)
 
-for method in "${methods[@]}"; do
-    # Assign regularization coefficient per method
-    case "$method" in
-        EWC) coef=1e11 ;;
-        MAS) coef=1e9  ;;
-        L2)  coef=1e7  ;;
-        *)   coef=1    ;;  # doesn’t matter for others
-    esac
+# name, extra CLI flags (reg_coef intentionally omitted -- auto-resolved)
+methods=(
+    "ft|--cl-method ft"
+    "ewc|--cl-method ewc --importance-mode multi"
+    "mas|--cl-method mas --importance-mode multi"
+    "online_ewc|--cl-method ewc --importance-mode online"
+    "online_mas|--cl-method mas --importance-mode online"
+    "agem|--cl-method agem"
+    "er_ace|--cl-method er_ace"
+    "packnet|--cl-method packnet"
+)
 
-    # Build the reg_coef argument (omit for FT)
-    if [ -n "$coef" ]; then
-        reg_arg="--reg_coef $coef"
-    else
-        reg_arg=""
-    fi
-    for strategy in "${strategies[@]}"; do
-        for model in "${models[@]}"; do
-            for task_id in "${task_ids[@]}"; do
-                for multihead in "${multiheads[@]}"; do
-                    for layer_norm in "${layer_norms[@]}"; do
-                        for num_agents in "${agents[@]}"; do
-			                      for diff in "${difficulties[@]}"; do
-                                for seed in "${seeds[@]}"; do
-                                    echo "Submitting job for combination: $algo, $method, Agents=$num_agents, Seed=$seed, $strategy, $model, $task_id, $multihead, coef=$coef"
-
-                                    # Create an SBATCH script
-                                    cat <<EOF | sbatch
-#!/bin/bash
-#SBATCH -p gpu_h100
-#SBATCH --nodes 1
-#SBATCH --ntasks 1
-#SBATCH --time 3:00:00
-#SBATCH --gres gpu:1
-#SBATCH --job-name=MEAL_${method}_${model}_${strategy}_Seed_${seed}
-#SBATCH -o /home/ttomilin/slurm/%j_"${algo}"_"${method}"_"${model}"_"${num_agents}"agents_Seed_"${seed}"_$(date +%Y-%m-%d-%H-%M-%S).out
-source ~/miniconda3/etc/profile.d/conda.sh
-export PYTHONPATH=~/MEAL:$PYTHONPATH
-conda activate meal
-python3 ~/MEAL/baselines/${algo}_CL.py \
-        --no_regularize_heads \
-        --anneal_lr \
-	      --record_gif \
-	      --random-reset \
-        --cl_method $method \
-        --reg_coef $coef \
-        --ewc_mode $ewc_mode \
-        --seq_length $seq_length \
-	      --env_name $env_name \
-	      --difficulty $diff \
-        --$layer_norm \
-        --$task_id \
-        --$multihead \
-        --strategy $strategy \
-        --$model \
-        --seed $seed \
-        --tags BASELINE_COMPARISON
-conda deactivate
-EOF
-                                    sleep 0.1
-                                done
-                            done
-                        done
-                    done
-                done
-            done
+for method_spec in "${methods[@]}"; do
+    method_name="${method_spec%%|*}"
+    method_flags="${method_spec#*|}"
+    for diff in "${difficulties[@]}"; do
+        for seed in "${seeds[@]}"; do
+            job_name="MEAL_baseline_${method_name}_${diff}_seed${seed}"
+            cmd="python -m experiments.train ippo \
+                ${method_flags} \
+                --seq-length 20 \
+                --seed ${seed} \
+                --tags BASELINE_COMPARISON \
+                env:overcooked --env.difficulty ${diff}"
+            submit_job "${job_name}" "02:00:00" "${cmd}"
         done
     done
 done
+
+summarize

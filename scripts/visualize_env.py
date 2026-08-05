@@ -198,7 +198,10 @@ def run_jaxnav(args):
             act_type="Discrete",
             max_steps=args.num_steps,
             map_id="Grid-Rand-Poly",
-            map_params={"map_size": (args.map_dim, args.map_dim)},
+            # valid_path_check rejects start/goal samples that aren't actually
+            # connected by free space (otherwise an obstacle layout can wall an
+            # agent's start off from its goal entirely).
+            map_params={"map_size": (args.map_dim, args.map_dim), "valid_path_check": True},
         )
         key, k_layout = jax.random.split(key)
         env.map_obj._fixed_map = env.map_obj.sample_map(k_layout)

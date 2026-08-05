@@ -1,23 +1,20 @@
-import os
-import sys
-
+"""Stochastic-transition wrappers: StickyActions (action repeats previous
+one w.p. p) and SlipperyTiles (armed tiles override the next action w.p.
+slip_prob). Each is checked at p=0 (transparent), p=1 (always triggers),
+and an intermediate p (partial-probability smoke test)."""
 import jax
 import jax.numpy as jnp
 from flax.core import FrozenDict
 
-from meal.env.overcooked.layouts.presets import cramped_room
 from meal.env.overcooked import Overcooked
+from meal.env.overcooked.layouts.presets import cramped_room
 from meal.wrappers.slippery_tiles import SlipperyTiles
 from meal.wrappers.sticky_actions import StickyActions
-
-# Add project root to path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 
 # ======================================================================
 # StickyActions tests
 # ======================================================================
-
 
 def test_sticky_actions_p0_is_transparent():
     """
@@ -64,8 +61,7 @@ def test_sticky_actions_p1_always_repeats_last():
     obs, state = wrapper.reset(rng)
 
     # First step: last_action initialized to 0, so effective_action must be 0
-    action_1 = {"agent_0": jnp.array(
-        5, dtype=jnp.int32), "agent_1": jnp.array(7, dtype=jnp.int32)}
+    action_1 = {"agent_0": jnp.array(5, dtype=jnp.int32), "agent_1": jnp.array(7, dtype=jnp.int32)}
     rng, step_key = jax.random.split(rng)
     obs, state, rew, done, info = wrapper.step(step_key, state, action_1)
 
@@ -76,8 +72,7 @@ def test_sticky_actions_p1_always_repeats_last():
     assert int(state.last_action["agent_1"]) == 0
 
     # Second step: last_action is still 0, so even with new action, env still sees 0
-    action_2 = {"agent_0": jnp.array(
-        9, dtype=jnp.int32), "agent_1": jnp.array(11, dtype=jnp.int32)}
+    action_2 = {"agent_0": jnp.array(9, dtype=jnp.int32), "agent_1": jnp.array(11, dtype=jnp.int32)}
     rng, step_key = jax.random.split(rng)
     obs, state, rew, done, info = wrapper.step(step_key, state, action_2)
 
@@ -100,8 +95,7 @@ def test_sticky_actions_updates_last_action_to_effective_action():
     rng = jax.random.PRNGKey(123)
     obs, state = wrapper.reset(rng)
 
-    action = {"agent_0": jnp.array(
-        1, dtype=jnp.int32), "agent_1": jnp.array(2, dtype=jnp.int32)}
+    action = {"agent_0": jnp.array(1, dtype=jnp.int32), "agent_1": jnp.array(2, dtype=jnp.int32)}
 
     for _ in range(5):
         rng, step_key = jax.random.split(rng)
@@ -128,12 +122,9 @@ def test_slippery_tiles_p0_is_transparent():
     obs, state = wrapper.reset(rng)
 
     actions_seq = [
-        {"agent_0": jnp.array(0, dtype=jnp.int32),
-         "agent_1": jnp.array(1, dtype=jnp.int32)},
-        {"agent_0": jnp.array(2, dtype=jnp.int32),
-         "agent_1": jnp.array(3, dtype=jnp.int32)},
-        {"agent_0": jnp.array(5, dtype=jnp.int32),
-         "agent_1": jnp.array(5, dtype=jnp.int32)},
+        {"agent_0": jnp.array(0, dtype=jnp.int32), "agent_1": jnp.array(1, dtype=jnp.int32)},
+        {"agent_0": jnp.array(2, dtype=jnp.int32), "agent_1": jnp.array(3, dtype=jnp.int32)},
+        {"agent_0": jnp.array(5, dtype=jnp.int32), "agent_1": jnp.array(5, dtype=jnp.int32)},
     ]
 
     for a in actions_seq:
@@ -165,8 +156,8 @@ def test_slippery_tiles_p1_slips_when_armed():
     obs, state = wrapper.reset(rng)
 
     # Force both agents to be "armed" to slip on the next step
-    prev_state = state
-    state = state.replace(will_slip_next=jnp.array([True, True]))
+    armed_mask = jnp.array([True, True])
+    state = state.replace(will_slip_next=armed_mask)
 
     # Use a non-move action (5 = interact) so replacement is obvious
     user_action = {
@@ -184,9 +175,9 @@ def test_slippery_tiles_p1_slips_when_armed():
     assert bool(slipped[0])
     assert bool(slipped[1])
 
-    # Slip mask should match previous will_slip_next
-    assert int(slipped[0]) == int(prev_state.will_slip_next[0])
-    assert int(slipped[1]) == int(prev_state.will_slip_next[1])
+    # Slip mask should match the mask we armed just before stepping.
+    assert int(slipped[0]) == int(armed_mask[0])
+    assert int(slipped[1]) == int(armed_mask[1])
 
     # And the resulting actions must be *move* actions: 0,1,2,3
     a0 = int(applied["agent_0"])
@@ -200,8 +191,8 @@ def test_slippery_tiles_partial_prob_behaviour():
     Smoke test for 0 < p_replace < 1.
 
     We periodically force agents to be armed (will_slip_next=True) and check:
-      - slipped[i] == True  → applied action in {0,1,2,3}
-      - slipped[i] == False → applied action equals user action
+      - slipped[i] == True  -> applied action in {0,1,2,3}
+      - slipped[i] == False -> applied action equals user action
     """
     base_env = Overcooked(layout=FrozenDict(cramped_room), layout_name="Cramped Room")
     wrapper = SlipperyTiles(base_env, slip_prob=0.5)
@@ -234,24 +225,13 @@ def test_slippery_tiles_partial_prob_behaviour():
         assert 0 <= a0 < wrapper._env.num_actions
         assert 0 <= a1 < wrapper._env.num_actions
 
-        # If slipped → must be a move action 0..3
+        # If slipped -> must be a move action 0..3
         if bool(slipped[0]):
             assert a0 in (0, 1, 2, 3)
         else:
-            # No slip → must equal user action
             assert a0 == int(user_action["agent_0"])
 
         if bool(slipped[1]):
             assert a1 in (0, 1, 2, 3)
         else:
             assert a1 == int(user_action["agent_1"])
-
-
-if __name__ == "__main__":
-    test_sticky_actions_p0_is_transparent()
-    test_sticky_actions_p1_always_repeats_last()
-    test_sticky_actions_updates_last_action_to_effective_action()
-    test_slippery_tiles_p0_is_transparent()
-    test_slippery_tiles_p1_slips_when_armed()
-    test_slippery_tiles_partial_prob_behaviour()
-    print("All tests passed.")

@@ -60,16 +60,15 @@ come before the `env:...` subcommand token.
 python -m experiments.train ippo \
   --cl-method ewc \
   --seq-length 10 \
+  --num-agents 2 \
   --num-envs 2048 \
   --num-steps 400 \
   --update-epochs 8 \
-  --use-wandb true \
+  --use-wandb \
   --project MEAL \
   --seed 1 \
   env:overcooked \
-  --env.strategy generate \
-  --env.difficulty medium \
-  --env.num-agents 2
+  --env.difficulty medium
 ```
 
 ### Example: MAPPO + MAS with CNN encoder and 4 agents
@@ -77,24 +76,23 @@ python -m experiments.train ippo \
 ```bash
 python -m experiments.train mappo \
   --cl-method mas \
-  --use-cnn true \
+  --encoder cnn \
   --seq-length 8 \
-  --use-wandb true \
+  --num-agents 4 \
+  --use-wandb \
   --project MEAL \
   --seed 2 \
   env:overcooked \
-  --env.strategy generate \
-  --env.difficulty hard \
-  --env.num-agents 4
+  --env.difficulty hard
 ```
 
-### Example: VDN + PackNet on SMAX
+### Example: VDN + EWC on SMAX
 
 ```bash
 python -m experiments.train vdn \
-  --cl-method packnet \
+  --cl-method ewc \
   --seq-length 5 \
-  --use-wandb true \
+  --use-wandb \
   --project MEAL \
   --seed 3 \
   env:smax \
@@ -104,6 +102,8 @@ python -m experiments.train vdn \
 
 ### Running Experiments
 For running experiments, please refer to [experiments/README.MD](experiments/README.MD).
+To reproduce the experiments from the paper specifically, see
+[scripts/README.MD](scripts/README.MD).
 
 ## Environments
 
@@ -127,6 +127,7 @@ For details on how Overcooked layouts themselves are procedurally generated, see
   - `envs/`: EnvAdapter per environment (Overcooked, MPE, SMAX, JaxNav)
   - `continual/`: implementations of EWC, MAS, L2, FT, AGEM
   - `results/`: W&B downloaders and plotting scripts
+- `scripts/`: paper-reproduction sweeps (see [scripts/README.MD](scripts/README.MD)) + env visualization tooling
 - `meal/`
   - `env/`: layouts and utilities
   - `wrappers/`: logging and environment wrappers
