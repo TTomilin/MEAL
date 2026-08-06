@@ -86,7 +86,7 @@ def compute_metrics(
                 # no eval file for this task; skip it
                 print(f"[info] missing eval for task {i}, seed {seed} — skipping this task")
                 continue
-            env_series.append(load_series(cand[0]))
+            env_series.append(load_series([eval_data_file][0]))
             present_task_ids.append(i)
 
         if len(env_series) == 0:
