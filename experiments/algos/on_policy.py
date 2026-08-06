@@ -23,6 +23,7 @@ class OnPolicyConfig(BaseConfig):
     # ═══════════════════════════════════════════════════════════════════════════
     lr: float = 1e-3
     anneal_lr: bool = False
+    lr_end: float = 1e-4
     num_envs: int = 2048
     num_steps: int = 400
     steps_per_task: float = 1e8

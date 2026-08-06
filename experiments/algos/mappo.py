@@ -70,11 +70,6 @@ class MAPPO(OnPolicyAlgo):
         )
         return method_map[cfg.cl_method.lower()]
 
-    def linear_schedule(self, count):
-        cfg = self.cfg
-        frac = 1.0 - (count // (cfg.num_minibatches * cfg.update_epochs)) / cfg.num_updates
-        return cfg.lr * frac
-
     def init_network(self):
         cfg = self.cfg
         num_agents = self.num_agents
@@ -84,6 +79,10 @@ class MAPPO(OnPolicyAlgo):
         cfg.num_updates = int(cfg.steps_per_task // cfg.num_steps // cfg.num_envs)
         cfg.finetune_updates = cfg.finetune_timesteps // cfg.num_steps // cfg.num_envs
         cfg.minibatch_size = (cfg.num_actors * cfg.num_steps) // cfg.num_minibatches
+
+        total_grad_steps = cfg.num_minibatches * cfg.update_epochs * cfg.num_updates
+        lr_scheduler = optax.linear_schedule(cfg.lr, cfg.lr_end, total_grad_steps)
+        self.lr_scheduler = lr_scheduler
 
         self.reset_switch, self.step_switch = build_reset_step_switch(self.envs)
 
@@ -154,7 +153,7 @@ class MAPPO(OnPolicyAlgo):
 
         tx = optax.chain(
             optax.clip_by_global_norm(cfg.max_grad_norm),
-            optax.adam(learning_rate=self.linear_schedule if cfg.anneal_lr else cfg.lr, eps=1e-5),
+            optax.adam(learning_rate=lr_scheduler if cfg.anneal_lr else cfg.lr, eps=1e-5),
         )
 
         train_state = TrainState.create(
@@ -190,6 +189,7 @@ class MAPPO(OnPolicyAlgo):
         agents = self.agents
         num_agents = self.num_agents
         reset_switch, step_switch = self.reset_switch, self.step_switch
+        lr_scheduler = self.lr_scheduler
 
         @jax.jit
         def train_on_environment(rng, train_state, cl_state, env_idx):
@@ -362,7 +362,7 @@ class MAPPO(OnPolicyAlgo):
                 metrics["General/steps_for_env"] = steps_for_env
                 metrics["General/env_step"] = update_step * cfg.num_steps * cfg.num_envs
                 if cfg.anneal_lr:
-                    metrics["General/learning_rate"] = self.linear_schedule(
+                    metrics["General/learning_rate"] = lr_scheduler(
                         update_step * cfg.num_minibatches * cfg.update_epochs
                     )
                 else:

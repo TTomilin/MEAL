@@ -226,7 +226,7 @@ class QMIX(OffPolicyAlgo):
         ]
 
         total_grad_steps = cfg.update_epochs * cfg.num_minibatches * cfg.num_updates
-        lr_scheduler = optax.linear_schedule(cfg.lr, 1e-10, total_grad_steps)
+        lr_scheduler = optax.linear_schedule(cfg.lr, cfg.lr_end, total_grad_steps)
         lr = lr_scheduler if cfg.anneal_lr else cfg.lr
         tx = optax.chain(
             optax.clip_by_global_norm(cfg.max_grad_norm),

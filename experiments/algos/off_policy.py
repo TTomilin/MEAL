@@ -36,6 +36,7 @@ class OffPolicyConfig(BaseConfig):
     num_minibatches: int = 16  # minibatches per epoch
     lr: float = 1e-3
     anneal_lr: bool = False
+    lr_end: float = 1e-4
     gamma: float = 0.99
     tau: float = 1.0  # target network update rate (1 = hard copy)
     target_update_interval: int = 1
