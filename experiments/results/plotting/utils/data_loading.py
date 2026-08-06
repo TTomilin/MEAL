@@ -6,11 +6,79 @@ structure, including collecting runs and processing time series data.
 """
 
 from pathlib import Path
-from typing import List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
 from .common import load_series
+from .metrics import sanitize_series
+
+
+def build_task_matrix(
+    series_list: List[np.ndarray],
+    sanitize: bool = True,
+    sanitize_label_fn: Optional[Callable[[int], str]] = None,
+) -> np.ndarray:
+    """Pad a list of per-task curves to a common length and stack into shape
+    (n_tasks, T). Padding uses each curve's own final value (constant_values=s[-1]),
+    matching every results script's convention for extending a shorter curve past its
+    last recorded eval.
+
+    If `sanitize`, each curve is NaN/inf-cleaned via metrics.sanitize_series first;
+    `sanitize_label_fn(i)` supplies the [warn]-message label for task index i (default:
+    "task series {i}").
+    """
+    if sanitize:
+        if sanitize_label_fn is None:
+            sanitize_label_fn = lambda i: f"task series {i}"
+        series_list = [sanitize_series(s, sanitize_label_fn(i)) for i, s in enumerate(series_list)]
+    else:
+        series_list = [np.asarray(s, dtype=float) for s in series_list]
+    L = max(len(s) for s in series_list)
+    return np.vstack([np.pad(s, (0, L - len(s)), constant_values=s[-1]) for s in series_list])
+
+
+def load_baseline_task_curves(
+    baseline_folder: Path,
+    seeds: List[int],
+    n_tasks: int,
+    file_fn: Optional[Callable[[int], str]] = None,
+) -> Dict[int, List[Optional[np.ndarray]]]:
+    """Load per-task baseline training curves for forward transfer: one list of `n_tasks`
+    curves (or None where missing/empty/all-NaN/all-inf) per seed. `file_fn(i)` maps a
+    task index to its filename relative to the seed dir; default "{i}_training_soup.json".
+    Seeds whose directory doesn't exist are simply absent from the returned dict.
+    """
+    if file_fn is None:
+        file_fn = lambda i: f"{i}_training_soup.json"
+    baseline_data: Dict[int, List[Optional[np.ndarray]]] = {}
+    for seed in seeds:
+        seed_dir = baseline_folder / f"seed_{seed}"
+        if not seed_dir.exists():
+            continue
+        curves: List[Optional[np.ndarray]] = []
+        for i in range(n_tasks):
+            fp = seed_dir / file_fn(i)
+            if not fp.exists():
+                curves.append(None)
+                continue
+            series = load_series(fp)
+            if len(series) == 0:
+                print(f"[warn] empty baseline data for task {i}, seed {seed}")
+                curves.append(None)
+            elif np.all(np.isnan(series)):
+                print(f"[warn] baseline data contains all NaN for task {i}, seed {seed}")
+                curves.append(None)
+            elif np.all(np.isinf(series)):
+                print(f"[warn] baseline data contains all inf/-inf for task {i}, seed {seed}")
+                curves.append(None)
+            elif np.all(np.isnan(series) | np.isinf(series)):
+                print(f"[warn] baseline data contains all NaN/inf/-inf for task {i}, seed {seed}")
+                curves.append(None)
+            else:
+                curves.append(series)
+        baseline_data[seed] = curves
+    return baseline_data
 
 
 def collect_runs(base: Path, algo: str, method: str, strat: str, seq_len: int, seeds: List[int], metric: str,

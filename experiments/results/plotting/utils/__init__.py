@@ -11,7 +11,8 @@ from .common import (
 )
 
 from .data_loading import (
-    collect_runs, collect_env_curves, collect_cumulative_runs, collect_br_cumulative_runs
+    collect_runs, collect_env_curves, collect_cumulative_runs, collect_br_cumulative_runs,
+    build_task_matrix, load_baseline_task_curves,
 )
 
 from .plotting import (
@@ -25,7 +26,14 @@ from .plasticity_utils import (
 
 from .cli import (
     create_base_parser, add_common_args, add_metric_arg, add_repeat_sequence_arg,
-    create_parser_with_common_args, create_plasticity_parser, create_eval_parser
+    create_parser_with_common_args, create_plasticity_parser, create_eval_parser,
+    add_numerical_data_args, add_forgetting_args,
+)
+
+from .metrics import (
+    calculate_curve_based_forgetting, calculate_peak_final_forgetting,
+    compute_forgetting, training_end_idx_for_task,
+    mean_ci, sanitize_series, task_auc, forward_transfer_ratio, average_forward_transfer,
 )
 
 __all__ = [
@@ -35,6 +43,7 @@ __all__ = [
 
     # From data_loading
     'collect_runs', 'collect_env_curves', 'collect_cumulative_runs', 'collect_br_cumulative_runs',
+    'build_task_matrix', 'load_baseline_task_curves',
 
     # From plotting
     'setup_figure', 'add_task_boundaries', 'setup_task_axes',
@@ -45,5 +54,11 @@ __all__ = [
 
     # From cli
     'create_base_parser', 'add_common_args', 'add_metric_arg', 'add_repeat_sequence_arg',
-    'create_parser_with_common_args', 'create_plasticity_parser', 'create_eval_parser'
+    'create_parser_with_common_args', 'create_plasticity_parser', 'create_eval_parser',
+    'add_numerical_data_args', 'add_forgetting_args',
+
+    # From metrics
+    'calculate_curve_based_forgetting', 'calculate_peak_final_forgetting',
+    'compute_forgetting', 'training_end_idx_for_task',
+    'mean_ci', 'sanitize_series', 'task_auc', 'forward_transfer_ratio', 'average_forward_transfer',
 ]

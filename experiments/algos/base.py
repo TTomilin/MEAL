@@ -84,6 +84,7 @@ class BaseConfig:
     video_length: int = 250
     log_interval: int = 5
     eval_deterministic: bool = False
+    eval_num_episodes: int = 10
 
     # ═══════════════════════════════════════════════════════════════════════════
     # LOGGING PARAMETERS

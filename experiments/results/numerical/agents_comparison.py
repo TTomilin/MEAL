@@ -1,33 +1,22 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import List
 
 import numpy as np
 import pandas as pd
 
+from experiments.results.plotting.utils import (
+    load_series, mean_ci, build_task_matrix, load_baseline_task_curves, task_auc,
+    forward_transfer_ratio, add_forgetting_args,
+)
+from experiments.results.plotting.utils.metrics import (
+    compute_forgetting, training_end_idx_for_task,
+)
+
 # Type alias for confidence intervals
 ConfInt = tuple[float, float]
-
-
-def load_series(fp: Path) -> List[float]:
-    """Load a JSON series from file."""
-    with open(fp, 'r') as f:
-        data = json.load(f)
-    return [float(x) for x in data]
-
-
-def _mean_ci(series: List[float]) -> ConfInt:
-    """Compute mean and 95% confidence interval."""
-    if not series:
-        return np.nan, np.nan
-    mean = float(np.mean(series))
-    if len(series) == 1:
-        return mean, 0.0
-    ci = 1.96 * np.std(series, ddof=1) / np.sqrt(len(series))
-    return mean, float(ci)
 
 
 def compute_metrics(
@@ -41,6 +30,7 @@ def compute_metrics(
         num_agents: int,
         end_window_evals: int = 10,
         level: int = 1,
+        forgetting_formula: str = "peak_final",
 ) -> dict:
     """Compute metrics for a single algorithm/method/num_agents combination."""
     AP_seeds, F_seeds, FT_seeds = [], [], []
@@ -51,12 +41,6 @@ def compute_metrics(
     training_metric = _training_metrics.get(env, "soup")
     _level_strings = {"jaxnav": "jaxnav", "mpe": "mpe", "smax": "smax"}
     level_string = _level_strings.get(env, f"level_{level}")
-    # Temporary hack because I forgot to log all the necessary data for the initial runs.
-    # For SMAX and MPE, the single-task baseline training files and the CL method training files
-    # are the same (both in single/), so comparing them gives FT=0. Instead, use the CL eval
-    # curves from env_mat as the CL curve, normalised to [0,1] where needed.
-    # SMAX: eval=returns (needs normalisation), baseline=kill_fraction [0,1]
-    # MPE:  eval=coverage_fraction [0,1],        baseline=coverage_fraction [0,1] (no normalisation needed)
     ft_use_eval_normalised = env in {"smax", "mpe"}
 
     # Load baseline data once for forward transfer calculation
@@ -72,34 +56,10 @@ def compute_metrics(
             / f"agents_{num_agents}"
             / f"{strategy}_{seq_len}"
         )
-
-        for seed in seeds:
-            baseline_seed_dir = baseline_folder / f"seed_{seed}"
-            if baseline_seed_dir.exists():
-                # Load baseline training data for each task
-                baseline_training_files = []
-                for i in range(seq_len):
-                    baseline_file = baseline_seed_dir / f"{i}_training_{training_metric}.json"
-                    if baseline_file.exists():
-                        baseline_series = load_series(baseline_file)
-                        # Validate the loaded data
-                        if len(baseline_series) == 0:
-                            print(f"[warn] empty baseline data for task {i}, seed {seed}")
-                            baseline_training_files.append(None)
-                        elif np.all(np.isnan(baseline_series)):
-                            print(f"[warn] baseline data contains all NaN for task {i}, seed {seed}")
-                            baseline_training_files.append(None)
-                        elif np.all(np.isinf(baseline_series)):
-                            print(f"[warn] baseline data contains all inf/-inf for task {i}, seed {seed}")
-                            baseline_training_files.append(None)
-                        elif np.all(np.isnan(baseline_series) | np.isinf(baseline_series)):
-                            print(f"[warn] baseline data contains all NaN/inf/-inf for task {i}, seed {seed}")
-                            baseline_training_files.append(None)
-                        else:
-                            baseline_training_files.append(baseline_series)
-                    else:
-                        baseline_training_files.append(None)
-                baseline_data[seed] = baseline_training_files
+        baseline_data = load_baseline_task_curves(
+            baseline_folder, seeds, seq_len,
+            file_fn=lambda i: f"{i}_training_{training_metric}.json",
+        )
     base_folder = (
             repo_root
             / data_root
@@ -121,27 +81,19 @@ def compute_metrics(
         present_task_ids: List[int] = []
         for i in range(seq_len):
             # find eval file for task i; ignore training files
-            direct = sd / f"{i}_{eval_suffix}.json"
-            if direct.exists():
-                cand = [direct]
-            else:
-                # fallback: glob for older naming conventions
-                cand = sorted([p for p in sd.glob(f"{i}_*_{eval_suffix}.*") if "training" not in p.name])
-            if not cand:
+            eval_data_file = sd / f"{i}_{eval_suffix}.json"
+            if not eval_data_file.exists():
                 # no eval file for this task; skip it
                 print(f"[info] missing eval for task {i}, seed {seed} — skipping this task")
                 continue
-            env_series.append(load_series(cand[0]))
+            env_series.append(load_series([eval_data_file][0]))
             present_task_ids.append(i)
 
         if len(env_series) == 0:
             print(f"[warn] no eval curves found for seed {seed}; skipping seed")
             continue
 
-        L = max(len(s) for s in env_series)
-        env_mat = np.vstack([
-            np.pad(s, (0, L - len(s)), constant_values=s[-1]) for s in env_series
-        ])
+        env_mat = build_task_matrix(env_series, sanitize=False)
 
         # Average Performance (AP) – last eval of mean curve
         AP_seeds.append(env_mat.mean(axis=0)[-1])
@@ -154,7 +106,6 @@ def compute_metrics(
             FT_seeds.append(np.nan)
         else:
             ft_vals = []
-            baseline_seed_dir = baseline_folder / f"seed_{seed}"
             n_eval = env_mat.shape[1]
             eval_chunk = max(1, n_eval // seq_len)
             eval_max = env_mat.max() if ft_use_eval_normalised else 1.0
@@ -182,11 +133,7 @@ def compute_metrics(
                     chunk = max(1, n_train // seq_len)
                     cl_task_curve = cl_training[i * chunk:(i + 1) * chunk]
 
-                if len(cl_task_curve) > 1:
-                    auc_cl = np.trapz(cl_task_curve) / len(cl_task_curve)
-                else:
-                    auc_cl = cl_task_curve[0] if len(cl_task_curve) == 1 else 0.0
-
+                auc_cl = task_auc(cl_task_curve)
                 if np.isnan(auc_cl) or np.isinf(auc_cl):
                     print(f"[warn] CL AUC is NaN/inf for task {i}, seed {seed}, method {method}")
                     continue
@@ -203,41 +150,37 @@ def compute_metrics(
                     print(f"[warn] baseline data contains all NaN/inf for task {i}, seed {seed}")
                     continue
 
-                if len(baseline_task_curve) > 1:
-                    auc_baseline = np.trapz(baseline_task_curve) / len(baseline_task_curve)
-                else:
-                    auc_baseline = baseline_task_curve[0] if len(baseline_task_curve) == 1 else 0.0
-
-                if np.isnan(auc_baseline) or np.isinf(auc_baseline):
-                    print(f"[warn] baseline AUC is NaN/inf for task {i}, seed {seed}")
-                    continue
-
-                if auc_baseline < 1e-8:
-                    print(f"[info] baseline AUC ~0 for task {i}, seed {seed}, method {method} – skipping FT")
-                    continue
-
-                ft_i = (auc_cl - auc_baseline) / auc_baseline
-                if np.isnan(ft_i) or np.isinf(ft_i):
-                    print(f"[warn] FT result is NaN/inf for task {i}, seed {seed}, method {method}")
+                auc_baseline = task_auc(baseline_task_curve)
+                ft_i = forward_transfer_ratio(auc_cl, auc_baseline)
+                if ft_i is None:
+                    print(f"[info] task {i}, seed {seed}, method {method} skipped for FT "
+                          f"(NaN/inf AUC, near-zero baseline, or NaN/inf ratio)")
                 else:
                     ft_vals.append(ft_i)
 
             FT_seeds.append(float(np.nanmean(ft_vals)) if ft_vals else np.nan)
 
-        # Forgetting (F) – drop from best‑ever to final performance
+        # Forgetting
+        forgetting_train_fp = sd / f"training_{training_metric}.json" if training_metric else None
+        n_train_for_forgetting = None
+        if forgetting_train_fp is not None and forgetting_train_fp.exists():
+            n_train_for_forgetting = len(load_series(forgetting_train_fp))
+
         f_vals = []
-        final_idx = env_mat.shape[1] - 1
-        fw_start = max(0, final_idx - end_window_evals + 1)
-        for i in range(env_mat.shape[0]):
-            final_avg = np.nanmean(env_mat[i, fw_start : final_idx + 1])
-            best_perf = np.nanmax(env_mat[i, : final_idx + 1])
-            f_vals.append(max(best_perf - final_avg, 0.0))
+        for task_pos, i in enumerate(present_task_ids):
+            task_curve = env_mat[task_pos, :]
+            n_train_ref = n_train_for_forgetting or len(task_curve)
+            training_end_idx = training_end_idx_for_task(i, len(task_curve), n_train_ref, seq_len)
+            f_vals.append(compute_forgetting(
+                task_curve, forgetting_formula, training_end_idx=training_end_idx,
+                end_window_evals=end_window_evals,
+            ))
         F_seeds.append(float(np.nanmean(f_vals)))
 
     # Aggregate across seeds
-    A_mean, A_ci = _mean_ci(AP_seeds)
-    F_mean, F_ci = _mean_ci(F_seeds)
-    FT_mean, FT_ci = _mean_ci(FT_seeds)
+    A_mean, A_ci = mean_ci(AP_seeds)
+    F_mean, F_ci = mean_ci(F_seeds)
+    FT_mean, FT_ci = mean_ci(FT_seeds)
 
     return {
         "AveragePerformance": A_mean,
@@ -260,6 +203,7 @@ def compare_agents(
         num_agents_list: List[int],
         levels: List[int],
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 
 ) -> pd.DataFrame:
     """Compare results between different numbers of agents."""
@@ -281,6 +225,7 @@ def compare_agents(
                 num_agents=num_agents,
                 end_window_evals=end_window_evals,
                 level=level,
+                forgetting_formula=forgetting_formula,
             )
 
             # Add metrics to row with level prefix
@@ -318,12 +263,7 @@ if __name__ == "__main__":
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3], help="Seeds to include")
     p.add_argument("--num_agents", type=int, nargs="+", default=[1, 2, 3], help="Number of agents to compare")
     p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3], help="Difficulty levels to compare")
-    p.add_argument(
-        "--end_window_evals",
-        type=int,
-        default=10,
-        help="How many final eval points to average for F (Forgetting)",
-    )
+    add_forgetting_args(p, default="peak_final")
     p.add_argument(
         "--confidence_intervals",
         action="store_true",
@@ -358,6 +298,7 @@ if __name__ == "__main__":
         num_agents_list=args.num_agents,
         levels=levels,
         end_window_evals=args.end_window_evals,
+        forgetting_formula=args.forgetting_formula,
     )
 
     # Find best values per column (across all agent configurations)

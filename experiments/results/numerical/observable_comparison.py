@@ -3,40 +3,20 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import List
 
 import numpy as np
 import pandas as pd
 
-# -----------------------------------------------------------------------------
-# I/O helpers
-# -----------------------------------------------------------------------------
-
-def load_series(fp: Path) -> np.ndarray:
-    """Load a 1‑D float array from *.json or *.npz."""
-    if fp.suffix == ".json":
-        return np.array(json.loads(fp.read_text()), dtype=float)
-    if fp.suffix == ".npz":
-        return np.load(fp)["data"].astype(float)
-    raise ValueError(f"Unsupported file suffix: {fp.suffix}")
-
-
-# -----------------------------------------------------------------------------
-# Metric aggregation
-# -----------------------------------------------------------------------------
+from experiments.results.plotting.utils import (
+    load_series, mean_ci, build_task_matrix, add_numerical_data_args, add_forgetting_args,
+)
+from experiments.results.plotting.utils.metrics import (
+    compute_forgetting, training_end_idx_for_task,
+)
 
 ConfInt = tuple[float, float]  # (mean, 95% CI)
-
-def _mean_ci(series: List[float]) -> ConfInt:
-    if not series:
-        return np.nan, np.nan
-    mean = float(np.mean(series))
-    if len(series) == 1:
-        return mean, 0.0
-    ci = 1.96 * np.std(series, ddof=1) / np.sqrt(len(series))
-    return mean, float(ci)
 
 
 def compute_metrics(
@@ -48,6 +28,7 @@ def compute_metrics(
         seeds: List[int],
         end_window_evals: int = 10,
         level: int = 1,
+        forgetting_formula: str = "peak_final",
 ) -> dict:
     """Compute metrics for a single method/setting combination."""
     AP_seeds, F_seeds = [], []
@@ -78,27 +59,30 @@ def compute_metrics(
             continue
 
         env_series = [load_series(f) for f in env_files]
-        L = max(len(s) for s in env_series)
-        env_mat = np.vstack([
-            np.pad(s, (0, L - len(s)), constant_values=s[-1]) for s in env_series
-        ])
+        env_mat = build_task_matrix(env_series, sanitize=False)
 
         # Average Performance (AP) – last eval of mean curve
         AP_seeds.append(env_mat.mean(axis=0)[-1])
 
-        # Forgetting (F) – drop from best‑ever to final performance
-        f_vals = []
+        # Forgetting
+        training_fp = sd / "training_soup.json"
+        n_train = len(load_series(training_fp)) if training_fp.exists() else 0
+
         final_idx = env_mat.shape[1] - 1
-        fw_start = max(0, final_idx - end_window_evals + 1)
+        f_vals = []
         for i in range(seq_len):
-            final_avg = np.nanmean(env_mat[i, fw_start : final_idx + 1])
-            best_perf = np.nanmax(env_mat[i, : final_idx + 1])
-            f_vals.append(max(best_perf - final_avg, 0.0))
+            task_curve = env_mat[i, : final_idx + 1]
+            n_train_ref = n_train or len(task_curve)
+            training_end_idx = training_end_idx_for_task(i, len(task_curve), n_train_ref, seq_len)
+            f_vals.append(compute_forgetting(
+                task_curve, forgetting_formula, training_end_idx=training_end_idx,
+                end_window_evals=end_window_evals,
+            ))
         F_seeds.append(float(np.nanmean(f_vals)))
 
     # Aggregate across seeds
-    A_mean, A_ci = _mean_ci(AP_seeds)
-    F_mean, F_ci = _mean_ci(F_seeds)
+    A_mean, A_ci = mean_ci(AP_seeds)
+    F_mean, F_ci = mean_ci(F_seeds)
 
     return {
         "AveragePerformance": A_mean,
@@ -116,6 +100,7 @@ def compare_observability_settings(
         seeds: List[int],
         levels: List[int],
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 ) -> pd.DataFrame:
     """Compare EWC results between fully and partially observable settings."""
     rows = []
@@ -131,6 +116,7 @@ def compare_observability_settings(
             seeds=seeds,
             end_window_evals=end_window_evals,
             level=level,
+            forgetting_formula=forgetting_formula,
         )
 
         # Compute metrics for partially observable (EWC_partial)
@@ -143,6 +129,7 @@ def compare_observability_settings(
             seeds=seeds,
             end_window_evals=end_window_evals,
             level=level,
+            forgetting_formula=forgetting_formula,
         )
 
         # Create one row per level with FO and PO as columns
@@ -178,18 +165,9 @@ def _fmt(mean: float, ci: float, best: bool, better: str = "max") -> str:
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Compare EWC results between fully and partially observable settings")
-    p.add_argument("--data_root", required=True, help="Root directory containing the data")
-    p.add_argument("--algo", default="ippo", help="Algorithm name")
-    p.add_argument("--strategy", default="generate", help="Strategy name")
-    p.add_argument("--seq_len", type=int, default=20, help="Sequence length")
-    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3], help="Seeds to include")
+    add_numerical_data_args(p, required=False)
     p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3], help="Difficulty levels to compare")
-    p.add_argument(
-        "--end_window_evals",
-        type=int,
-        default=10,
-        help="How many final eval points to average for F (Forgetting)",
-    )
+    add_forgetting_args(p, default="peak_final")
     args = p.parse_args()
 
     # Compute comparison metrics
@@ -201,6 +179,7 @@ if __name__ == "__main__":
         seeds=args.seeds,
         levels=args.levels,
         end_window_evals=args.end_window_evals,
+        forgetting_formula=args.forgetting_formula,
     )
 
     # For each level, identify best performance and format the table

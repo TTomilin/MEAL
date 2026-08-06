@@ -95,12 +95,6 @@ class HAPPO(OnPolicyAlgo):
         )
         return method_map[cfg.cl_method.lower()]
 
-    def linear_schedule(self, count):
-        # HAPPO updates the actor num_agents times per minibatch (one per agent).
-        cfg = self.cfg
-        frac = 1.0 - (count // (cfg.num_minibatches * cfg.update_epochs * self.num_agents)) / cfg.num_updates
-        return cfg.lr * frac
-
     def init_network(self):
         cfg = self.cfg
         num_agents = self.num_agents
@@ -111,6 +105,14 @@ class HAPPO(OnPolicyAlgo):
         cfg.finetune_updates = cfg.finetune_timesteps // cfg.num_steps // cfg.num_envs
         # Per-agent minibatch size (total / num_agents / num_minibatches)
         cfg.minibatch_size = (cfg.num_envs * cfg.num_steps) // cfg.num_minibatches
+
+        # HAPPO updates the actor num_agents times per minibatch (one per agent), so its
+        # optimizer's internal step count advances num_agents times faster than IPPO/MAPPO's.
+        # Bake that into total_grad_steps rather than the schedule call sites, so
+        # lr_scheduler(count) still means "count real optimizer.update() calls so far".
+        total_grad_steps = cfg.num_minibatches * cfg.update_epochs * num_agents * cfg.num_updates
+        lr_scheduler = optax.linear_schedule(cfg.lr, cfg.lr_end, total_grad_steps)
+        self.lr_scheduler = lr_scheduler
 
         self.reset_switch, self.step_switch = build_reset_step_switch(self.envs)
 
@@ -166,11 +168,11 @@ class HAPPO(OnPolicyAlgo):
 
         actor_tx = optax.chain(
             optax.clip_by_global_norm(cfg.max_grad_norm),
-            optax.adam(learning_rate=self.linear_schedule if cfg.anneal_lr else cfg.lr, eps=1e-5),
+            optax.adam(learning_rate=lr_scheduler if cfg.anneal_lr else cfg.lr, eps=1e-5),
         )
         critic_tx = optax.chain(
             optax.clip_by_global_norm(cfg.max_grad_norm),
-            optax.adam(learning_rate=self.linear_schedule if cfg.anneal_lr else cfg.lr, eps=1e-5),
+            optax.adam(learning_rate=lr_scheduler if cfg.anneal_lr else cfg.lr, eps=1e-5),
         )
 
         actor_ts = TrainState.create(apply_fn=actor_network.apply, params=actor_params, tx=actor_tx)
@@ -187,7 +189,7 @@ class HAPPO(OnPolicyAlgo):
 
         self.evaluate_env = self.env_adapter.make_eval_fn(
             self.cl, self.reset_switch, self.step_switch, actor_wrapper, self.agents,
-            cfg.num_envs, cfg.num_steps, cfg.use_cnn, cfg.eval_deterministic, cfg.seed,
+            cfg.eval_num_episodes, cfg.num_steps, cfg.use_cnn, cfg.eval_deterministic, cfg.seed,
         )
         self.importance_fn = self.cl.make_importance_fn(
             self.reset_switch, self.step_switch, actor_wrapper, self.agents, cfg.use_cnn,
@@ -206,6 +208,7 @@ class HAPPO(OnPolicyAlgo):
         agents = self.agents
         num_agents = self.num_agents
         reset_switch, step_switch = self.reset_switch, self.step_switch
+        lr_scheduler = self.lr_scheduler
 
         @jax.jit
         def train_on_environment(rng, actor_ts, critic_ts, cl_state, env_idx):
@@ -217,9 +220,11 @@ class HAPPO(OnPolicyAlgo):
             reset_rng = jax.random.split(env_rng, cfg.num_envs)
             obsv, env_state = jax.vmap(lambda k: reset_switch(k, jnp.int32(env_idx)))(reset_rng)
 
-            reward_shaping_horizon = cfg.steps_per_task / 2
+            reward_shaping_horizon = cfg.reward_shaping_horizon
+            if reward_shaping_horizon is None:
+                reward_shaping_horizon = cfg.steps_per_task / 2
             rew_shaping_anneal = optax.linear_schedule(
-                init_value=1.0, end_value=1.0, transition_steps=reward_shaping_horizon,
+                init_value=1.0, end_value=0.0, transition_steps=reward_shaping_horizon,
             )
 
             def _update_step(runner_state, _):
@@ -450,7 +455,7 @@ class HAPPO(OnPolicyAlgo):
                 metrics["General/steps_for_env"] = steps_for_env
                 metrics["General/env_step"] = update_step * cfg.num_steps * cfg.num_envs
                 metrics["General/learning_rate"] = (
-                    self.linear_schedule(
+                    lr_scheduler(
                         (update_step - 1) * cfg.num_minibatches * cfg.update_epochs * num_agents
                     ) if cfg.anneal_lr else cfg.lr
                 )

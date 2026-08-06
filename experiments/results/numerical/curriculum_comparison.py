@@ -1,19 +1,16 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import List, Optional, Dict, Tuple
 
 import numpy as np
 import pandas as pd
 
-
-def load_series(fp: Path) -> List[float]:
-    """Load a time series from JSON file."""
-    with fp.open() as f:
-        data = json.load(f)
-    return data if isinstance(data, list) else [data]
+from experiments.results.plotting.utils import load_series, task_auc, add_forgetting_args
+from experiments.results.plotting.utils.metrics import (
+    compute_forgetting, training_end_idx_for_task,
+)
 
 
 def _mean_ci(series: List[float]) -> Tuple[float, float]:
@@ -36,6 +33,7 @@ def compute_metrics_for_task_range(
         task_range: Tuple[int, int],
         level: Optional[int] = None,
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 ) -> pd.DataFrame:
     """
     Compute continual learning metrics for experiments with a specific strategy on a specific task range.
@@ -49,7 +47,8 @@ def compute_metrics_for_task_range(
         seeds: List of random seeds
         task_range: Tuple of (start_idx, end_idx) for task range (inclusive)
         level: Difficulty level (1, 2, 3) for level-based experiments
-        end_window_evals: Number of final evaluations to average for forgetting metric
+        end_window_evals: number of final eval points to average; only used by the 'peak_final' forgetting formula
+        forgetting_formula: 'weighted' or 'peak_final', see experiments/results/plotting/utils/metrics.py
 
     Returns:
         DataFrame with computed metrics for the specified task range
@@ -205,12 +204,15 @@ def compute_metrics_for_task_range(
                 final_performances = [eval_data[i][-1] for i in range(len(eval_data))]
                 AP = np.mean(final_performances)
 
-                # Forgetting (F): average drop from peak to final performance on tasks in range
+                # Forgetting
                 forgetting_values = []
-                for i in range(len(eval_data)):
-                    peak_perf = max(eval_data[i])
-                    final_perf = np.mean(eval_data[i][-end_window_evals:])
-                    forgetting_values.append(peak_perf - final_perf)
+                for i, task_idx in enumerate(task_indices):
+                    task_curve = np.asarray(eval_data[i])
+                    training_end_idx = training_end_idx_for_task(task_idx, len(task_curve), n_train, seq_len)
+                    forgetting_values.append(compute_forgetting(
+                        task_curve, forgetting_formula, training_end_idx=training_end_idx,
+                        end_window_evals=end_window_evals,
+                    ))
                 F = np.mean(forgetting_values)
 
                 # Forward Transfer (FT): normalized area between CL and baseline curves for tasks in range
@@ -226,21 +228,11 @@ def compute_metrics_for_task_range(
                         cl_task_curve = training[start_train_idx:end_train_idx]
 
                         # AUCi = (1/τ) * ∫ pi(t) dt, where τ is the task duration
-                        # Using trapezoidal rule for numerical integration
-                        if len(cl_task_curve) > 1:
-                            auc_cl = np.trapz(cl_task_curve) / len(cl_task_curve)
-                        else:
-                            auc_cl = cl_task_curve[0] if len(cl_task_curve) == 1 else 0.0
+                        auc_cl = task_auc(cl_task_curve)
 
                         # Calculate AUC for baseline method (task task_idx)
                         baseline_task_curve = baseline_data[seed][idx]  # Use idx for baseline_data indexing
-                        if baseline_task_curve is not None:
-                            if len(baseline_task_curve) > 1:
-                                auc_baseline = np.trapz(baseline_task_curve) / len(baseline_task_curve)
-                            else:
-                                auc_baseline = baseline_task_curve[0] if len(baseline_task_curve) == 1 else 0.0
-                        else:
-                            auc_baseline = 0.0
+                        auc_baseline = task_auc(baseline_task_curve) if baseline_task_curve is not None else 0.0
 
                         # Forward transfer for task task_idx
                         if auc_baseline > 0:
@@ -310,12 +302,15 @@ def compute_metrics_for_task_range(
                 final_performances = [eval_data[i][-1] for i in range(len(eval_data))]
                 AP = np.mean(final_performances)
 
-                # Forgetting (F): average drop from peak to final performance on tasks in range
+                # Forgetting (F)
                 forgetting_values = []
-                for i in range(len(eval_data)):
-                    peak_perf = max(eval_data[i])
-                    final_perf = np.mean(eval_data[i][-end_window_evals:])
-                    forgetting_values.append(peak_perf - final_perf)
+                for i, task_idx in enumerate(task_indices):
+                    task_curve = np.asarray(eval_data[i])
+                    training_end_idx = training_end_idx_for_task(task_idx, len(task_curve), n_train, seq_len)
+                    forgetting_values.append(compute_forgetting(
+                        task_curve, forgetting_formula, training_end_idx=training_end_idx,
+                        end_window_evals=end_window_evals,
+                    ))
                 F = np.mean(forgetting_values)
 
                 # Forward Transfer (FT): normalized area between CL and baseline curves for tasks in range
@@ -331,21 +326,11 @@ def compute_metrics_for_task_range(
                         cl_task_curve = training[start_train_idx:end_train_idx]
 
                         # AUCi = (1/τ) * ∫ pi(t) dt, where τ is the task duration
-                        # Using trapezoidal rule for numerical integration
-                        if len(cl_task_curve) > 1:
-                            auc_cl = np.trapz(cl_task_curve) / len(cl_task_curve)
-                        else:
-                            auc_cl = cl_task_curve[0] if len(cl_task_curve) == 1 else 0.0
+                        auc_cl = task_auc(cl_task_curve)
 
                         # Calculate AUC for baseline method (task task_idx)
                         baseline_task_curve = baseline_data[seed][idx]  # Use idx for baseline_data indexing
-                        if baseline_task_curve is not None:
-                            if len(baseline_task_curve) > 1:
-                                auc_baseline = np.trapz(baseline_task_curve) / len(baseline_task_curve)
-                            else:
-                                auc_baseline = baseline_task_curve[0] if len(baseline_task_curve) == 1 else 0.0
-                        else:
-                            auc_baseline = 0.0
+                        auc_baseline = task_auc(baseline_task_curve) if baseline_task_curve is not None else 0.0
 
                         # Forward transfer for task task_idx
                         if auc_baseline > 0:
@@ -398,6 +383,7 @@ def compare_strategies_on_task_range(
         task_range: Tuple[int, int],
         level: Optional[int] = None,
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 ) -> Dict[str, pd.DataFrame]:
     """
     Compare continual learning metrics across different strategies on a specific task range.
@@ -418,6 +404,7 @@ def compare_strategies_on_task_range(
             task_range=task_range,
             level=level,
             end_window_evals=end_window_evals,
+            forgetting_formula=forgetting_formula,
         )
         results[strategy] = df
     return results
@@ -441,6 +428,7 @@ def generate_task_range_comparison_table(
         task_range: Tuple[int, int],
         level: Optional[int] = None,
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 ) -> str:
     """
     Generate a LaTeX table comparing strategies on a specific task range.
@@ -459,6 +447,7 @@ def generate_task_range_comparison_table(
         task_range=task_range,
         level=level,
         end_window_evals=end_window_evals,
+        forgetting_formula=forgetting_formula,
     )
 
     # Assume we're working with a single method for now (can be extended)
@@ -555,6 +544,7 @@ def generate_ap_only_comparison_table(
         hard_range: Tuple[int, int],
         level: Optional[int] = None,
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 ) -> str:
     """
     Generate a LaTeX table comparing strategies on both medium and hard ranges,
@@ -574,6 +564,7 @@ def generate_ap_only_comparison_table(
         task_range=medium_range,
         level=level,
         end_window_evals=end_window_evals,
+        forgetting_formula=forgetting_formula,
     )
 
     hard_results = compare_strategies_on_task_range(
@@ -586,6 +577,7 @@ def generate_ap_only_comparison_table(
         task_range=hard_range,
         level=level,
         end_window_evals=end_window_evals,
+        forgetting_formula=forgetting_formula,
     )
 
     # Assume we're working with a single method for now (can be extended)
@@ -676,9 +668,7 @@ def main():
                        help="Random seeds")
     parser.add_argument("--level", type=int, default=None, 
                        help="Difficulty level (1, 2, 3)")
-    parser.add_argument("--end_window_evals", type=int, default=10, 
-                       help="Number of final evaluations for forgetting metric")
-    parser.add_argument("--output_prefix", type=str, default=None, 
+    parser.add_argument("--output_prefix", type=str, default=None,
                        help="Output file prefix for LaTeX tables")
 
     # Task range arguments
@@ -692,6 +682,7 @@ def main():
                        help="Specify which range to compare (medium or hard). If not specified, defaults to medium unless --compare_both is used.")
     parser.add_argument("--ap_only", action="store_true",
                        help="Generate a single table comparing only Average Performance (AP) with CI for both medium and hard ranges")
+    add_forgetting_args(parser, default="peak_final")
 
     args = parser.parse_args()
 
@@ -719,6 +710,7 @@ def main():
             hard_range=tuple(args.hard_range),
             level=args.level,
             end_window_evals=args.end_window_evals,
+            forgetting_formula=args.forgetting_formula,
         )
 
         print("\nLATEX TABLE (AP ONLY)")
@@ -765,6 +757,7 @@ def main():
             task_range=task_range,
             level=args.level,
             end_window_evals=args.end_window_evals,
+            forgetting_formula=args.forgetting_formula,
         )
 
         print("\nLATEX TABLE")
@@ -788,6 +781,7 @@ def main():
             task_range=task_range,
             level=args.level,
             end_window_evals=args.end_window_evals,
+            forgetting_formula=args.forgetting_formula,
         )
 
         print(f"\nRAW METRICS FOR {difficulty_name.upper()} TASKS")

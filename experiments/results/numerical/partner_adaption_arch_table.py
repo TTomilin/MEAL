@@ -17,14 +17,18 @@ python partner_adaption_arch_table.py --layout_names cramped_room coord_ring
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
 
-from experiments.results.plotting.utils import METHOD_DISPLAY_NAMES
+from experiments.results.plotting.utils import (
+    METHOD_DISPLAY_NAMES, load_series, mean_ci, build_task_matrix, add_forgetting_args,
+)
+from experiments.results.plotting.utils.metrics import (
+    compute_forgetting, training_end_idx_for_task,
+)
 
 # -----------------------------------------------------------------------------
 # Config defaults
@@ -47,27 +51,11 @@ LAYOUT_DISPLAY: Dict[str, str] = {
 # I/O helpers
 # -----------------------------------------------------------------------------
 
-def _load(fp: Path) -> np.ndarray:
-    if fp.suffix == ".json":
-        return np.array(json.loads(fp.read_text()), dtype=float)
-    if fp.suffix == ".npz":
-        return np.load(fp)["data"].astype(float)
-    raise ValueError(fp)
-
-
-def _mean_ci(vals: List[float]) -> Tuple[float, float]:
-    if not vals:
-        return np.nan, np.nan
-    m = float(np.mean(vals))
-    ci = 0.0 if len(vals) == 1 else 1.96 * float(np.std(vals, ddof=1)) / np.sqrt(len(vals))
-    return m, ci
-
-
 # -----------------------------------------------------------------------------
 # Metric computation
 # -----------------------------------------------------------------------------
 
-def _compute_seed(sd: Path, num_partners: int, end_window: int) -> Tuple[float, float]:
+def _compute_seed(sd: Path, num_partners: int, end_window_evals: int, forgetting_formula: str = "peak_final") -> Tuple[float, float]:
     """Return (AP, F) for one seed directory."""
     partner_files = sorted(sd.glob("eval_partner_*_soup.*"))
     if not partner_files:
@@ -75,21 +63,29 @@ def _compute_seed(sd: Path, num_partners: int, end_window: int) -> Tuple[float, 
 
     curves = []
     for fp in partner_files:
-        arr = _load(fp)
+        arr = load_series(fp)
         arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
         curves.append(arr)
 
-    L = max(len(c) for c in curves)
-    mat = np.vstack([np.pad(c, (0, L - len(c)), constant_values=c[-1]) for c in curves])
+    mat = build_task_matrix(curves, sanitize=False)  # already NaN/inf-cleaned above
     # shape: (num_partners, T)
 
     # Average Performance — mean across partners at the final time step
     ap = float(np.nanmean(mat[:, -1]))
 
-    # Forgetting — per partner: drop from best-ever to window-averaged final
-    fw = max(0, L - end_window)
-    f_vals = [max(float(np.nanmax(mat[i])) - float(np.nanmean(mat[i, fw:])), 0.0)
-              for i in range(mat.shape[0])]
+    # Forgetting — per partner.
+    training_fp = sd / "training_soup.json"
+    n_train = len(load_series(training_fp)) if training_fp.exists() else 0
+    num_partners = mat.shape[0]
+    f_vals = []
+    for i in range(num_partners):
+        task_curve = mat[i]
+        n_train_ref = n_train or len(task_curve)
+        training_end_idx = training_end_idx_for_task(i, len(task_curve), n_train_ref, num_partners)
+        f_vals.append(compute_forgetting(
+            task_curve, forgetting_formula, training_end_idx=training_end_idx,
+            end_window_evals=end_window_evals,
+        ))
     f = float(np.nanmean(f_vals))
 
     return ap, f
@@ -101,7 +97,8 @@ def compute_metrics(
     methods: List[str],
     num_partners: int,
     seeds: List[int],
-    end_window: int,
+    end_window_evals: int,
+    forgetting_formula: str = "peak_final",
 ) -> pd.DataFrame:
     """Return DataFrame with columns: Method, {arch}_AP, {arch}_AP_ci, {arch}_F, {arch}_F_ci."""
     rows = []
@@ -115,13 +112,13 @@ def compute_metrics(
                 if not sd.exists():
                     print(f"[warn] missing {sd}")
                     continue
-                ap, f = _compute_seed(sd, num_partners, end_window)
+                ap, f = _compute_seed(sd, num_partners, end_window_evals, forgetting_formula)
                 if not np.isnan(ap):
                     ap_seeds.append(ap)
                 if not np.isnan(f):
                     f_seeds.append(f)
-            row[f"{arch}_AP"],    row[f"{arch}_AP_ci"]  = _mean_ci(ap_seeds)
-            row[f"{arch}_F"],     row[f"{arch}_F_ci"]   = _mean_ci(f_seeds)
+            row[f"{arch}_AP"],    row[f"{arch}_AP_ci"]  = mean_ci(ap_seeds)
+            row[f"{arch}_F"],     row[f"{arch}_F_ci"]   = mean_ci(f_seeds)
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -333,11 +330,10 @@ if __name__ == "__main__":
     p.add_argument("--methods",      nargs="+", default=DEFAULT_METHODS)
     p.add_argument("--num_partners", type=int,  default=DEFAULT_PARTNERS)
     p.add_argument("--seeds",        type=int,  nargs="+", default=DEFAULT_SEEDS)
-    p.add_argument("--end_window",   type=int,  default=10,
-                   help="Final eval points averaged when computing forgetting")
     p.add_argument("--no_ci", action="store_true", help="Suppress ±CI in cells")
     p.add_argument("--wide", action="store_true",
                    help="Use wide 3-level header layout instead of vertical row-group layout")
+    add_forgetting_args(p, default="peak_final")
     args = p.parse_args()
 
     data_root = Path(args.data_root)
@@ -352,7 +348,8 @@ if __name__ == "__main__":
             methods=args.methods,
             num_partners=args.num_partners,
             seeds=args.seeds,
-            end_window=args.end_window,
+            end_window_evals=args.end_window_evals,
+            forgetting_formula=args.forgetting_formula,
         )
 
     show_ci = not args.no_ci

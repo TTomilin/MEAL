@@ -206,7 +206,7 @@ class VDN(OffPolicyAlgo):
         ]
 
         total_grad_steps = cfg.update_epochs * cfg.num_minibatches * cfg.num_updates
-        lr_scheduler = optax.linear_schedule(cfg.lr, 1e-10, total_grad_steps)
+        lr_scheduler = optax.linear_schedule(cfg.lr, cfg.lr_end, total_grad_steps)
         lr = lr_scheduler if cfg.anneal_lr else cfg.lr
         tx = optax.chain(
             optax.clip_by_global_norm(cfg.max_grad_norm),
@@ -214,6 +214,13 @@ class VDN(OffPolicyAlgo):
         )
         eps_scheduler = optax.linear_schedule(
             cfg.eps_start, cfg.eps_finish, cfg.eps_decay * cfg.num_updates
+        )
+        reward_shaping_horizon = cfg.reward_shaping_horizon
+        if reward_shaping_horizon is None:
+            reward_shaping_horizon = cfg.steps_per_task / 2
+        rew_shaping_anneal = optax.linear_schedule(
+            init_value=1., end_value=0.,
+            transition_steps=reward_shaping_horizon / (cfg.num_steps * cfg.num_envs),
         )
 
         rng, net_rng = jax.random.split(self.rng)
@@ -245,12 +252,13 @@ class VDN(OffPolicyAlgo):
         self.tx = tx
         self.lr_scheduler = lr_scheduler
         self.eps_scheduler = eps_scheduler
+        self.rew_shaping_anneal = rew_shaping_anneal
         self.train_state = train_state
         self.reset_switch, self.step_switch = build_reset_step_switch(self.envs)
 
         self.evaluate_env = make_vdn_eval_fn(
             self.reset_switch, self.step_switch, network, self.agents,
-            num_envs=cfg.num_envs, num_steps=self.env_adapter.max_steps, use_cnn=cfg.use_cnn,
+            num_envs=cfg.eval_num_episodes, num_steps=self.env_adapter.max_steps, use_cnn=cfg.use_cnn,
             eval_deterministic=cfg.eval_deterministic, seed=cfg.seed
         )
 
@@ -276,6 +284,7 @@ class VDN(OffPolicyAlgo):
         num_agents = self.num_agents
         eps_scheduler = self.eps_scheduler
         lr_scheduler = self.lr_scheduler
+        rew_shaping_anneal = self.rew_shaping_anneal
 
         N = cfg.num_steps * cfg.num_envs
         minibatch_size = N // cfg.num_minibatches
@@ -315,6 +324,8 @@ class VDN(OffPolicyAlgo):
                     shaped_reward = self.env_adapter.get_shaped_reward(infos, agents)
                     if shaped_reward is not None:
                         shaped_reward["__all__"] = vdn_batchify(shaped_reward, agents).sum(axis=0)
+                        anneal = rew_shaping_anneal(train_state.n_updates)
+                        shaped_reward = jax.tree.map(lambda y: y * anneal, shaped_reward)
                         rewards = jax.tree.map(lambda x, y: x + y, rewards, shaped_reward)
 
                     timestep = Timestep(
@@ -567,6 +578,10 @@ class VDN(OffPolicyAlgo):
                     shaped_reward = self.env_adapter.get_shaped_reward(infos, agents)
                     if shaped_reward is not None:
                         shaped_reward["__all__"] = vdn_batchify(shaped_reward, agents).sum(axis=0)
+                        # Memory collection runs post-training at the fixed final epsilon
+                        # (cfg.eps_finish above), so use the fully-annealed shaping weight too.
+                        anneal = rew_shaping_anneal(final_train_state.n_updates)
+                        shaped_reward = jax.tree.map(lambda y: y * anneal, shaped_reward)
                         rewards = jax.tree.map(lambda x, y: x + y, rewards, shaped_reward)
 
                     timestep = Timestep(

@@ -105,20 +105,26 @@ class OvercookedAdapter(EnvAdapter):
         return metrics
 
     def compute_reward(self, reward, info, agents, cfg, current_timestep, rew_shaping_anneal):
+        """"Shared" means fully shared: every term (delivery, and shaping when present) is
+        summed across agents and broadcast back to all of them. "Individual" means the
+        opposite: every term stays per-agent, nothing summed."""
         env_cfg = cfg.env
+        total_delivery_reward = sum(reward[agent] for agent in agents)
+        shared_delivery_rewards = {agent: total_delivery_reward for agent in agents}
+
         if env_cfg.sparse_rewards:
-            return reward
+            return shared_delivery_rewards
         elif env_cfg.individual_rewards:
             return jax.tree_util.tree_map(
                 lambda x, y: x + y * rew_shaping_anneal(current_timestep),
                 reward, info["shaped_reward"]
             )
         else:
-            total_delivery_reward = sum(reward[agent] for agent in agents)
-            shared_delivery_rewards = {agent: total_delivery_reward for agent in agents}
+            total_shaped_reward = sum(info["shaped_reward"][agent] for agent in agents)
+            shared_shaped_rewards = {agent: total_shaped_reward for agent in agents}
             return jax.tree_util.tree_map(
                 lambda x, y: x + y * rew_shaping_anneal(current_timestep),
-                shared_delivery_rewards, info["shaped_reward"]
+                shared_delivery_rewards, shared_shaped_rewards
             )
 
     def get_shaped_reward(self, infos, agents):

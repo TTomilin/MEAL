@@ -51,13 +51,13 @@ only what gets fetched differs:
 python -m experiments.results.download.eval \
   --project MEAL --output experiments/results/data \
   --algos ippo --cl_methods EWC MAS L2 FT AGEM \
-  --seq_length 10 --difficulty medium --num_agents 2 --seeds 1 2 3
+  --seq_length 20 --difficulty medium --num_agents 2 --seeds 1 2 3
 
 # Dense training curves
 python -m experiments.results.download.train \
   --project MEAL --output experiments/results/data \
   --algos ippo --cl_methods EWC MAS L2 FT AGEM \
-  --seq_length 10 --difficulty medium --num_agents 2 --seeds 1 2 3
+  --seq_length 20 --difficulty medium --num_agents 2 --seeds 1 2 3
 ```
 
 ### Resulting directory layout

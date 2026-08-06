@@ -6,37 +6,21 @@ This extends the original results_table.py to handle sparse_rewards and individu
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import List, Optional, Dict, Tuple
 
 import numpy as np
 import pandas as pd
 
-from experiments.results.plotting.utils import METHOD_DISPLAY_NAMES
+from experiments.results.plotting.utils import (
+    METHOD_DISPLAY_NAMES, load_series, mean_ci, build_task_matrix, task_auc,
+    add_numerical_data_args, add_forgetting_args,
+)
+from experiments.results.plotting.utils.metrics import (
+    compute_forgetting, training_end_idx_for_task,
+)
 
 ConfInt = Tuple[float, float]
-
-
-def load_series(fp: Path) -> List[float]:
-    """Load a time series from JSON file."""
-    if fp.suffix == ".json":
-        with fp.open() as f:
-            return json.load(f)
-    elif fp.suffix == ".npz":
-        return np.load(fp)["data"].tolist()
-    else:
-        raise ValueError(f"Unsupported file format: {fp.suffix}")
-
-
-def _mean_ci(series: List[float]) -> ConfInt:
-    if not series:
-        return np.nan, np.nan
-    mean = float(np.mean(series))
-    if len(series) == 1:
-        return mean, 0.0
-    ci = 1.96 * np.std(series, ddof=1) / np.sqrt(len(series))
-    return mean, float(ci)
 
 
 def get_experiment_folder(reward_setting: str, level: Optional[int] = None) -> str:
@@ -74,6 +58,7 @@ def compute_metrics_with_reward_settings(
         reward_setting: str = 'shared',
         level: Optional[int] = None,
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 ) -> pd.DataFrame:
     """
     Compute continual learning metrics for experiments with reward settings.
@@ -88,7 +73,8 @@ def compute_metrics_with_reward_settings(
         seeds: List of random seeds
         reward_setting: Reward setting ('shared', 'sparse', 'individual')
         level: Difficulty level (1, 2, 3) for shared setting, ignored for others
-        end_window_evals: Number of final evaluations to average for forgetting metric
+        end_window_evals: number of final eval points to average; only used by the 'peak_final' forgetting formula
+        forgetting_formula: 'weighted' or 'peak_final', see experiments/results/plotting/utils/metrics.py
 
     Returns:
         DataFrame with computed metrics
@@ -160,10 +146,7 @@ def compute_metrics_with_reward_settings(
                 print(f"[debug] all *_soup.* files: {[f.name for f in all_soup_files]}")
                 continue
             env_series = [load_series(f) for f in env_files]
-            L = max(len(s) for s in env_series)
-            env_mat = np.vstack([
-                np.pad(s, (0, L - len(s)), constant_values=s[-1]) for s in env_series
-            ])
+            env_mat = build_task_matrix(env_series, sanitize=False)
 
             # Average Performance (AP) – last eval of mean curve
             AP_seeds.append(env_mat.mean(axis=0)[-1])
@@ -182,21 +165,11 @@ def compute_metrics_with_reward_settings(
                 cl_task_curve = training[start_idx:end_idx]
 
                 # AUCi = (1/τ) * ∫ pi(t) dt, where τ is the task duration
-                # Using trapezoidal rule for numerical integration
-                if len(cl_task_curve) > 1:
-                    auc_cl = np.trapz(cl_task_curve) / len(cl_task_curve)
-                else:
-                    auc_cl = cl_task_curve[0] if len(cl_task_curve) == 1 else 0.0
+                auc_cl = task_auc(cl_task_curve)
 
                 # Calculate AUC for baseline method (task i)
                 baseline_task_curve = baseline_data[seed][i]
-                if baseline_task_curve is not None:
-                    if len(baseline_task_curve) > 1:
-                        auc_baseline = np.trapz(baseline_task_curve) / len(baseline_task_curve)
-                    else:
-                        auc_baseline = baseline_task_curve[0] if len(baseline_task_curve) == 1 else 0.0
-                else:
-                    auc_baseline = 0.0
+                auc_baseline = task_auc(baseline_task_curve) if baseline_task_curve is not None else 0.0
 
                 # Forward transfer for task i
                 if auc_baseline > 0:
@@ -207,32 +180,26 @@ def compute_metrics_with_reward_settings(
 
             FT_seeds.append(np.mean(ft_vals))
 
-            # Forgetting (F) – drop from peak to final performance
+            # Forgetting (F)
             f_vals = []
             for i in range(seq_len):
-                curve = env_mat[i, :]
-                peak = np.max(curve)
-                final = np.mean(curve[-end_window_evals:])
-                f_vals.append(peak - final)
+                task_curve = env_mat[i, :]
+                training_end_idx = training_end_idx_for_task(i, len(task_curve), n_train, seq_len)
+                f_vals.append(compute_forgetting(
+                    task_curve, forgetting_formula, training_end_idx=training_end_idx,
+                    end_window_evals=end_window_evals,
+                ))
             F_seeds.append(np.mean(f_vals))
 
             # Average AUC – average area under curve of evaluation curves across all tasks
-            auc_vals = []
-            for i in range(seq_len):
-                curve = env_mat[i, :]
-                # Calculate AUC using trapezoidal rule, normalized by curve length
-                if len(curve) > 1:
-                    auc_task = np.trapz(curve) / len(curve)
-                else:
-                    auc_task = curve[0] if len(curve) == 1 else 0.0
-                auc_vals.append(auc_task)
+            auc_vals = [task_auc(env_mat[i, :]) for i in range(seq_len)]
             AUC_seeds.append(np.mean(auc_vals))
 
         # Compute mean ± CI for this method
-        AP_mean, AP_ci = _mean_ci(AP_seeds)
-        F_mean, F_ci = _mean_ci(F_seeds)
-        FT_mean, FT_ci = _mean_ci(FT_seeds)
-        AUC_mean, AUC_ci = _mean_ci(AUC_seeds)
+        AP_mean, AP_ci = mean_ci(AP_seeds)
+        F_mean, F_ci = mean_ci(F_seeds)
+        FT_mean, FT_ci = mean_ci(FT_seeds)
+        AUC_mean, AUC_ci = mean_ci(AUC_seeds)
 
         rows.append({
             "Method": method,
@@ -261,6 +228,7 @@ def compare_reward_settings(
         reward_settings: List[str] = ['shared', 'sparse', 'individual'],
         level: Optional[int] = None,
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 ) -> pd.DataFrame:
     """
     Compare different reward settings across methods.
@@ -282,6 +250,7 @@ def compare_reward_settings(
             reward_setting=reward_setting,
             level=level,
             end_window_evals=end_window_evals,
+            forgetting_formula=forgetting_formula,
         )
         all_results.append(df)
 
@@ -310,6 +279,7 @@ def generate_reward_comparison_table(
         reward_settings: List[str] = ['shared', 'sparse', 'individual'],
         level: Optional[int] = None,
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 ) -> str:
     """
     Generate a LaTeX table comparing different reward settings.
@@ -328,6 +298,7 @@ def generate_reward_comparison_table(
         reward_settings=reward_settings,
         level=level,
         end_window_evals=end_window_evals,
+        forgetting_formula=forgetting_formula,
     )
 
     # Pretty‑print method names
@@ -399,25 +370,20 @@ def generate_reward_comparison_table(
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Generate results table with reward settings support")
-    p.add_argument("--data_root", required=True, help="Root directory containing experimental data")
-    p.add_argument("--algo", required=True, help="Algorithm name (e.g., ippo)")
+    add_numerical_data_args(p, seq_len_default=10, seeds_default=[1, 2, 3, 4, 5], required=True)
     p.add_argument("--arch", required=True, help="Architecture name")
     p.add_argument("--methods", nargs="+", required=True, help="List of CL methods")
-    p.add_argument("--strategy", required=True, help="Strategy name (e.g., generate)")
-    p.add_argument("--seq_len", type=int, default=10, help="Sequence length")
-    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5], help="Random seeds")
-    p.add_argument("--reward_settings", nargs="+", 
+    p.add_argument("--reward_settings", nargs="+",
                    choices=["shared", "sparse", "individual"],
                    default=["shared", "sparse", "individual"],
                    help="Reward settings to compare")
-    p.add_argument("--level", type=int, default=None, 
+    p.add_argument("--level", type=int, default=None,
                    help="Difficulty level (1, 2, 3) for shared setting")
-    p.add_argument("--end_window_evals", type=int, default=10,
-                   help="Number of final eval points to average for forgetting")
     p.add_argument("--single_setting", action="store_true",
                    help="Generate table for single reward setting instead of comparison")
     p.add_argument("--reward_setting", choices=["shared", "sparse", "individual"],
                    default="shared", help="Single reward setting to analyze")
+    add_forgetting_args(p, default="peak_final")
 
     args = p.parse_args()
 
@@ -434,6 +400,7 @@ if __name__ == "__main__":
             reward_setting=args.reward_setting,
             level=args.level,
             end_window_evals=args.end_window_evals,
+            forgetting_formula=args.forgetting_formula,
         )
 
         # Pretty‑print method names
@@ -497,6 +464,7 @@ if __name__ == "__main__":
             reward_settings=args.reward_settings,
             level=args.level,
             end_window_evals=args.end_window_evals,
+            forgetting_formula=args.forgetting_formula,
         )
 
         print(latex_table)

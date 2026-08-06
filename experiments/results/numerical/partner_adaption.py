@@ -3,42 +3,20 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import List
 
 import numpy as np
 import pandas as pd
 
-from experiments.results.plotting.utils import METHOD_DISPLAY_NAMES
-
-# -----------------------------------------------------------------------------
-# I/O helpers
-# -----------------------------------------------------------------------------
-
-def load_series(fp: Path) -> np.ndarray:
-    """Load a 1‑D float array from *.json or *.npz."""
-    if fp.suffix == ".json":
-        return np.array(json.loads(fp.read_text()), dtype=float)
-    if fp.suffix == ".npz":
-        return np.load(fp)["data"].astype(float)
-    raise ValueError(f"Unsupported file suffix: {fp.suffix}")
-
-
-# -----------------------------------------------------------------------------
-# Metric aggregation
-# -----------------------------------------------------------------------------
+from experiments.results.plotting.utils import (
+    METHOD_DISPLAY_NAMES, load_series, mean_ci, build_task_matrix, add_forgetting_args,
+)
+from experiments.results.plotting.utils.metrics import (
+    compute_forgetting, training_end_idx_for_task,
+)
 
 ConfInt = tuple[float, float]  # (mean, 95% CI)
-
-def _mean_ci(series: List[float]) -> ConfInt:
-    if not series:
-        return np.nan, np.nan
-    mean = float(np.mean(series))
-    if len(series) == 1:
-        return mean, 0.0
-    ci = 1.96 * np.std(series, ddof=1) / np.sqrt(len(series))
-    return mean, float(ci)
 
 
 def compute_metrics(
@@ -48,6 +26,7 @@ def compute_metrics(
         num_partners: int,
         seeds: List[int],
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 ) -> pd.DataFrame:
     """Compute partner adaptation metrics (Average Performance and Forgetting only)."""
     rows: list[dict[str, float]] = []
@@ -69,12 +48,14 @@ def compute_metrics(
                 print(f"[debug] seed directory does not exist: {sd}")
                 continue
 
-            # Load training curve (not used for metrics but kept for consistency)
+            # Load training curve. Gives the forgetting metric (below) the task/partner
+            # boundary location within each partner's own eval curve.
             training_fp = sd / "training_soup.json"
             if not training_fp.exists():
                 print(f"[warn] missing training_soup.json for {method} seed {seed}")
                 continue
             print(f"[debug] found training file for {method} seed {seed}: {training_fp}")
+            n_train = len(load_series(training_fp))
 
             # Load per-partner evaluation curves
             env_series = []
@@ -89,57 +70,29 @@ def compute_metrics(
                     # Create a default array of zeros with reasonable length
                     env_series.append(np.zeros(100))
 
-            # Replace NaN and inf/-inf values with zeros in env_series
-            processed_env_series = []
-            for i, series in enumerate(env_series):
-                # Check for NaN and inf/-inf values
-                has_nan = np.any(np.isnan(series))
-                has_inf = np.any(np.isinf(series))
-
-                if np.all(np.isnan(series)) and not has_inf:
-                    print(f"[warn] partner {i} series contains all NaN values for {method} seed {seed}, replacing with zeros")
-                    processed_series = np.zeros_like(series)
-                elif np.all(np.isinf(series)) and not has_nan:
-                    print(f"[warn] partner {i} series contains all inf/-inf values for {method} seed {seed}, replacing with zeros")
-                    processed_series = np.zeros_like(series)
-                elif np.all(np.isnan(series) | np.isinf(series)):
-                    print(f"[warn] partner {i} series contains all NaN/inf/-inf values for {method} seed {seed}, replacing with zeros")
-                    processed_series = np.zeros_like(series)
-                elif has_nan and has_inf:
-                    print(f"[warn] partner {i} series contains some NaN and inf/-inf values for {method} seed {seed}, replacing with zeros")
-                    processed_series = np.where(np.isnan(series) | np.isinf(series), 0.0, series)
-                elif has_nan:
-                    print(f"[warn] partner {i} series contains some NaN values for {method} seed {seed}, replacing NaN with zeros")
-                    processed_series = np.where(np.isnan(series), 0.0, series)
-                elif has_inf:
-                    print(f"[warn] partner {i} series contains some inf/-inf values for {method} seed {seed}, replacing with zeros")
-                    processed_series = np.where(np.isinf(series), 0.0, series)
-                else:
-                    processed_series = series
-                processed_env_series.append(processed_series)
-
-            # Pad all series to the same length
-            L = max(len(s) for s in processed_env_series)
-            env_mat = np.vstack([
-                np.pad(s, (0, L - len(s)), constant_values=s[-1]) for s in processed_env_series
-            ])
+            env_mat = build_task_matrix(
+                env_series,
+                sanitize_label_fn=lambda i: f"partner {i} series for {method} seed {seed}",
+            )
 
             # Average Performance (AP) – last eval of mean curve across all partners
             AP_seeds.append(np.nanmean(env_mat, axis=0)[-1])
 
-            # Forgetting (F) – drop from best‑ever to final performance across all partners
-            f_vals = []
+            # Forgetting (F), across all partners.
             final_idx = env_mat.shape[1] - 1
-            fw_start = max(0, final_idx - end_window_evals + 1)
+            f_vals = []
             for i in range(num_partners):
-                final_avg = np.nanmean(env_mat[i, fw_start : final_idx + 1])
-                best_perf = np.nanmax(env_mat[i, : final_idx + 1])
-                f_vals.append(max(best_perf - final_avg, 0.0))
+                task_curve = env_mat[i, : final_idx + 1]
+                training_end_idx = training_end_idx_for_task(i, len(task_curve), n_train, num_partners)
+                f_vals.append(compute_forgetting(
+                    task_curve, forgetting_formula, training_end_idx=training_end_idx,
+                    end_window_evals=end_window_evals,
+                ))
             F_seeds.append(float(np.nanmean(f_vals)))
 
         # Aggregate across seeds
-        A_mean, A_ci = _mean_ci(AP_seeds)
-        F_mean, F_ci = _mean_ci(F_seeds)
+        A_mean, A_ci = mean_ci(AP_seeds)
+        F_mean, F_ci = mean_ci(F_seeds)
 
         rows.append(
             {
@@ -176,12 +129,7 @@ if __name__ == "__main__":
     p.add_argument("--methods", nargs="+", required=True, help="CL methods to compare (e.g., ewc mas l2 ft)")
     p.add_argument("--num_partners", type=int, default=8, help="Number of partners (default: 8)")
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5], help="Random seeds to aggregate over")
-    p.add_argument(
-        "--end_window_evals",
-        type=int,
-        default=10,
-        help="How many final eval points to average for Forgetting calculation",
-    )
+    add_forgetting_args(p, default="peak_final")
     p.add_argument(
         "--confidence-intervals",
         action="store_true",
@@ -204,6 +152,7 @@ if __name__ == "__main__":
         num_partners=args.num_partners,
         seeds=args.seeds,
         end_window_evals=args.end_window_evals,
+        forgetting_formula=args.forgetting_formula,
     )
 
     # Pretty‑print method names

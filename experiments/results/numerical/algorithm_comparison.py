@@ -1,33 +1,21 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import List
 
 import numpy as np
 import pandas as pd
 
+from experiments.results.plotting.utils import (
+    load_series, mean_ci, build_task_matrix, add_numerical_data_args, add_forgetting_args,
+)
+from experiments.results.plotting.utils.metrics import (
+    compute_forgetting, training_end_idx_for_task,
+)
+
 # Type alias for confidence intervals
 ConfInt = tuple[float, float]
-
-
-def load_series(fp: Path) -> List[float]:
-    """Load a JSON series from file."""
-    with open(fp, "r") as f:
-        data = json.load(f)
-    return [float(x) for x in data]
-
-
-def _mean_ci(series: List[float]) -> ConfInt:
-    """Compute mean and 95% confidence interval."""
-    if not series:
-        return np.nan, np.nan
-    mean = float(np.mean(series))
-    if len(series) == 1:
-        return mean, 0.0
-    ci = 1.96 * np.std(series, ddof=1) / np.sqrt(len(series))
-    return mean, float(ci)
 
 
 def compute_metrics(
@@ -40,6 +28,7 @@ def compute_metrics(
     level: int,
     agents: int,
     end_window_evals: int = 10,
+    forgetting_formula: str = "peak_final",
 ) -> dict:
     """Compute AP and F for a single (algo, method, level) combination."""
     AP_seeds, F_seeds = [], []
@@ -68,26 +57,28 @@ def compute_metrics(
             continue
 
         env_series = [load_series(f) for f in env_files]
-        L = max(len(s) for s in env_series)
-        env_mat = np.vstack([
-            np.pad(s, (0, L - len(s)), constant_values=s[-1]) for s in env_series
-        ])
+        env_mat = build_task_matrix(env_series, sanitize=False)
 
         # Average Performance – mean of final value per environment
         AP_seeds.append(float(env_mat.mean(axis=0)[-1]))
 
-        # Forgetting – drop from best-ever to final performance
-        f_vals = []
+        # Forgetting
+        training_fp = sd / "training_soup.json"
+        n_train = len(load_series(training_fp)) if training_fp.exists() else 0
+
         final_idx = env_mat.shape[1] - 1
-        fw_start = max(0, final_idx - end_window_evals + 1)
+        f_vals = []
         for i in range(seq_len):
-            final_avg = float(np.nanmean(env_mat[i, fw_start: final_idx + 1]))
-            best_perf = float(np.nanmax(env_mat[i, : final_idx + 1]))
-            f_vals.append(max(best_perf - final_avg, 0.0))
+            task_curve = env_mat[i, : final_idx + 1]
+            training_end_idx = training_end_idx_for_task(i, len(task_curve), n_train, seq_len)
+            f_vals.append(compute_forgetting(
+                task_curve, forgetting_formula, training_end_idx=training_end_idx,
+                end_window_evals=end_window_evals,
+            ))
         F_seeds.append(float(np.nanmean(f_vals)))
 
-    A_mean, A_ci = _mean_ci(AP_seeds)
-    F_mean, F_ci = _mean_ci(F_seeds)
+    A_mean, A_ci = mean_ci(AP_seeds)
+    F_mean, F_ci = mean_ci(F_seeds)
 
     return {
         "AP": A_mean,
@@ -118,6 +109,7 @@ def build_table(
     level: int,
     agents: int,
     end_window_evals: int = 10,
+    forgetting_formula: str = "peak_final",
 ) -> pd.DataFrame:
     """
     Build a DataFrame for one difficulty level.
@@ -138,6 +130,7 @@ def build_table(
                 level=level,
                 agents=agents,
                 end_window_evals=end_window_evals,
+                forgetting_formula=forgetting_formula,
             )
 
     # Find best AP (max) and best F (min) per algorithm column
@@ -242,12 +235,7 @@ if __name__ == "__main__":
     p.add_argument("--num_agents", type=int, default=2, help="Number of agents")
     p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3], help="Seeds to include")
     p.add_argument("--levels", type=int, nargs="+", default=[1, 2, 3], help="Difficulty levels")
-    p.add_argument(
-        "--end_window_evals",
-        type=int,
-        default=10,
-        help="Number of final eval points to average for Forgetting",
-    )
+    add_forgetting_args(p, default="peak_final")
     args = p.parse_args()
 
     print(f"Algorithms : {args.algorithms}")
@@ -272,6 +260,7 @@ if __name__ == "__main__":
             level=level,
             agents=args.num_agents,
             end_window_evals=args.end_window_evals,
+            forgetting_formula=args.forgetting_formula,
         )
 
         print(df.to_string(index=False))

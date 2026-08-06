@@ -8,8 +8,8 @@ Given:
   • `seq_len`  – number of distinct tasks in one sequence;
   • `repeat_sequence` – how many times that sequence was run back‑to‑back;
 
-…this script chops the long trace into `seq_len × repeat_sequence` equal
-segments, concatenates all occurrences of *Task i* in time order, and
+…this script chops the long trace into `seq_len×repeat_sequence` equal
+segments, concatenates all occurrences of *Task_i* in time order, and
 computes a cumulative‑average curve for that concatenated trace.  The
 result is exactly **`seq_len`** sub‑plots (2×5 when `seq_len==10`).
 
