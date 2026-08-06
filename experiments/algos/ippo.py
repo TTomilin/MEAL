@@ -132,7 +132,9 @@ class IPPO(OnPolicyAlgo):
             reset_rng = jax.random.split(env_rng, cfg.num_envs)
             obsv, env_state = jax.vmap(lambda k: reset_switch(k, jnp.int32(env_idx)))(reset_rng)
 
-            reward_shaping_horizon = cfg.steps_per_task / 2
+            reward_shaping_horizon = cfg.reward_shaping_horizon
+            if reward_shaping_horizon is None:
+                reward_shaping_horizon = cfg.steps_per_task / 2
             rew_shaping_anneal = optax.linear_schedule(
                 init_value=1., end_value=0., transition_steps=reward_shaping_horizon
             )

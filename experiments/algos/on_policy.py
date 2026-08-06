@@ -4,6 +4,7 @@ What's genuinely different per-algorithm (network forward pass, Transition
 shape, loss function) stays in each concrete class's own `build_train_on_environment`.
 """
 from dataclasses import dataclass
+from typing import Optional
 
 import jax
 import jax.numpy as jnp
@@ -25,6 +26,7 @@ class OnPolicyConfig(BaseConfig):
     num_envs: int = 2048
     num_steps: int = 400
     steps_per_task: float = 1e8
+    reward_shaping_horizon: Optional[float] = None
     update_epochs: int = 8
     num_minibatches: int = 16
     gamma: float = 0.99
