@@ -48,7 +48,7 @@ is set (which forces `ft`, i.e. train one task in isolation with no CL machinery
 - ER-ACE specific: `--er-ace-coef` (default `1.0`)
 - PackNet specific: `--train-epochs` (default `8`), `--finetune-epochs` (default `2`),
   `--finetune-timesteps` (default `1e7`) — PackNet trains then prunes-and-finetunes each task
-  in two phases; not supported with `--encoder cnn`, and not supported at all for VDN/QMIX.
+  in two phases
 
 ## Network architecture
 
@@ -61,7 +61,7 @@ is set (which forces `ft`, i.e. train one task in isolation with no CL machinery
 - `--activation <str>` (default `relu`)
 - `--use-task-id` / `--use-multihead` (both default on) — task-conditioning: append a
   task-id one-hot to observations, and/or give each task its own output head.
-- `--shared-backbone` (IPPO only, default off) — share the actor/critic trunk instead of
+- `--shared-backbone` (default off) — share the actor/critic trunk instead of
   separate networks.
 - `--regularize-critic` (IPPO/MAPPO/HAPPO, default off) — include critic params in the
   EWC/MAS/L2 penalty (default is actor-only).
@@ -93,8 +93,7 @@ everywhere):
   training RNG stream.
 - `--record-video` (default **on**) / `--video-length <int>` (default `250`) — render an mp4 of
   the trained policy per task at the end of its training into `runs/<run_name>/`, and upload it
-  to wandb if `--use-wandb` is on. VDN/QMIX video is Q-value-argmax based (verified only
-  against Overcooked).
+  to wandb if `--use-wandb` is on. 
 - `--log-interval <int>` (default `5`) — how often (in update steps)
   to compute/log metrics; TensorBoard scalars only actually hit disk every `flush_secs`
   (tensorboardX default 120s) or on process exit — for continuous mid-run wandb sync on short
