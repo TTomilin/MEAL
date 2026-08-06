@@ -4,10 +4,10 @@ Unified environment visualizer for MEAL CL benchmarks.
 Supported environments: overcooked, mpe, smax, jaxnav
 
 Usage (from repo root):
-    python scripts/visualize_env.py overcooked
-    python scripts/visualize_env.py mpe --output both --num_agents 3
-    python scripts/visualize_env.py smax --num_allies 4 --num_enemies 4
-    python scripts/visualize_env.py jaxnav --map_dim 9 --output image
+    python tools/visualize_env.py overcooked
+    python tools/visualize_env.py mpe --output both --num_agents 3
+    python tools/visualize_env.py smax --num_allies 4 --num_enemies 4
+    python tools/visualize_env.py jaxnav --map_dim 9 --output image
 
 Output (--output):
     gif   – animated GIF per task (default)
@@ -19,10 +19,8 @@ import argparse
 import os
 import sys
 
-_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
-_REPO_ROOT = os.path.dirname(_SCRIPTS_DIR)
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _REPO_ROOT)
-sys.path.insert(0, _SCRIPTS_DIR)
 
 import matplotlib
 matplotlib.use("Agg")
@@ -97,9 +95,31 @@ def run_overcooked(args):
 # MPE
 # ---------------------------------------------------------------------------
 
+def _rollout_random_mpe(env, num_steps: int, seed: int = 0) -> list:
+    """Run a random-policy MPE episode, return list of states."""
+    key = jax.random.PRNGKey(seed)
+    key, reset_key = jax.random.split(key)
+    obs, state = env.reset(reset_key)
+    state_seq = [state]
+
+    action_dim = env.action_space().n
+    for _ in range(num_steps - 1):
+        key, act_key, step_key = jax.random.split(key, 3)
+        act_keys = jax.random.split(act_key, env.num_agents)
+        actions = {
+            a: jax.random.randint(act_keys[i], shape=(), minval=0, maxval=action_dim)
+            for i, a in enumerate(env.agents)
+        }
+        obs, state, reward, done, info = env.step(step_key, state, actions)
+        state_seq.append(state)
+        if done.get("__all__", False):
+            break
+
+    return state_seq
+
+
 def run_mpe(args):
-    from visualize_mpe import MPEObstacleVisualizer, rollout_random
-    from meal.env.mpe import make_mpe_sequence
+    from meal.env.mpe import MPEObstacleVisualizer, make_mpe_sequence
 
     os.makedirs(args.out_dir, exist_ok=True)
     print(
@@ -120,7 +140,7 @@ def run_mpe(args):
 
     for task_idx, env in enumerate(envs):
         print(f"  Task {task_idx:02d}: {env.map_id}")
-        state_seq = rollout_random(env, num_steps=args.num_steps, seed=args.seed + task_idx)
+        state_seq = _rollout_random_mpe(env, num_steps=args.num_steps, seed=args.seed + task_idx)
 
         viz = MPEObstacleVisualizer(env=env, state_seq=state_seq)
         stem = os.path.join(args.out_dir, f"task_{task_idx:02d}_{env.map_id}")
@@ -140,9 +160,33 @@ def run_mpe(args):
 # SMAX
 # ---------------------------------------------------------------------------
 
+def _rollout_random_smax(env, num_steps: int, seed: int = 0) -> list:
+    """Run an episode with random ally actions, return list of inner SMAX states."""
+    key = jax.random.PRNGKey(seed)
+    key, reset_key = jax.random.split(key)
+    obs, state = env.reset(reset_key)
+
+    # state is EnemySMAX State(state=smax_state, enemy_policy_state=...)
+    smax_states = [state.state]
+
+    action_n = env.action_space(env.agents[0]).n
+    for _ in range(num_steps - 1):
+        key, act_key, step_key = jax.random.split(key, 3)
+        act_keys = jax.random.split(act_key, env.num_agents)
+        actions = {
+            a: jax.random.randint(act_keys[i], shape=(), minval=0, maxval=action_n)
+            for i, a in enumerate(env.agents)
+        }
+        obs, state, reward, done, info = env.step(step_key, state, actions)
+        smax_states.append(state.state)
+        if done.get("__all__", False):
+            break
+
+    return smax_states
+
+
 def run_smax(args):
-    from visualize_smax import SMAXVisualizer, rollout_random_allies
-    from meal.env.smax import make_smax_sequence
+    from meal.env.smax import SMAXVisualizer, make_smax_sequence
 
     os.makedirs(args.out_dir, exist_ok=True)
     print(
@@ -160,7 +204,7 @@ def run_smax(args):
 
     for task_idx, env in enumerate(envs):
         print(f"  Task {task_idx:02d}: {env.map_id}")
-        smax_states = rollout_random_allies(env, num_steps=args.num_steps, seed=args.seed + task_idx)
+        smax_states = _rollout_random_smax(env, num_steps=args.num_steps, seed=args.seed + task_idx)
 
         viz = SMAXVisualizer(env=env, state_seq=smax_states, map_id=env.map_id)
         stem = os.path.join(args.out_dir, f"task_{task_idx:02d}_{env.map_id}")

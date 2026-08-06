@@ -3,12 +3,11 @@
 # Figures 3 & 4 (soup delivery / forgetting / forward transfer per method,
 # per difficulty level).
 #
-# Sweeps 8 CL methods x 3 difficulty levels x 5 seeds = 120 IPPO runs on
+# Sweeps 8 CL methods x 3 difficulty levels x 10 seeds = 240 IPPO runs on
 # Overcooked, 20-task sequences. All PPO/network hyperparameters are left at
 # their defaults, which already match paper Table 6 (steps_per_task=1e8,
 # num_envs=2048, num_steps=400, update_epochs=8, num_minibatches=16, ...);
-# reg_coef is likewise left unset so it auto-resolves to the paper's values
-# (EWC 1e11, MAS 1e9, L2 1e7 -- see resolve_reg_coef in experiments/algo_common.py).
+# reg_coef is auto-resolved to the paper's values in experiments/algo_common.py.
 #
 # "EWC"/"MAS" (Table 2) vs "Online EWC"/"Online MAS" differ only in
 # --importance-mode: multi (cumulative Fisher/importance, the classic
@@ -21,7 +20,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 source ./_common.sh
 
 difficulties=(easy medium hard)
-seeds=(1 2 3 4 5)
+seeds=(1 2 3 4 5 6 7 8 9 10)
 
 # name, extra CLI flags (reg_coef intentionally omitted -- auto-resolved)
 methods=(

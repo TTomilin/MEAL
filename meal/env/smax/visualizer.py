@@ -4,9 +4,10 @@ Blue circles = ally units (label = unit type shorthand).
 Red circles  = enemy units (label = unit type shorthand).
 Unit types: m=marine, M=marauder, s=stalker, Z=zealot, z=zergling, h=hydralisk
 
-Promoted from the standalone `scripts/visualize_smax.py` tool so it can be
-reused for trained-policy video recording during training (see
-`experiments/envs/smax.py::SMAXAdapter.build_visualizer`).
+Lives here (rather than under `tools/`) so it's reusable both for
+trained-policy video recording during training (see
+`experiments/envs/smax.py::SMAXAdapter.build_visualizer`) and for
+random-policy rendering (`tools/visualize_env.py`).
 
 Consumes a sequence of *inner* SMAX states (i.e. already unwrapped past the
 `HeuristicEnemySMAX`/`LogWrapper` layers -- `state.unit_positions` etc, not

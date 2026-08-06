@@ -1,9 +1,10 @@
 """Matplotlib-based visualiser for MPESpreadEnv.
 
 Renders agents (solid circles), landmarks (X markers), and obstacles
-(gray filled circles with outline) at each step. Promoted from the standalone
-`scripts/visualize_mpe.py` tool so it can be reused for trained-policy video
-recording during training (see `experiments/envs/mpe.py::MPEAdapter.build_visualizer`).
+(gray filled circles with outline) at each step. Lives here (rather than under
+`tools/`) so it's reusable both for trained-policy video recording during
+training (see `experiments/envs/mpe.py::MPEAdapter.build_visualizer`) and for
+random-policy rendering (`tools/visualize_env.py`).
 """
 import matplotlib
 import numpy as np

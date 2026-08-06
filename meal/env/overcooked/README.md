@@ -44,6 +44,7 @@ path), and retries with a fresh random seed until a valid layout is found.
 | Flag | Default | Effect |
 |---|---|---|
 | `--env.difficulty` | `easy` | One of `easy`/`medium`/`hard`/`extreme`. Controls grid size, wall density, number of pots/stations, and (see below) partial-observability view size and non-stationarity strengths. See `difficulty_config.py` for exact numbers per level. |
+| `--env.curriculum` | `False` | Overrides `--env.difficulty`: splits the sequence equally across easy/medium/hard, in ascending order (5 easy, then 5 medium, then 5 hard for a 15-task sequence — remainder tasks go to easy first, then medium). Passes `strategy="curriculum"` to the generator instead of `"generate"`. |
 | `--num-agents` (top-level, shared) | 2 | Team size. |
 | `--repeat-sequence` (top-level, shared) | 1 | Replay the whole generated task sequence back-to-back this many times. |
 | `--max-episode-steps` (top-level, shared) | 400 | Episode length. |

@@ -1,7 +1,11 @@
 """
 Continual Learning Sequence Example
 
-This example demonstrates how to generate and use sequences of environments for continual learning.
+This example demonstrates how to generate and use sequences of environments for continual learning,
+using the 'curriculum' strategy: tasks are drawn in ascending difficulty (easy -> medium -> hard)
+rather than uniformly at random. This is the same curriculum ordering exposed on the training CLI
+via `--env.curriculum` (see `experiments/envs/overcooked.py` / `meal/env/overcooked/README.md`),
+just built here directly through the library API (`meal.make_sequence`) instead of `experiments/train.py`.
 """
 import os
 

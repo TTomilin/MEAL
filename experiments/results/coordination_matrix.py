@@ -13,12 +13,12 @@ checkpoints can no longer coordinate with the partner they trained with
 on task i — coordination forgetting, invisible to the standard metric F.
 
 Usage:
-    python scripts/coordination_matrix.py \\
+    python experiments/results/coordination_matrix.py \\
         --run_dir checkpoints/overcooked/EWC/ippo_ewc_easy_2agents_... \\
         --num_envs 64 --num_steps 400 --seed 0
 
     # compare multiple runs side-by-side
-    python scripts/coordination_matrix.py \\
+    python experiments/results/coordination_matrix.py \\
         --run_dir checkpoints/overcooked/EWC/run_A \\
                   checkpoints/overcooked/FT/run_B \\
         --labels EWC FT
@@ -514,10 +514,10 @@ if __name__ == "__main__":
         epilog="""
 Examples:
   # Single run
-  python scripts/coordination_matrix.py --run_dir checkpoints/overcooked/EWC/run_A
+  python experiments/results/coordination_matrix.py --run_dir checkpoints/overcooked/EWC/run_A
 
   # Batch: aggregate over seeds, all methods × difficulties
-  python scripts/coordination_matrix.py \\
+  python experiments/results/coordination_matrix.py \\
       --checkpoint_root checkpoints/overcooked \\
       --groups "EWC:EWC:2026-03-28_20-29" "Online_EWC:EWC:2026-03-28_20-31" "FT:FT" "L2:L2" "MAS:MAS" \\
       --difficulties easy medium hard \\

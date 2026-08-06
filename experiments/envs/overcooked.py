@@ -17,6 +17,7 @@ from meal.wrappers.logging import LogWrapper
 class OvercookedEnvConfig:
     env_name: str = "overcooked"  # internal env id; derived from partial_observability below
     difficulty: Optional[str] = "easy"
+    curriculum: bool = False  # split the sequence equally across easy/medium/hard, ascending; overrides difficulty
     random_reset: bool = False
     complementary_restrictions: bool = False  # one agent can't pick up onions, other can't pick up plates
     separated_agents: bool = False  # only accept layouts where agents occupy different connected regions
@@ -57,6 +58,7 @@ class OvercookedAdapter(EnvAdapter):
         envs = make_sequence(
             sequence_length=cfg.seq_length,
             env_id=env_cfg.env_name,
+            strategy="curriculum" if env_cfg.curriculum else "generate",
             seed=cfg.seed,
             num_agents=cfg.num_agents if cfg.num_agents is not None else 2,
             max_steps=self.max_steps,
@@ -86,7 +88,7 @@ class OvercookedAdapter(EnvAdapter):
         self.max_soup_vals = self.max_soup_vals[idx:idx + 1]
 
     def run_name_tag(self, cfg) -> str:
-        return f"{cfg.env.difficulty}"
+        return "curriculum" if cfg.env.curriculum else f"{cfg.env.difficulty}"
 
     def make_eval_fn(self, cl, reset_switch, step_switch, network, agents, num_envs,
                      num_steps, use_cnn, eval_deterministic, seed):

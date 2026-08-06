@@ -17,7 +17,7 @@ conda run -n meal python examples/<script>.py
 | --- | --- |
 | [`basic_usage.py`](basic_usage.py) | Minimal gym-style loop: `meal.make_env('overcooked')`, reset, sample random actions, step, print rewards. No rendering — the smallest possible starting point. |
 | [`four_agents.py`](four_agents.py) | Scaling to 4 agents at `difficulty='hard'`. Runs a 100-step random-action episode and renders it to `gifs/4_agents_hard.gif`. |
-| [`cl_sequence.py`](cl_sequence.py) | Continual-learning sequences via `meal.make_sequence(strategy='curriculum')`: generates 6 Overcooked tasks of increasing difficulty, evaluates each with a few random-action episodes, and stitches all of them into one GIF. |
+| [`cl_sequence.py`](cl_sequence.py) | Continual-learning sequences via `meal.make_sequence(strategy='curriculum')`: generates 6 Overcooked tasks of increasing difficulty, evaluates each with a few random-action episodes, and stitches all of them into one GIF. Same curriculum ordering as `--env.curriculum` on the training CLI (`experiments/train.py`), built here through the library API directly. |
 | [`partial_observability.py`](partial_observability.py) | `OvercookedPO` vs. full-observability `Overcooked` on the same layout: prints the (much smaller) PO observation shape, then renders a GIF with each agent's current visible window tinted in that agent's colour (`OvercookedVisualizerPO` + `env.get_agent_view_masks`). Higher `difficulty` → smaller field of view. |
 | [`forced_coordination.py`](forced_coordination.py) | Two ways to force role specialisation: (1) the `forced_coord` preset layout, where a wall physically separates ingredients/pot from plates/goal, and (2) `agent_restrictions` on the ordinary `cramped_room` layout, which forbids one agent from touching plates and the other from touching onions even though nothing physically stops them. Renders one GIF per condition. |
 | [`stochastic_transitions.py`](stochastic_transitions.py) | The two transition-noise wrappers, isolated on bare rooms with a single agent following a fixed scripted path (no cooking, no randomness in the actions themselves) so the effect is unmistakable: `SlipperyTiles` walking straight across a corridor (baseline vs. slippery, side by side, `stochastic_transitions_slippery.gif`) and `StickyActions` walking a closed square loop (baseline vs. sticky, side by side, `stochastic_transitions_sticky.gif` - sticky actions overshoot each turn). |
@@ -35,7 +35,5 @@ conda run -n meal python examples/<script>.py
   and `imageio` are installed (`pip install -e ".[viz]"`) and that
   `meal/visualization/renderer_config.py` points at a valid renderer version.
 - For more control (output format, task count, custom agent/landmark/unit
-  counts, PNG-only output, etc.) see the dev-facing
-  `scripts/visualize_env.py`, `scripts/visualize_mpe.py`, and
-  `scripts/visualize_smax.py`, which these examples deliberately keep
-  simpler than.
+  counts, PNG-only output, etc.) see the dev-facing `tools/visualize_env.py`,
+  which these examples deliberately keep simpler than.

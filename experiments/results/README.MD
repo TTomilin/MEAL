@@ -149,3 +149,15 @@ numbers instead of figures:
 | `lambda_ablation` | Ablation over the λ weighting parameter in the curve-based forgetting metric. |
 | `compare_variants` | General variant-comparison table. |
 | `partner_adaption`, `partner_adaption_arch_table` | Partner-adaptation (BR) result tables. |
+
+## 4. Coordination matrix
+
+[`coordination_matrix.py`](coordination_matrix.py) sits outside the download → plot/numerical
+pipeline above: instead of reading downloaded W&B data, it loads a run's saved checkpoints
+directly (flax params under `checkpoints/<env>/<cl_method>/<run_name>/`) and cross-plays every
+task-`i`-trained policy against every task-`j` layout to build a coordination matrix, evaluating
+actual trained behavior rather than logged metrics.
+
+```bash
+python experiments/results/coordination_matrix.py --run_dir checkpoints/overcooked/EWC/run_A
+```
