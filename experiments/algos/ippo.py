@@ -103,7 +103,7 @@ class IPPO(OnPolicyAlgo):
         self.reset_switch, self.step_switch = build_reset_step_switch(self.envs)
 
         self.evaluate_env = self.env_adapter.make_eval_fn(
-            self.cl, self.reset_switch, self.step_switch, network, self.agents, cfg.seq_length,
+            self.cl, self.reset_switch, self.step_switch, network, self.agents, cfg.eval_num_episodes,
             cfg.num_steps, cfg.use_cnn, cfg.eval_deterministic, cfg.seed
         )
         self.importance_fn = self.cl.make_importance_fn(

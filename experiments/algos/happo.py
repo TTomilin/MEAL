@@ -189,7 +189,7 @@ class HAPPO(OnPolicyAlgo):
 
         self.evaluate_env = self.env_adapter.make_eval_fn(
             self.cl, self.reset_switch, self.step_switch, actor_wrapper, self.agents,
-            cfg.num_envs, cfg.num_steps, cfg.use_cnn, cfg.eval_deterministic, cfg.seed,
+            cfg.eval_num_episodes, cfg.num_steps, cfg.use_cnn, cfg.eval_deterministic, cfg.seed,
         )
         self.importance_fn = self.cl.make_importance_fn(
             self.reset_switch, self.step_switch, actor_wrapper, self.agents, cfg.use_cnn,
