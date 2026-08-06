@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from experiments.results.plotting.utils import METHOD_DISPLAY_NAMES
+from experiments.results.plotting.utils.metrics import compute_forgetting
 
 # -----------------------------------------------------------------------------
 # I/O helpers
@@ -39,75 +40,6 @@ def _mean_ci(series: List[float]) -> ConfInt:
     return mean, float(ci)
 
 
-def _calculate_curve_based_forgetting(task_curve: np.ndarray, training_end_idx: int = None, lambda_decay: float = 2.0) -> float:
-    """
-    Calculate normalized forgetting where 0 = no forgetting and 1 = complete forgetting.
-
-    Forgetting is normalized such that:
-    - 0 means performance never drops below the end-of-training performance
-    - 1 means performance drops to 0 right after training finishes and stays there
-
-    Args:
-        task_curve: Performance curve for a single task over time
-        training_end_idx: Index where training for this task ends. If None, uses the last index.
-
-    Returns:
-        Normalized forgetting score between 0 and 1
-    """
-    if len(task_curve) <= 1:
-        return 0.0
-
-    # Determine the end-of-training index
-    if training_end_idx is None or training_end_idx >= len(task_curve):
-        training_end_idx = len(task_curve) - 1
-
-    # s*_i: performance at τᵢ (end of training for task i)
-    end_of_training_performance = task_curve[training_end_idx]
-
-    if end_of_training_performance < 1e-8:
-        return 0.0
-
-    # t > τᵢ strictly — everything after the training boundary
-    if training_end_idx >= len(task_curve) - 1:
-        return 0.0
-
-    post_training_curve = task_curve[training_end_idx + 1:]
-
-    # Calculate forgetting at each time step after training ends
-    # Forgetting = max(0, end_of_training_performance - current_performance)
-    forgetting_at_each_step = np.maximum(end_of_training_performance - post_training_curve, 0.0)
-
-    # Normalize forgetting by end_of_training_performance to get values between 0 and 1
-    # This makes 1.0 represent complete forgetting (performance drops to 0)
-    normalized_forgetting_at_each_step = forgetting_at_each_step / end_of_training_performance
-
-    # Weight forgetting by how early it occurs (earlier forgetting gets higher weight)
-    # Use exponential decay: weight = exp(-λ * (t / T)) where t is time step, T is total time
-    # lambda_decay: Higher values penalize early forgetting more (passed as parameter)
-    time_steps = np.arange(len(post_training_curve))
-    total_time = len(post_training_curve) - 1
-
-    if total_time > 0:
-        # Normalize time to [0, 1] and apply exponential decay
-        normalized_time = time_steps / total_time
-        weights = np.exp(-lambda_decay * normalized_time)
-    else:
-        weights = np.ones(len(post_training_curve))
-
-    # Calculate weighted normalized forgetting
-    weighted_forgetting = normalized_forgetting_at_each_step * weights
-
-    # Calculate the weighted average forgetting score
-    # Use the sum of weights to properly normalize the weighted average
-    if len(weighted_forgetting) > 0 and np.sum(weights) > 0:
-        curve_based_forgetting = np.sum(weighted_forgetting) / np.sum(weights)
-    else:
-        curve_based_forgetting = 0.0
-
-    # Ensure the result is between 0 and 1
-    return float(np.clip(curve_based_forgetting, 0.0, 1.0))
-
-
 def compute_metrics(
         data_root: Path,
         algo: str,
@@ -120,6 +52,7 @@ def compute_metrics(
         agents: int = 2,
         lambda_decay: float = 2.0,
         truncate_tasks: int = None,
+        forgetting_formula: str = "weighted",
 ) -> pd.DataFrame:
     rows: list[dict[str, float]] = []
 
@@ -262,7 +195,10 @@ def compute_metrics(
                     training_end_idx = len(task_curve) - 1
 
                 if any(task_curve > 0.0):
-                    curve_forgetting = _calculate_curve_based_forgetting(task_curve, training_end_idx, lambda_decay=lambda_decay)
+                    curve_forgetting = compute_forgetting(
+                        task_curve, forgetting_formula, training_end_idx=training_end_idx,
+                        end_window_evals=end_window_evals, lambda_decay=lambda_decay,
+                    )
                     f_vals.append(curve_forgetting)
 
             F_seeds.append(float(np.nanmean(f_vals)))
@@ -412,6 +348,14 @@ if __name__ == "__main__":
         default=None,
         help="Only use the first N tasks from the sequence (e.g. use 10 from a 20-task run).",
     )
+    p.add_argument(
+        "--forgetting_formula",
+        choices=["weighted", "peak_final"],
+        default="weighted",
+        help="Forgetting formula. 'weighted' (default) is normalized and decay-weighted."
+             "'peak_final' is the unnormalized peak-minus-final drop (see experiments/results/"
+             "plotting/utils/metrics.py).",
+    )
     args = p.parse_args()
 
     # Handle single level or all levels
@@ -428,6 +372,7 @@ if __name__ == "__main__":
             level=args.level,
             agents=args.agents,
             truncate_tasks=args.truncate_tasks,
+            forgetting_formula=args.forgetting_formula,
         )
         # Pretty‑print method names
         df["Method"] = df["Method"].replace(METHOD_DISPLAY_NAMES)
@@ -445,6 +390,7 @@ if __name__ == "__main__":
                 end_window_evals=args.end_window_evals,
                 level=level,
                 truncate_tasks=args.truncate_tasks,
+                forgetting_formula=args.forgetting_formula,
             )
             # Pretty‑print method names
             level_df["Method"] = level_df["Method"].replace(METHOD_DISPLAY_NAMES)

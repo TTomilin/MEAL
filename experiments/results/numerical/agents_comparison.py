@@ -8,6 +8,10 @@ from typing import List
 import numpy as np
 import pandas as pd
 
+from experiments.results.plotting.utils.metrics import (
+    compute_forgetting, training_end_idx_for_task,
+)
+
 # Type alias for confidence intervals
 ConfInt = tuple[float, float]
 
@@ -41,6 +45,7 @@ def compute_metrics(
         num_agents: int,
         end_window_evals: int = 10,
         level: int = 1,
+        forgetting_formula: str = "peak_final",
 ) -> dict:
     """Compute metrics for a single algorithm/method/num_agents combination."""
     AP_seeds, F_seeds, FT_seeds = [], [], []
@@ -224,14 +229,21 @@ def compute_metrics(
 
             FT_seeds.append(float(np.nanmean(ft_vals)) if ft_vals else np.nan)
 
-        # Forgetting (F) – drop from best‑ever to final performance
+        # Forgetting
+        forgetting_train_fp = sd / f"training_{training_metric}.json" if training_metric else None
+        n_train_for_forgetting = None
+        if forgetting_train_fp is not None and forgetting_train_fp.exists():
+            n_train_for_forgetting = len(load_series(forgetting_train_fp))
+
         f_vals = []
-        final_idx = env_mat.shape[1] - 1
-        fw_start = max(0, final_idx - end_window_evals + 1)
-        for i in range(env_mat.shape[0]):
-            final_avg = np.nanmean(env_mat[i, fw_start : final_idx + 1])
-            best_perf = np.nanmax(env_mat[i, : final_idx + 1])
-            f_vals.append(max(best_perf - final_avg, 0.0))
+        for task_pos, i in enumerate(present_task_ids):
+            task_curve = env_mat[task_pos, :]
+            n_train_ref = n_train_for_forgetting or len(task_curve)
+            training_end_idx = training_end_idx_for_task(i, len(task_curve), n_train_ref, seq_len)
+            f_vals.append(compute_forgetting(
+                task_curve, forgetting_formula, training_end_idx=training_end_idx,
+                end_window_evals=end_window_evals,
+            ))
         F_seeds.append(float(np.nanmean(f_vals)))
 
     # Aggregate across seeds
@@ -260,6 +272,7 @@ def compare_agents(
         num_agents_list: List[int],
         levels: List[int],
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 
 ) -> pd.DataFrame:
     """Compare results between different numbers of agents."""
@@ -281,6 +294,7 @@ def compare_agents(
                 num_agents=num_agents,
                 end_window_evals=end_window_evals,
                 level=level,
+                forgetting_formula=forgetting_formula,
             )
 
             # Add metrics to row with level prefix
@@ -329,6 +343,14 @@ if __name__ == "__main__":
         action="store_true",
         help="Include confidence intervals in the output table",
     )
+    p.add_argument(
+        "--forgetting_formula",
+        choices=["weighted", "peak_final"],
+        default="peak_final",
+        help="Forgetting formula. 'peak_final' (default, unnormalized peak-minus-final "
+             "drop). 'weighted' is the normalized, decay-weighted alternative "
+             "(see experiments/results/plotting/utils/metrics.py).",
+    )
     args = p.parse_args()
 
     # MPE and SMAX have no difficulty levels, but do support forward transfer
@@ -358,6 +380,7 @@ if __name__ == "__main__":
         num_agents_list=args.num_agents,
         levels=levels,
         end_window_evals=args.end_window_evals,
+        forgetting_formula=args.forgetting_formula,
     )
 
     # Find best values per column (across all agent configurations)

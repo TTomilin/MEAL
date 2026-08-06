@@ -10,6 +10,10 @@ from typing import List
 import numpy as np
 import pandas as pd
 
+from experiments.results.plotting.utils.metrics import (
+    compute_forgetting, training_end_idx_for_task,
+)
+
 # -----------------------------------------------------------------------------
 # I/O helpers
 # -----------------------------------------------------------------------------
@@ -48,6 +52,7 @@ def compute_metrics(
         seeds: List[int],
         end_window_evals: int = 10,
         level: int = 1,
+        forgetting_formula: str = "peak_final",
 ) -> dict:
     """Compute metrics for a single method/setting combination."""
     AP_seeds, F_seeds = [], []
@@ -86,14 +91,20 @@ def compute_metrics(
         # Average Performance (AP) – last eval of mean curve
         AP_seeds.append(env_mat.mean(axis=0)[-1])
 
-        # Forgetting (F) – drop from best‑ever to final performance
-        f_vals = []
+        # Forgetting
+        training_fp = sd / "training_soup.json"
+        n_train = len(load_series(training_fp)) if training_fp.exists() else 0
+
         final_idx = env_mat.shape[1] - 1
-        fw_start = max(0, final_idx - end_window_evals + 1)
+        f_vals = []
         for i in range(seq_len):
-            final_avg = np.nanmean(env_mat[i, fw_start : final_idx + 1])
-            best_perf = np.nanmax(env_mat[i, : final_idx + 1])
-            f_vals.append(max(best_perf - final_avg, 0.0))
+            task_curve = env_mat[i, : final_idx + 1]
+            n_train_ref = n_train or len(task_curve)
+            training_end_idx = training_end_idx_for_task(i, len(task_curve), n_train_ref, seq_len)
+            f_vals.append(compute_forgetting(
+                task_curve, forgetting_formula, training_end_idx=training_end_idx,
+                end_window_evals=end_window_evals,
+            ))
         F_seeds.append(float(np.nanmean(f_vals)))
 
     # Aggregate across seeds
@@ -116,6 +127,7 @@ def compare_observability_settings(
         seeds: List[int],
         levels: List[int],
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 ) -> pd.DataFrame:
     """Compare EWC results between fully and partially observable settings."""
     rows = []
@@ -131,6 +143,7 @@ def compare_observability_settings(
             seeds=seeds,
             end_window_evals=end_window_evals,
             level=level,
+            forgetting_formula=forgetting_formula,
         )
 
         # Compute metrics for partially observable (EWC_partial)
@@ -143,6 +156,7 @@ def compare_observability_settings(
             seeds=seeds,
             end_window_evals=end_window_evals,
             level=level,
+            forgetting_formula=forgetting_formula,
         )
 
         # Create one row per level with FO and PO as columns
@@ -190,6 +204,14 @@ if __name__ == "__main__":
         default=10,
         help="How many final eval points to average for F (Forgetting)",
     )
+    p.add_argument(
+        "--forgetting_formula",
+        choices=["weighted", "peak_final"],
+        default="peak_final",
+        help="Forgetting formula. 'peak_final' (default, unnormalized peak-minus-final "
+             "drop). 'weighted' is the normalized, decay-weighted alternative "
+             "(see experiments/results/plotting/utils/metrics.py).",
+    )
     args = p.parse_args()
 
     # Compute comparison metrics
@@ -201,6 +223,7 @@ if __name__ == "__main__":
         seeds=args.seeds,
         levels=args.levels,
         end_window_evals=args.end_window_evals,
+        forgetting_formula=args.forgetting_formula,
     )
 
     # For each level, identify best performance and format the table

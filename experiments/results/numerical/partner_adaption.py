@@ -11,6 +11,9 @@ import numpy as np
 import pandas as pd
 
 from experiments.results.plotting.utils import METHOD_DISPLAY_NAMES
+from experiments.results.plotting.utils.metrics import (
+    compute_forgetting, training_end_idx_for_task,
+)
 
 # -----------------------------------------------------------------------------
 # I/O helpers
@@ -48,6 +51,7 @@ def compute_metrics(
         num_partners: int,
         seeds: List[int],
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 ) -> pd.DataFrame:
     """Compute partner adaptation metrics (Average Performance and Forgetting only)."""
     rows: list[dict[str, float]] = []
@@ -69,12 +73,14 @@ def compute_metrics(
                 print(f"[debug] seed directory does not exist: {sd}")
                 continue
 
-            # Load training curve (not used for metrics but kept for consistency)
+            # Load training curve. Gives the forgetting metric (below) the task/partner
+            # boundary location within each partner's own eval curve.
             training_fp = sd / "training_soup.json"
             if not training_fp.exists():
                 print(f"[warn] missing training_soup.json for {method} seed {seed}")
                 continue
             print(f"[debug] found training file for {method} seed {seed}: {training_fp}")
+            n_train = len(load_series(training_fp))
 
             # Load per-partner evaluation curves
             env_series = []
@@ -127,14 +133,16 @@ def compute_metrics(
             # Average Performance (AP) – last eval of mean curve across all partners
             AP_seeds.append(np.nanmean(env_mat, axis=0)[-1])
 
-            # Forgetting (F) – drop from best‑ever to final performance across all partners
-            f_vals = []
+            # Forgetting (F), across all partners.
             final_idx = env_mat.shape[1] - 1
-            fw_start = max(0, final_idx - end_window_evals + 1)
+            f_vals = []
             for i in range(num_partners):
-                final_avg = np.nanmean(env_mat[i, fw_start : final_idx + 1])
-                best_perf = np.nanmax(env_mat[i, : final_idx + 1])
-                f_vals.append(max(best_perf - final_avg, 0.0))
+                task_curve = env_mat[i, : final_idx + 1]
+                training_end_idx = training_end_idx_for_task(i, len(task_curve), n_train, num_partners)
+                f_vals.append(compute_forgetting(
+                    task_curve, forgetting_formula, training_end_idx=training_end_idx,
+                    end_window_evals=end_window_evals,
+                ))
             F_seeds.append(float(np.nanmean(f_vals)))
 
         # Aggregate across seeds
@@ -194,6 +202,14 @@ if __name__ == "__main__":
         action="store_false",
         help="Hide confidence intervals in table.",
     )
+    p.add_argument(
+        "--forgetting_formula",
+        choices=["weighted", "peak_final"],
+        default="peak_final",
+        help="Forgetting formula. 'peak_final' (default, unnormalized peak-minus-final "
+             "drop). 'weighted' is the normalized, decay-weighted alternative "
+             "(see experiments/results/plotting/utils/metrics.py).",
+    )
     args = p.parse_args()
 
     # Compute partner adaptation metrics
@@ -204,6 +220,7 @@ if __name__ == "__main__":
         num_partners=args.num_partners,
         seeds=args.seeds,
         end_window_evals=args.end_window_evals,
+        forgetting_formula=args.forgetting_formula,
     )
 
     # Pretty‑print method names

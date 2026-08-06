@@ -9,6 +9,9 @@ import numpy as np
 import pandas as pd
 
 from experiments.results.plotting.utils import METHOD_DISPLAY_NAMES
+from experiments.results.plotting.utils.metrics import (
+    compute_forgetting, training_end_idx_for_task,
+)
 
 ConfInt = Tuple[float, float]
 
@@ -65,6 +68,7 @@ def compute_metrics_with_restriction_settings(
         restriction_setting: str = 'default',
         level: Optional[int] = None,
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 ) -> pd.DataFrame:
     """
     Compute continual learning metrics for experiments with restriction settings.
@@ -78,7 +82,8 @@ def compute_metrics_with_restriction_settings(
         seeds: List of random seeds
         restriction_setting: Restriction setting ('default', 'complementary_restrictions')
         level: Difficulty level (1, 2, 3) for default setting, ignored for others
-        end_window_evals: Number of final evaluations to average for forgetting metric
+        end_window_evals: number of final eval points to average; only used by the 'peak_final' forgetting formula
+        forgetting_formula: 'weighted' or 'peak_final', see experiments/results/plotting/utils/metrics.py
 
     Returns:
         DataFrame with computed metrics
@@ -155,12 +160,15 @@ def compute_metrics_with_restriction_settings(
             final_performances = [eval_data[i][-1] for i in range(seq_len)]
             AP = np.mean(final_performances)
 
-            # Forgetting (F): average drop from peak to final performance
+            # Forgetting (F)
             forgetting_values = []
             for i in range(seq_len):
-                peak_perf = max(eval_data[i])
-                final_perf = np.mean(eval_data[i][-end_window_evals:])
-                forgetting_values.append(peak_perf - final_perf)
+                task_curve = np.asarray(eval_data[i])
+                training_end_idx = training_end_idx_for_task(i, len(task_curve), n_train, seq_len)
+                forgetting_values.append(compute_forgetting(
+                    task_curve, forgetting_formula, training_end_idx=training_end_idx,
+                    end_window_evals=end_window_evals,
+                ))
             F = np.mean(forgetting_values)
 
             # Forward Transfer (FT): normalized area between CL and baseline curves
@@ -243,6 +251,7 @@ def compare_restriction_settings(
         restriction_settings: List[str] = ['default', 'complementary_restrictions'],
         level: Optional[int] = None,
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 ) -> Dict[str, pd.DataFrame]:
     """
     Compare continual learning metrics across different restriction settings.
@@ -263,6 +272,7 @@ def compare_restriction_settings(
             restriction_setting=setting,
             level=level,
             end_window_evals=end_window_evals,
+            forgetting_formula=forgetting_formula,
         )
         results[setting] = df
     return results
@@ -286,6 +296,7 @@ def generate_restriction_comparison_table(
         restriction_settings: List[str] = ['default', 'complementary_restrictions'],
         level: Optional[int] = None,
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 ) -> str:
     """
     Generate a LaTeX table comparing metrics across restriction settings.
@@ -305,6 +316,7 @@ def generate_restriction_comparison_table(
         restriction_settings=restriction_settings,
         level=level,
         end_window_evals=end_window_evals,
+        forgetting_formula=forgetting_formula,
     )
 
     # Assume we're working with a single method for now (can be extended)
@@ -399,6 +411,14 @@ if __name__ == "__main__":
                    help="Generate table for single restriction setting instead of comparison")
     p.add_argument("--restriction_setting", choices=["default", "complementary_restrictions"],
                    default="default", help="Single restriction setting to analyze")
+    p.add_argument(
+        "--forgetting_formula",
+        choices=["weighted", "peak_final"],
+        default="peak_final",
+        help="Forgetting formula. 'peak_final' (default, unnormalized peak-minus-final "
+             "drop). 'weighted' is the normalized, decay-weighted alternative "
+             "(see experiments/results/plotting/utils/metrics.py).",
+    )
 
     args = p.parse_args()
 
@@ -414,6 +434,7 @@ if __name__ == "__main__":
             restriction_setting=args.restriction_setting,
             level=args.level,
             end_window_evals=args.end_window_evals,
+            forgetting_formula=args.forgetting_formula,
         )
 
         # Pretty‑print method names
@@ -476,6 +497,7 @@ if __name__ == "__main__":
             restriction_settings=["default", "complementary_restrictions"],
             level=args.level,
             end_window_evals=args.end_window_evals,
+            forgetting_formula=args.forgetting_formula,
         )
 
         print(latex_table)

@@ -14,6 +14,9 @@ import numpy as np
 import pandas as pd
 
 from experiments.results.plotting.utils import METHOD_DISPLAY_NAMES
+from experiments.results.plotting.utils.metrics import (
+    compute_forgetting, training_end_idx_for_task,
+)
 
 ConfInt = Tuple[float, float]
 
@@ -74,6 +77,7 @@ def compute_metrics_with_reward_settings(
         reward_setting: str = 'shared',
         level: Optional[int] = None,
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 ) -> pd.DataFrame:
     """
     Compute continual learning metrics for experiments with reward settings.
@@ -88,7 +92,8 @@ def compute_metrics_with_reward_settings(
         seeds: List of random seeds
         reward_setting: Reward setting ('shared', 'sparse', 'individual')
         level: Difficulty level (1, 2, 3) for shared setting, ignored for others
-        end_window_evals: Number of final evaluations to average for forgetting metric
+        end_window_evals: number of final eval points to average; only used by the 'peak_final' forgetting formula
+        forgetting_formula: 'weighted' or 'peak_final', see experiments/results/plotting/utils/metrics.py
 
     Returns:
         DataFrame with computed metrics
@@ -207,13 +212,15 @@ def compute_metrics_with_reward_settings(
 
             FT_seeds.append(np.mean(ft_vals))
 
-            # Forgetting (F) – drop from peak to final performance
+            # Forgetting (F)
             f_vals = []
             for i in range(seq_len):
-                curve = env_mat[i, :]
-                peak = np.max(curve)
-                final = np.mean(curve[-end_window_evals:])
-                f_vals.append(peak - final)
+                task_curve = env_mat[i, :]
+                training_end_idx = training_end_idx_for_task(i, len(task_curve), n_train, seq_len)
+                f_vals.append(compute_forgetting(
+                    task_curve, forgetting_formula, training_end_idx=training_end_idx,
+                    end_window_evals=end_window_evals,
+                ))
             F_seeds.append(np.mean(f_vals))
 
             # Average AUC – average area under curve of evaluation curves across all tasks
@@ -261,6 +268,7 @@ def compare_reward_settings(
         reward_settings: List[str] = ['shared', 'sparse', 'individual'],
         level: Optional[int] = None,
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 ) -> pd.DataFrame:
     """
     Compare different reward settings across methods.
@@ -282,6 +290,7 @@ def compare_reward_settings(
             reward_setting=reward_setting,
             level=level,
             end_window_evals=end_window_evals,
+            forgetting_formula=forgetting_formula,
         )
         all_results.append(df)
 
@@ -310,6 +319,7 @@ def generate_reward_comparison_table(
         reward_settings: List[str] = ['shared', 'sparse', 'individual'],
         level: Optional[int] = None,
         end_window_evals: int = 10,
+        forgetting_formula: str = "peak_final",
 ) -> str:
     """
     Generate a LaTeX table comparing different reward settings.
@@ -328,6 +338,7 @@ def generate_reward_comparison_table(
         reward_settings=reward_settings,
         level=level,
         end_window_evals=end_window_evals,
+        forgetting_formula=forgetting_formula,
     )
 
     # Pretty‑print method names
@@ -418,6 +429,14 @@ if __name__ == "__main__":
                    help="Generate table for single reward setting instead of comparison")
     p.add_argument("--reward_setting", choices=["shared", "sparse", "individual"],
                    default="shared", help="Single reward setting to analyze")
+    p.add_argument(
+        "--forgetting_formula",
+        choices=["weighted", "peak_final"],
+        default="peak_final",
+        help="Forgetting formula. 'peak_final' (default, unnormalized peak-minus-final "
+             "drop). 'weighted' is the normalized, decay-weighted alternative "
+             "(see experiments/results/plotting/utils/metrics.py).",
+    )
 
     args = p.parse_args()
 
@@ -434,6 +453,7 @@ if __name__ == "__main__":
             reward_setting=args.reward_setting,
             level=args.level,
             end_window_evals=args.end_window_evals,
+            forgetting_formula=args.forgetting_formula,
         )
 
         # Pretty‑print method names
@@ -497,6 +517,7 @@ if __name__ == "__main__":
             reward_settings=args.reward_settings,
             level=args.level,
             end_window_evals=args.end_window_evals,
+            forgetting_formula=args.forgetting_formula,
         )
 
         print(latex_table)

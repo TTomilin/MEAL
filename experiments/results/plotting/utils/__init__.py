@@ -28,6 +28,11 @@ from .cli import (
     create_parser_with_common_args, create_plasticity_parser, create_eval_parser
 )
 
+from .metrics import (
+    calculate_curve_based_forgetting, calculate_peak_final_forgetting,
+    compute_forgetting, training_end_idx_for_task
+)
+
 __all__ = [
     # From common
     'CRIT', 'METHOD_COLORS', 'LEVEL_COLORS', 'METHOD_DISPLAY_NAMES',
@@ -45,5 +50,9 @@ __all__ = [
 
     # From cli
     'create_base_parser', 'add_common_args', 'add_metric_arg', 'add_repeat_sequence_arg',
-    'create_parser_with_common_args', 'create_plasticity_parser', 'create_eval_parser'
+    'create_parser_with_common_args', 'create_plasticity_parser', 'create_eval_parser',
+
+    # From metrics
+    'calculate_curve_based_forgetting', 'calculate_peak_final_forgetting',
+    'compute_forgetting', 'training_end_idx_for_task',
 ]

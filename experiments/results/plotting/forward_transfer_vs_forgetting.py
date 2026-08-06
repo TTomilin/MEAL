@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from experiments.results.numerical.results_table import _calculate_curve_based_forgetting
+from experiments.results.plotting.utils.metrics import compute_forgetting
 from experiments.results.plotting.utils import METHOD_COLORS, METHOD_DISPLAY_NAMES, get_output_path, method_display_name
 
 
@@ -52,6 +52,7 @@ def compute_metrics_simplified(
         end_window_evals: int = 10,
         level: int = 1,
         agents: int = 2,
+        forgetting_formula: str = "weighted",
 ) -> pd.DataFrame:
     """
     Compute metrics exactly like results_table.py with proper forward transfer calculation.
@@ -147,7 +148,10 @@ def compute_metrics_simplified(
                 else:
                     training_end_idx = len(task_curve) - 1
                 if any(task_curve > 0.0):
-                    f_vals.append(_calculate_curve_based_forgetting(task_curve, training_end_idx))
+                    f_vals.append(compute_forgetting(
+                        task_curve, forgetting_formula, training_end_idx=training_end_idx,
+                        end_window_evals=end_window_evals,
+                    ))
             F_seeds.append(float(np.nanmean(f_vals)) if f_vals else np.nan)
 
             # Forward Transfer (FT) – normalized area between CL and baseline curves
@@ -269,6 +273,14 @@ def parse_args():
     )
     parser.add_argument("--plot_name", help="Custom name for the output plot")
     parser.add_argument("--title", help="Custom title for the plot")
+    parser.add_argument(
+        "--forgetting_formula",
+        choices=["weighted", "peak_final"],
+        default="weighted",
+        help="Forgetting formula. 'weighted' (default) is normalized and decay-weighted."
+             "'peak_final' is the unnormalized peak-minus-final drop (see experiments/results/"
+             "plotting/utils/metrics.py).",
+    )
 
     return parser.parse_args()
 
@@ -304,6 +316,7 @@ def main():
             end_window_evals=args.end_window_evals,
             level=level,
             agents=args.agents,
+            forgetting_formula=args.forgetting_formula,
         )
 
         # Pretty-print method names
