@@ -235,6 +235,13 @@ class QMIX(OffPolicyAlgo):
         eps_scheduler = optax.linear_schedule(
             cfg.eps_start, cfg.eps_finish, cfg.eps_decay * cfg.num_updates
         )
+        reward_shaping_horizon = cfg.reward_shaping_horizon
+        if reward_shaping_horizon is None:
+            reward_shaping_horizon = cfg.steps_per_task / 2
+        rew_shaping_anneal = optax.linear_schedule(
+            init_value=1., end_value=0.,
+            transition_steps=reward_shaping_horizon / (cfg.num_steps * cfg.num_envs),
+        )
 
         rng, net_rng, mix_rng = jax.random.split(self.rng, 3)
 
@@ -279,6 +286,7 @@ class QMIX(OffPolicyAlgo):
         self.tx = tx
         self.lr_scheduler = lr_scheduler
         self.eps_scheduler = eps_scheduler
+        self.rew_shaping_anneal = rew_shaping_anneal
         self.train_state = train_state
         self.reset_switch, self.step_switch = build_reset_step_switch(self.envs)
 
@@ -310,6 +318,7 @@ class QMIX(OffPolicyAlgo):
         agents = self.agents
         num_agents = self.num_agents
         eps_scheduler = self.eps_scheduler
+        rew_shaping_anneal = self.rew_shaping_anneal
         lr_scheduler = self.lr_scheduler
 
         N = cfg.num_steps * cfg.num_envs
@@ -350,6 +359,8 @@ class QMIX(OffPolicyAlgo):
                     shaped_reward = self.env_adapter.get_shaped_reward(infos, agents)
                     if shaped_reward is not None:
                         shaped_reward["__all__"] = vdn_batchify(shaped_reward, agents).sum(axis=0)
+                        anneal = rew_shaping_anneal(train_state.n_updates)
+                        shaped_reward = jax.tree.map(lambda y: y * anneal, shaped_reward)
                         rewards = jax.tree.map(lambda x, y: x + y, rewards, shaped_reward)
 
                     timestep = QMIXTimestep(
@@ -622,6 +633,10 @@ class QMIX(OffPolicyAlgo):
                     shaped_reward = self.env_adapter.get_shaped_reward(infos, agents)
                     if shaped_reward is not None:
                         shaped_reward["__all__"] = vdn_batchify(shaped_reward, agents).sum(axis=0)
+                        # Memory collection runs post-training at the fixed final epsilon
+                        # (cfg.eps_finish above), so use the fully-annealed shaping weight too.
+                        anneal = rew_shaping_anneal(final_train_state.n_updates)
+                        shaped_reward = jax.tree.map(lambda y: y * anneal, shaped_reward)
                         rewards = jax.tree.map(lambda x, y: x + y, rewards, shaped_reward)
 
                     timestep = QMIXTimestep(

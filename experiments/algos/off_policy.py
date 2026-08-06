@@ -10,6 +10,7 @@ class, matching the boundary already used for the on-policy algorithms.
 import json
 import os
 from dataclasses import dataclass
+from typing import Optional
 
 import flax
 
@@ -23,6 +24,7 @@ class OffPolicyConfig(BaseConfig):
     # TRAINING PARAMETERS
     # ═══════════════════════════════════════════════════════════════════════════
     steps_per_task: float = 1e8
+    reward_shaping_horizon: Optional[float] = None
     num_envs: int = 2048
     num_steps: int = 400
     hidden_size: int = 256
