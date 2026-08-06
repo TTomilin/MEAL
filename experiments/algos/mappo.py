@@ -29,7 +29,6 @@ from experiments.utils import Transition_MAPPO, batchify, init_cl_state, unbatch
 class MAPPOConfig(OnPolicyConfig):
     alg_name: Literal["ippo", "mappo"] = "mappo"
     use_agent_id: bool = True  # MAPPO-specific: append agent one-hot to actor obs
-    log_interval: int = 75
     shared_backbone: bool = False
     regularize_critic: bool = False
 

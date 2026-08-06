@@ -95,7 +95,7 @@ everywhere):
   the trained policy per task at the end of its training into `runs/<run_name>/`, and upload it
   to wandb if `--use-wandb` is on. VDN/QMIX video is Q-value-argmax based (verified only
   against Overcooked).
-- `--log-interval <int>` (default `5`, MAPPO defaults to `75`) — how often (in update steps)
+- `--log-interval <int>` (default `5`, matching paper Table 6) — how often (in update steps)
   to compute/log metrics; TensorBoard scalars only actually hit disk every `flush_secs`
   (tensorboardX default 120s) or on process exit — for continuous mid-run wandb sync on short
   runs you'd need to lower that in `experiments/algo_common.py`.
