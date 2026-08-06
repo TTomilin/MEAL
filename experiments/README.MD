@@ -8,7 +8,7 @@ python -m experiments.train <algo> [outer flags...] env:<env_name> [--env.* flag
 ```
 
 ```bash
-python -m experiments.train ippo --cl-method ewc --seq-length 10 --num-agents 2 \
+python -m experiments.train ippo --cl-method ewc --seq-length 20 --num-agents 2 \
   env:overcooked --env.difficulty medium
 ```
 

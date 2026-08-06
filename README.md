@@ -59,7 +59,7 @@ come before the `env:...` subcommand token.
 ```bash
 python -m experiments.train ippo \
   --cl-method ewc \
-  --seq-length 10 \
+  --seq-length 20 \
   --num-agents 2 \
   --num-envs 2048 \
   --num-steps 400 \

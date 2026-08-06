@@ -56,6 +56,6 @@ observation/state shapes (required for `jax.lax.switch`-based task selection).
 ## Example
 
 ```bash
-python -m experiments.train ippo --cl-method agem --seq-length 10 --num-agents 4 \
+python -m experiments.train ippo --cl-method agem --seq-length 20 --num-agents 4 \
   env:mpe --env.num-landmarks 4 --env.num-obstacles 6 --env.local-ratio 0.3
 ```
