@@ -46,6 +46,63 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--plot_name", default=None, help="Custom plot name (default: auto-generated)")
 
 
+def add_numerical_data_args(
+    parser: argparse.ArgumentParser,
+    seq_len_default: int = 20,
+    seeds_default: List[int] = None,
+    required: bool = False,
+) -> None:
+    """
+    Add the data-selection arguments shared by every experiments/results/numerical/*.py
+    script: --data_root, --algo, --strategy, --seq_len, --seeds. Deliberately omits
+    --methods/--method and any --level(s)/--agents/--num_partners variant, since those
+    differ too much in naming and defaults across scripts to share; add those in the
+    calling script after this.
+
+    Args:
+        parser: ArgumentParser to add arguments to
+        seq_len_default: Default --seq_len value
+        seeds_default: Default --seeds value (default: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        required: If True, --data_root/--algo are required with no default (matches the
+            handful of scripts that historically used required=True instead of a default)
+    """
+    if seeds_default is None:
+        seeds_default = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    parser.add_argument("--data_root", required=required, default=None if required else "data",
+                        help="Root directory containing the data")
+    parser.add_argument("--algo", required=required, default=None if required else "ippo",
+                        help="Algorithm name")
+    parser.add_argument("--strategy", default="generate", help="Strategy name")
+    parser.add_argument("--seq_len", type=int, default=seq_len_default, help="Sequence length")
+    parser.add_argument("--seeds", type=int, nargs="+", default=seeds_default, help="Seeds to include")
+
+
+def add_forgetting_args(parser: argparse.ArgumentParser, default: str = "peak_final",
+                        end_window_default: int = 10) -> None:
+    """
+    Add --end_window_evals / --forgetting_formula, shared by every script that reports
+    Forgetting (F).
+
+    Args:
+        parser: ArgumentParser to add arguments to
+        default: Which formula this script's own results were actually generated with
+            ('weighted' or 'peak_final') -- confirm via git history before changing it,
+            see experiments/results/plotting/utils/metrics.py for the two formulas.
+        end_window_default: Default --end_window_evals value
+    """
+    parser.add_argument(
+        "--end_window_evals", type=int, default=end_window_default,
+        help="How many final eval points to average for Forgetting (only used by the 'peak_final' formula)",
+    )
+    parser.add_argument(
+        "--forgetting_formula", choices=["weighted", "peak_final"], default=default,
+        help=f"Forgetting formula ('{default}' is what actually generated this script's "
+             "results, confirmed via git history). 'weighted' is normalized and decay-"
+             "weighted; 'peak_final' is the unnormalized peak-minus-final drop. See "
+             "experiments/results/plotting/utils/metrics.py.",
+    )
+
+
 def add_metric_arg(parser: argparse.ArgumentParser, choices: List[str] = None, default: str = None) -> None:
     """
     Add a metric argument with customizable choices.

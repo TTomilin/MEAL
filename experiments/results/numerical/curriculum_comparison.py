@@ -1,23 +1,16 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import List, Optional, Dict, Tuple
 
 import numpy as np
 import pandas as pd
 
+from experiments.results.plotting.utils import load_series, task_auc, add_forgetting_args
 from experiments.results.plotting.utils.metrics import (
     compute_forgetting, training_end_idx_for_task,
 )
-
-
-def load_series(fp: Path) -> List[float]:
-    """Load a time series from JSON file."""
-    with fp.open() as f:
-        data = json.load(f)
-    return data if isinstance(data, list) else [data]
 
 
 def _mean_ci(series: List[float]) -> Tuple[float, float]:
@@ -235,21 +228,11 @@ def compute_metrics_for_task_range(
                         cl_task_curve = training[start_train_idx:end_train_idx]
 
                         # AUCi = (1/τ) * ∫ pi(t) dt, where τ is the task duration
-                        # Using trapezoidal rule for numerical integration
-                        if len(cl_task_curve) > 1:
-                            auc_cl = np.trapz(cl_task_curve) / len(cl_task_curve)
-                        else:
-                            auc_cl = cl_task_curve[0] if len(cl_task_curve) == 1 else 0.0
+                        auc_cl = task_auc(cl_task_curve)
 
                         # Calculate AUC for baseline method (task task_idx)
                         baseline_task_curve = baseline_data[seed][idx]  # Use idx for baseline_data indexing
-                        if baseline_task_curve is not None:
-                            if len(baseline_task_curve) > 1:
-                                auc_baseline = np.trapz(baseline_task_curve) / len(baseline_task_curve)
-                            else:
-                                auc_baseline = baseline_task_curve[0] if len(baseline_task_curve) == 1 else 0.0
-                        else:
-                            auc_baseline = 0.0
+                        auc_baseline = task_auc(baseline_task_curve) if baseline_task_curve is not None else 0.0
 
                         # Forward transfer for task task_idx
                         if auc_baseline > 0:
@@ -343,21 +326,11 @@ def compute_metrics_for_task_range(
                         cl_task_curve = training[start_train_idx:end_train_idx]
 
                         # AUCi = (1/τ) * ∫ pi(t) dt, where τ is the task duration
-                        # Using trapezoidal rule for numerical integration
-                        if len(cl_task_curve) > 1:
-                            auc_cl = np.trapz(cl_task_curve) / len(cl_task_curve)
-                        else:
-                            auc_cl = cl_task_curve[0] if len(cl_task_curve) == 1 else 0.0
+                        auc_cl = task_auc(cl_task_curve)
 
                         # Calculate AUC for baseline method (task task_idx)
                         baseline_task_curve = baseline_data[seed][idx]  # Use idx for baseline_data indexing
-                        if baseline_task_curve is not None:
-                            if len(baseline_task_curve) > 1:
-                                auc_baseline = np.trapz(baseline_task_curve) / len(baseline_task_curve)
-                            else:
-                                auc_baseline = baseline_task_curve[0] if len(baseline_task_curve) == 1 else 0.0
-                        else:
-                            auc_baseline = 0.0
+                        auc_baseline = task_auc(baseline_task_curve) if baseline_task_curve is not None else 0.0
 
                         # Forward transfer for task task_idx
                         if auc_baseline > 0:
@@ -695,9 +668,7 @@ def main():
                        help="Random seeds")
     parser.add_argument("--level", type=int, default=None, 
                        help="Difficulty level (1, 2, 3)")
-    parser.add_argument("--end_window_evals", type=int, default=10, 
-                       help="Number of final evaluations for forgetting metric")
-    parser.add_argument("--output_prefix", type=str, default=None, 
+    parser.add_argument("--output_prefix", type=str, default=None,
                        help="Output file prefix for LaTeX tables")
 
     # Task range arguments
@@ -711,14 +682,7 @@ def main():
                        help="Specify which range to compare (medium or hard). If not specified, defaults to medium unless --compare_both is used.")
     parser.add_argument("--ap_only", action="store_true",
                        help="Generate a single table comparing only Average Performance (AP) with CI for both medium and hard ranges")
-    parser.add_argument(
-        "--forgetting_formula",
-        choices=["weighted", "peak_final"],
-        default="peak_final",
-        help="Forgetting formula. 'peak_final' (default, unnormalized peak-minus-final "
-             "drop). 'weighted' is the normalized, decay-weighted alternative "
-             "(see experiments/results/plotting/utils/metrics.py).",
-    )
+    add_forgetting_args(parser, default="peak_final")
 
     args = parser.parse_args()
 

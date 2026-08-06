@@ -11,7 +11,6 @@ The metrics are calculated using the same logic as in results/numerical/results_
 """
 
 import argparse
-import json
 from pathlib import Path
 from typing import List
 
@@ -19,27 +18,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from experiments.results.plotting.utils.metrics import compute_forgetting
-from experiments.results.plotting.utils import METHOD_COLORS, METHOD_DISPLAY_NAMES, get_output_path, method_display_name
-
-
-def load_series(fp: Path) -> np.ndarray:
-    if fp.suffix == '.json':
-        return np.array(json.loads(fp.read_text()), dtype=float)
-    if fp.suffix == '.npz':
-        return np.load(fp)['data'].astype(float)
-    raise ValueError(f'Unsupported file suffix: {fp.suffix}')
-
-
-def _mean_ci(series: List[float]) -> tuple:
-    """Calculate mean and confidence interval."""
-    if not series:
-        return np.nan, np.nan
-    mean = float(np.mean(series))
-    if len(series) == 1:
-        return mean, 0.0
-    ci = 1.96 * np.std(series, ddof=1) / np.sqrt(len(series))
-    return mean, float(ci)
+from experiments.results.plotting.utils.metrics import compute_forgetting, forward_transfer_ratio
+from experiments.results.plotting.utils import (
+    METHOD_COLORS, METHOD_DISPLAY_NAMES, get_output_path, method_display_name,
+    load_series, mean_ci, build_task_matrix, add_forgetting_args,
+)
 
 
 def compute_metrics_simplified(
@@ -128,10 +111,7 @@ def compute_metrics_simplified(
                 else:
                     env_series.append(load_series(fp))
 
-            L = max(len(s) for s in env_series)
-            env_mat = np.vstack([
-                np.pad(s, (0, L - len(s)), constant_values=s[-1]) for s in env_series
-            ])
+            env_mat = build_task_matrix(env_series, sanitize=False)
 
             # Average Performance (AP) – last eval of mean curve
             AP_seeds.append(env_mat.mean(axis=0)[-1])
@@ -174,55 +154,22 @@ def compute_metrics_simplified(
                 else:
                     auc_cl = cl_task_curve[0] if len(cl_task_curve) == 1 else 0.0
 
-                # Check if CL AUC is NaN or inf/-inf
-                if np.isnan(auc_cl) or np.isinf(auc_cl):
-                    print(f"[warn] CL AUC is NaN/inf/-inf for task {i}, seed {seed}, method {method}")
-                    continue  # Skip this task
-
-                # Calculate AUC for baseline method (task i)
                 baseline_task_curve = baseline_data[seed][i]
-                if baseline_task_curve is not None:
-                    # Check if baseline data contains all NaN or inf/-inf values
-                    if np.all(np.isnan(baseline_task_curve)):
-                        print(f"[warn] baseline data contains all NaN for task {i}, seed {seed}")
-                        continue  # Skip this task
-                    elif np.all(np.isinf(baseline_task_curve)):
-                        print(f"[warn] baseline data contains all inf/-inf for task {i}, seed {seed}")
-                        continue  # Skip this task
-                    elif np.all(np.isnan(baseline_task_curve) | np.isinf(baseline_task_curve)):
-                        print(f"[warn] baseline data contains all NaN/inf/-inf for task {i}, seed {seed}")
-                        continue  # Skip this task
-
-                    if len(baseline_task_curve) > 1:
-                        auc_baseline = baseline_task_curve.mean()
-                    else:
-                        auc_baseline = baseline_task_curve[0] if len(baseline_task_curve) == 1 else 0.0
-
-                    # Check if calculated AUC is NaN or inf/-inf
-                    if np.isnan(auc_baseline):
-                        print(f"[warn] baseline AUC is NaN for task {i}, seed {seed}")
-                        continue  # Skip this task
-                    elif np.isinf(auc_baseline):
-                        print(f"[warn] baseline AUC is inf/-inf for task {i}, seed {seed}")
-                        continue  # Skip this task
-
-                    # Skip if baseline is effectively 0
-                    if auc_baseline < 1e-8:
-                        print(f"[info] baseline AUC is effectively 0 ({auc_baseline}) for task {i}, seed {seed}, method {method} - skipping forward transfer calculation")
-                        continue  # Skip this task
-
-                    ft_i = (auc_cl - auc_baseline) / auc_baseline
-
-                    # Check if the final ft_i is inf/-inf or NaN
-                    if np.isnan(ft_i) or np.isinf(ft_i):
-                        print(f"[warn] Forward Transfer result is NaN/inf/-inf for task {i}, seed {seed}, method {method}")
-                        # Skip this task - don't append to ft_vals
-                    else:
-                        ft_vals.append(ft_i)
-
-                else:
+                if baseline_task_curve is None:
                     print(f"[warn] missing baseline data for task {i}, seed {seed}")
-                    # Don't append anything to ft_vals - skip this task
+                    continue
+
+                if len(baseline_task_curve) > 1:
+                    auc_baseline = baseline_task_curve.mean()
+                else:
+                    auc_baseline = baseline_task_curve[0] if len(baseline_task_curve) == 1 else 0.0
+
+                ft_i = forward_transfer_ratio(auc_cl, auc_baseline)
+                if ft_i is None:
+                    print(f"[info] task {i}, seed {seed}, method {method} skipped for FT "
+                          f"(NaN/inf AUC, near-zero baseline, or NaN/inf ratio)")
+                else:
+                    ft_vals.append(ft_i)
 
             if ft_vals:
                 FT_seeds.append(float(np.nanmean(ft_vals)))
@@ -231,9 +178,9 @@ def compute_metrics_simplified(
 
 
         # Aggregate across seeds
-        A_mean, A_ci = _mean_ci(AP_seeds)
-        F_mean, F_ci = _mean_ci(F_seeds)
-        FT_mean, FT_ci = _mean_ci(FT_seeds)
+        A_mean, A_ci = mean_ci(AP_seeds)
+        F_mean, F_ci = mean_ci(F_seeds)
+        FT_mean, FT_ci = mean_ci(FT_seeds)
 
         rows.append(
             {
@@ -265,22 +212,9 @@ def parse_args():
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5], help="List of seeds")
     parser.add_argument("--levels", type=int, nargs="+", default=[1], help="Difficulty levels of the benchmark (can specify multiple levels)")
     parser.add_argument("--agents", type=int, default=2, help="Number of agents in the environment")
-    parser.add_argument(
-        "--end_window_evals",
-        type=int,
-        default=10,
-        help="How many final eval points to average for forgetting calculation",
-    )
     parser.add_argument("--plot_name", help="Custom name for the output plot")
     parser.add_argument("--title", help="Custom title for the plot")
-    parser.add_argument(
-        "--forgetting_formula",
-        choices=["weighted", "peak_final"],
-        default="weighted",
-        help="Forgetting formula. 'weighted' (default) is normalized and decay-weighted."
-             "'peak_final' is the unnormalized peak-minus-final drop (see experiments/results/"
-             "plotting/utils/metrics.py).",
-    )
+    add_forgetting_args(parser, default="weighted")
 
     return parser.parse_args()
 

@@ -6,27 +6,106 @@ different ones to produce their published numbers:
 
   "weighted"   -- weighted, normalized post-training performance drop relative to
                   end-of-training performance, with exponential decay that penalizes
-                  earlier forgetting more strongly. This is what results_table.py uses
-                  today, though even its own formula changed shape more than once
-                  across the project's history.
+                  earlier forgetting more strongly.
 
   "peak_final" -- unnormalized, unweighted drop from the best-ever value to a window-
-                  averaged final value: max(0, peak - mean(final N evals)). This is what
-                  every *other* results script has used since each file's very first
-                  commit -- confirmed via git log, not assumed.
-
-Every results script now takes a --forgetting-formula {weighted,peak_final} flag so
-either can be reproduced; each script's *default* is set to whichever formula git
-history shows actually produced its results. See each script's own CLI help for its
-specific default.
-
-levels_vs_tasks.py's "Cumulative Forgetting" (100-task long-sequence analysis) is
-intentionally a third thing: the per-seed *cumulative sum* of the "weighted" per-task
-formula across tasks 1..x, not a separate formula in its own right -- it has no
-peak_final variant in its history, so it isn't part of this dual-formula setup.
+                  averaged final value: max(0, peak - mean(final N evals)).
 """
 
+from typing import List, Optional, Tuple
+
 import numpy as np
+
+
+def mean_ci(series: List[float]) -> Tuple[float, float]:
+    """Mean and 95%-CI half-width of `series`. (nan, nan) if empty; CI is 0 for a single value."""
+    series = list(series)
+    if not series:
+        return float("nan"), float("nan")
+    mean = float(np.mean(series))
+    if len(series) == 1:
+        return mean, 0.0
+    ci = 1.96 * float(np.std(series, ddof=1)) / np.sqrt(len(series))
+    return mean, ci
+
+
+def sanitize_series(series: np.ndarray, label: str) -> np.ndarray:
+    """Replace NaN/inf entries with 0, printing a [warn] message identifying which case
+    applied. The "check has_nan/has_inf, zero-fill, print" block. `label` should
+    identify what's being sanitized, e.g. f"env series {i} for {method} seed {seed}".
+    """
+    series = np.asarray(series, dtype=float)
+    has_nan = bool(np.any(np.isnan(series)))
+    has_inf = bool(np.any(np.isinf(series)))
+    if not has_nan and not has_inf:
+        return series
+    if np.all(np.isnan(series)) and not has_inf:
+        print(f"[warn] {label} contains all NaN values, replacing with zeros")
+        return np.zeros_like(series)
+    if np.all(np.isinf(series)) and not has_nan:
+        print(f"[warn] {label} contains all inf/-inf values, replacing with zeros")
+        return np.zeros_like(series)
+    if np.all(np.isnan(series) | np.isinf(series)):
+        print(f"[warn] {label} contains all NaN/inf/-inf values, replacing with zeros")
+        return np.zeros_like(series)
+    if has_nan and has_inf:
+        print(f"[warn] {label} contains some NaN and inf/-inf values, replacing with zeros")
+        return np.where(np.isnan(series) | np.isinf(series), 0.0, series)
+    if has_nan:
+        print(f"[warn] {label} contains some NaN values, replacing NaN with zeros")
+        return np.where(np.isnan(series), 0.0, series)
+    print(f"[warn] {label} contains some inf/-inf values, replacing with zeros")
+    return np.where(np.isinf(series), 0.0, series)
+
+
+def task_auc(curve: np.ndarray) -> float:
+    """AUC_i = (1/tau) * integral of curve dt via the trapezoidal rule. A task's
+    time-averaged performance. Used by the forward-transfer calculation below."""
+    curve = np.asarray(curve, dtype=float)
+    if len(curve) > 1:
+        return float(np.trapz(curve) / len(curve))
+    return float(curve[0]) if len(curve) == 1 else 0.0
+
+
+def forward_transfer_ratio(auc_cl: float, auc_baseline: float, zero_threshold: float = 1e-8) -> Optional[float]:
+    """FT_i = (AUC_cl - AUC_baseline) / AUC_baseline, or None if the task should be
+    skipped: NaN/inf inputs, a near-zero baseline, or a NaN/inf result. The guard chain
+    every forward-transfer loop had copy-pasted inline."""
+    if np.isnan(auc_cl) or np.isinf(auc_cl):
+        return None
+    if np.isnan(auc_baseline) or np.isinf(auc_baseline):
+        return None
+    if auc_baseline < zero_threshold:
+        return None
+    ft_i = (auc_cl - auc_baseline) / auc_baseline
+    if np.isnan(ft_i) or np.isinf(ft_i):
+        return None
+    return float(ft_i)
+
+
+def average_forward_transfer(
+    training: np.ndarray, chunk: int, n_tasks: int, baseline_curves: List[Optional[np.ndarray]],
+) -> float:
+    """Mean forward transfer across `n_tasks`: for each task, AUC of the CL training
+    curve's chunk vs. the matching baseline curve's AUC, combined via
+    forward_transfer_ratio. NaN if no task yields a usable ratio.
+
+    `training` is the full concatenated CL training curve; `chunk` is the (training-curve)
+    step count per task, i.e. task i's slice is training[i*chunk:(i+1)*chunk].
+    `baseline_curves` is per-task (index i = task i), e.g. from
+    data_loading.load_baseline_task_curves()[seed]; entries may be None if missing.
+    """
+    ft_vals = []
+    for i in range(n_tasks):
+        cl_task_curve = training[i * chunk:(i + 1) * chunk]
+        auc_cl = task_auc(cl_task_curve)
+        if i >= len(baseline_curves) or baseline_curves[i] is None:
+            continue
+        auc_baseline = task_auc(baseline_curves[i])
+        ft_i = forward_transfer_ratio(auc_cl, auc_baseline)
+        if ft_i is not None:
+            ft_vals.append(ft_i)
+    return float(np.nanmean(ft_vals)) if ft_vals else float("nan")
 
 
 def calculate_curve_based_forgetting(
@@ -97,8 +176,7 @@ def calculate_peak_final_forgetting(task_curve: np.ndarray, end_window_evals: in
     """
     "peak_final" formula. Unnormalized, unweighted drop from the best-ever value in the
     curve to a window-averaged final value: max(0, peak - mean(final `end_window_evals`
-    points)). Ignores where training actually ended for this task -- "peak" is the max
-    over the *entire* curve, not just its training portion.
+    points)).
 
     Args:
         task_curve: Performance curve for a single task over time.
@@ -123,7 +201,7 @@ def compute_forgetting(
     lambda_decay: float = 2.0,
 ) -> float:
     """Dispatch to calculate_curve_based_forgetting ("weighted") or
-    calculate_peak_final_forgetting ("peak_final") by name -- lets call sites take a
+    calculate_peak_final_forgetting ("peak_final") by name. Lets call sites take a
     --forgetting-formula CLI flag and stay a one-line branch instead of an if/else."""
     if formula == "weighted":
         return calculate_curve_based_forgetting(task_curve, training_end_idx, lambda_decay=lambda_decay)

@@ -1,43 +1,19 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import List
 
 import numpy as np
 import pandas as pd
 
-from experiments.results.plotting.utils import METHOD_DISPLAY_NAMES
+from experiments.results.plotting.utils import (
+    METHOD_DISPLAY_NAMES, load_series, mean_ci, build_task_matrix, load_baseline_task_curves,
+    average_forward_transfer, add_numerical_data_args, add_forgetting_args,
+)
 from experiments.results.plotting.utils.metrics import compute_forgetting
 
-# -----------------------------------------------------------------------------
-# I/O helpers
-# -----------------------------------------------------------------------------
-
-def load_series(fp: Path) -> np.ndarray:
-    """Load a 1‑D float array from *.json or *.npz."""
-    if fp.suffix == ".json":
-        return np.array(json.loads(fp.read_text()), dtype=float)
-    if fp.suffix == ".npz":
-        return np.load(fp)["data"].astype(float)
-    raise ValueError(f"Unsupported file suffix: {fp.suffix}")
-
-
-# -----------------------------------------------------------------------------
-# Metric aggregation
-# -----------------------------------------------------------------------------
-
 ConfInt = tuple[float, float]  # (mean, 95% CI)
-
-def _mean_ci(series: List[float]) -> ConfInt:
-    if not series:
-        return np.nan, np.nan
-    mean = float(np.mean(series))
-    if len(series) == 1:
-        return mean, 0.0
-    ci = 1.96 * np.std(series, ddof=1) / np.sqrt(len(series))
-    return mean, float(ci)
 
 
 def compute_metrics(
@@ -59,7 +35,6 @@ def compute_metrics(
     effective_tasks = truncate_tasks if truncate_tasks is not None else seq_len
 
     # Load baseline data once for forward transfer calculation
-    baseline_data = {}
     baseline_folder = (
         data_root
         / algo
@@ -68,34 +43,7 @@ def compute_metrics(
         / f"agents_{agents}"
         / f"{strategy}_{seq_len}"
     )
-
-    for seed in seeds:
-        baseline_seed_dir = baseline_folder / f"seed_{seed}"
-        if baseline_seed_dir.exists():
-            # Load baseline training data for each task
-            baseline_training_files = []
-            for i in range(effective_tasks):
-                baseline_file = baseline_seed_dir / f"{i}_training_soup.json"
-                if baseline_file.exists():
-                    baseline_series = load_series(baseline_file)
-                    # Validate the loaded data
-                    if len(baseline_series) == 0:
-                        print(f"[warn] empty baseline data for task {i}, seed {seed}")
-                        baseline_training_files.append(None)
-                    elif np.all(np.isnan(baseline_series)):
-                        print(f"[warn] baseline data contains all NaN for task {i}, seed {seed}")
-                        baseline_training_files.append(None)
-                    elif np.all(np.isinf(baseline_series)):
-                        print(f"[warn] baseline data contains all inf/-inf for task {i}, seed {seed}")
-                        baseline_training_files.append(None)
-                    elif np.all(np.isnan(baseline_series) | np.isinf(baseline_series)):
-                        print(f"[warn] baseline data contains all NaN/inf/-inf for task {i}, seed {seed}")
-                        baseline_training_files.append(None)
-                    else:
-                        baseline_training_files.append(baseline_series)
-                else:
-                    baseline_training_files.append(None)
-            baseline_data[seed] = baseline_training_files
+    baseline_data = load_baseline_task_curves(baseline_folder, seeds, effective_tasks)
 
     for method in methods:
         AP_seeds, F_seeds, FT_seeds = [], [], []
@@ -132,49 +80,18 @@ def compute_metrics(
             # Handle missing files by creating expected file paths and loading them
             # This ensures we always have effective_tasks series, even if some files are missing
             env_series = []
-            missing_files = []
             for i in range(effective_tasks):
                 fp = sd / f"{i}_soup.json"
                 if fp.exists():
                     env_series.append(load_series(fp))
                 else:
                     print(f"[warn] missing env file for task {i}, seed {seed}, method {method}, using zeros")
-                    missing_files.append(i)
                     env_series.append(np.zeros(100))
 
-            # Replace NaN and inf/-inf values with zeros in env_series
-            processed_env_series = []
-            for i, series in enumerate(env_series):
-                # Check for NaN and inf/-inf values
-                has_nan = np.any(np.isnan(series))
-                has_inf = np.any(np.isinf(series))
-
-                if np.all(np.isnan(series)) and not has_inf:
-                    print(f"[warn] env series {i} contains all NaN values for {method} seed {seed}, replacing with zeros")
-                    processed_series = np.zeros_like(series)
-                elif np.all(np.isinf(series)) and not has_nan:
-                    print(f"[warn] env series {i} contains all inf/-inf values for {method} seed {seed}, replacing with zeros")
-                    processed_series = np.zeros_like(series)
-                elif np.all(np.isnan(series) | np.isinf(series)):
-                    print(f"[warn] env series {i} contains all NaN/inf/-inf values for {method} seed {seed}, replacing with zeros")
-                    processed_series = np.zeros_like(series)
-                elif has_nan and has_inf:
-                    print(f"[warn] env series {i} contains some NaN and inf/-inf values for {method} seed {seed}, replacing with zeros")
-                    processed_series = np.where(np.isnan(series) | np.isinf(series), 0.0, series)
-                elif has_nan:
-                    print(f"[warn] env series {i} contains some NaN values for {method} seed {seed}, replacing NaN with zeros")
-                    processed_series = np.where(np.isnan(series), 0.0, series)
-                elif has_inf:
-                    print(f"[warn] env series {i} contains some inf/-inf values for {method} seed {seed}, replacing with zeros")
-                    processed_series = np.where(np.isinf(series), 0.0, series)
-                else:
-                    processed_series = series
-                processed_env_series.append(processed_series)
-
-            L = max(len(s) for s in processed_env_series)
-            env_mat = np.vstack([
-                np.pad(s, (0, L - len(s)), constant_values=s[-1]) for s in processed_env_series
-            ])
+            env_mat = build_task_matrix(
+                env_series,
+                sanitize_label_fn=lambda i: f"env series {i} for {method} seed {seed}",
+            )
 
             # Average Performance (AP) – last eval of mean curve
             AP_seeds.append(np.nanmean(env_mat, axis=0)[-1])
@@ -209,80 +126,12 @@ def compute_metrics(
                 FT_seeds.append(np.nan)
                 continue
 
-            ft_vals = []
-            for i in range(effective_tasks):
-                # Calculate AUC for CL method (task i)
-                start_idx = i * chunk
-                end_idx = (i + 1) * chunk
-                cl_task_curve = training[start_idx:end_idx]
-
-                # AUCi = (1/τ) * ∫ pi(t) dt, where τ is the task duration
-                # Using trapezoidal rule for numerical integration
-                if len(cl_task_curve) > 1:
-                    auc_cl = np.trapz(cl_task_curve) / len(cl_task_curve)
-                else:
-                    auc_cl = cl_task_curve[0] if len(cl_task_curve) == 1 else 0.0
-
-                # Check if CL AUC is NaN or inf/-inf
-                if np.isnan(auc_cl) or np.isinf(auc_cl):
-                    print(f"[warn] CL AUC is NaN/inf/-inf for task {i}, seed {seed}, method {method}")
-                    continue  # Skip this task
-
-                # Calculate AUC for baseline method (task i)
-                baseline_task_curve = baseline_data[seed][i]
-                if baseline_task_curve is not None:
-                    # Check if baseline data contains all NaN or inf/-inf values
-                    if np.all(np.isnan(baseline_task_curve)):
-                        print(f"[warn] baseline data contains all NaN for task {i}, seed {seed}")
-                        continue  # Skip this task
-                    elif np.all(np.isinf(baseline_task_curve)):
-                        print(f"[warn] baseline data contains all inf/-inf for task {i}, seed {seed}")
-                        continue  # Skip this task
-                    elif np.all(np.isnan(baseline_task_curve) | np.isinf(baseline_task_curve)):
-                        print(f"[warn] baseline data contains all NaN/inf/-inf for task {i}, seed {seed}")
-                        continue  # Skip this task
-
-                    if len(baseline_task_curve) > 1:
-                        auc_baseline = np.trapz(baseline_task_curve) / len(baseline_task_curve)
-                    else:
-                        auc_baseline = baseline_task_curve[0] if len(baseline_task_curve) == 1 else 0.0
-
-                    # Check if calculated AUC is NaN or inf/-inf
-                    if np.isnan(auc_baseline):
-                        print(f"[warn] baseline AUC is NaN for task {i}, seed {seed}")
-                        continue  # Skip this task
-                    elif np.isinf(auc_baseline):
-                        print(f"[warn] baseline AUC is inf/-inf for task {i}, seed {seed}")
-                        continue  # Skip this task
-
-                    # Skip if baseline is effectively 0
-                    if auc_baseline < 1e-8:
-                        print(f"[info] baseline AUC is effectively 0 ({auc_baseline}) for task {i}, seed {seed}, method {method} - skipping forward transfer calculation")
-                        continue  # Skip this task
-
-                    # FT_i = (AUC_CL - AUC_baseline) / AUC_baseline
-                    ft_i = (auc_cl - auc_baseline) / auc_baseline
-
-                    # Check if the final ft_i is inf/-inf or NaN
-                    if np.isnan(ft_i) or np.isinf(ft_i):
-                        print(f"[warn] Forward Transfer result is NaN/inf/-inf for task {i}, seed {seed}, method {method}")
-                        # Skip this task - don't append to ft_vals
-                    else:
-                        ft_vals.append(ft_i)
-
-                else:
-                    print(f"[warn] missing baseline data for task {i}, seed {seed}")
-                    # Don't append anything to ft_vals - skip this task
-
-            if ft_vals:
-                FT_seeds.append(float(np.nanmean(ft_vals)))
-            else:
-                FT_seeds.append(np.nan)
+            FT_seeds.append(average_forward_transfer(training, chunk, effective_tasks, baseline_data[seed]))
 
         # Aggregate across seeds
-        A_mean, A_ci = _mean_ci(AP_seeds)
-        F_mean, F_ci = _mean_ci(F_seeds)
-        FT_mean, FT_ci = _mean_ci(FT_seeds)
+        A_mean, A_ci = mean_ci(AP_seeds)
+        F_mean, F_ci = mean_ci(F_seeds)
+        FT_mean, FT_ci = mean_ci(FT_seeds)
 
         rows.append(
             {
@@ -316,20 +165,11 @@ def _fmt(mean: float, ci: float, best: bool, better: str = "max", show_confidenc
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--data_root", required=True)
-    p.add_argument("--algo", required=True)
+    add_numerical_data_args(p, seq_len_default=10, seeds_default=[1, 2, 3, 4, 5], required=True)
     p.add_argument("--methods", nargs="+", required=True)
-    p.add_argument("--strategy", default='generate')
-    p.add_argument("--seq_len", type=int, default=10)
-    p.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4, 5])
     p.add_argument("--level", type=int, default=None, help="Difficulty level of the environment (if not provided, generates table for all levels 1, 2, 3)")
     p.add_argument("--agents", type=int, default=2, help="Number of agents in the environment")
-    p.add_argument(
-        "--end_window_evals",
-        type=int,
-        default=10,
-        help="How many final eval points to average for F (Forgetting)",
-    )
+    add_forgetting_args(p, default="weighted")
     p.add_argument(
         "--confidence-intervals",
         action="store_true",
@@ -347,14 +187,6 @@ if __name__ == "__main__":
         type=int,
         default=None,
         help="Only use the first N tasks from the sequence (e.g. use 10 from a 20-task run).",
-    )
-    p.add_argument(
-        "--forgetting_formula",
-        choices=["weighted", "peak_final"],
-        default="weighted",
-        help="Forgetting formula. 'weighted' (default) is normalized and decay-weighted."
-             "'peak_final' is the unnormalized peak-minus-final drop (see experiments/results/"
-             "plotting/utils/metrics.py).",
     )
     args = p.parse_args()
 
