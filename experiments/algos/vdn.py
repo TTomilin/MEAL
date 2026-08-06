@@ -32,7 +32,6 @@ from meal.wrappers.jaxmarl import CTRolloutManager
 @dataclass
 class VDNConfig(OffPolicyConfig):
     alg_name: str = "vdn"
-    renderer_version: str = "v1"
 
 
 def make_vdn_eval_fn(reset_switch, step_switch, network, agents, num_envs: int,
@@ -629,8 +628,7 @@ class VDN(OffPolicyAlgo):
 
             if cfg.record_video:
                 if visualizer is None:
-                    visualizer = create_visualizer(self.num_agents, getattr(cfg.env, "env_name", "overcooked"),
-                                                   cfg.renderer_version)
+                    visualizer = create_visualizer(self.num_agents, getattr(cfg.env, "env_name", "overcooked"))
                 states = rollout_for_video_vdn(rng, cfg, train_state, env, self.network, task_idx, cfg.video_length)
                 file_path = f"{self.exp_dir}/task_{task_idx}_{env_name}.mp4"
                 visualizer.animate(states, out_path=file_path, task_idx=task_idx, env=env)

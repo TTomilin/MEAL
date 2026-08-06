@@ -12,21 +12,10 @@ import imageio.v3 as iio
 from meal.visualization.adapters import to_drawable_state, char_grid_to_drawable_state
 from meal.visualization.bridge_stateviz import render_drawable_with_stateviz
 from meal.visualization.cache import TileCache
-from meal.visualization.renderer_config import RENDERER_VERSION
 from meal.visualization.types import DrawableState, Tile, Obj
 from meal.visualization.window import Window
 
 FLASH_DURATION = 5  # frames to show the delivery flash
-
-
-def _make_state_visualizer(renderer_version: str, tile_px: int):
-    """Instantiate the correct renderer backend."""
-    if renderer_version == "v2":
-        from meal.visualization.rendering.state_visualizer_v2 import StateVisualizerV2
-        return StateVisualizerV2(tile_size=tile_px)
-    else:
-        from meal.visualization.rendering.state_visualizer import StateVisualizer
-        return StateVisualizer(tile_size=tile_px)
 
 
 def _detect_deliveries(prev_ds: DrawableState, curr_ds: DrawableState) -> tuple:
@@ -69,7 +58,6 @@ class OvercookedVisualizer:
         pot_full: int = 20,
         pot_empty: int = 23,
         tile_px: int = 64,
-        renderer_version: Optional[str] = None,
     ):
         self.num_agents = num_agents
         self.pot_full = pot_full
@@ -77,9 +65,8 @@ class OvercookedVisualizer:
         self.tile_px = tile_px
         self.cache = TileCache(max_items=4096)
         self.window: Optional[Window] = None
-        # renderer_version from caller overrides the global default in renderer_config.py
-        rv = renderer_version if renderer_version is not None else RENDERER_VERSION
-        self.state_visualizer = _make_state_visualizer(rv, tile_px)
+        from meal.visualization.rendering.state_visualizer import StateVisualizer
+        self.state_visualizer = StateVisualizer(tile_size=tile_px)
 
     def _lazy_window(self):
         if self.window is None:

@@ -1,8 +1,6 @@
 import pygame
 from pygame.locals import DOUBLEBUF, HWSURFACE, QUIT, RESIZABLE, VIDEORESIZE
 
-from meal.visualization.utils.io import load_from_json
-
 
 def run_static_resizeable_window(surface, fps=30):
     """
@@ -71,55 +69,3 @@ def blit_on_new_surface_of_size(surface, size, background_color=None):
         result_surface.fill(background_color)
     result_surface.blit(surface, (0, 0))
     return result_surface
-
-
-class MultiFramePygameImage:
-    """use to read frames of images from overcooked-demo repo easly"""
-
-    def __init__(self, img_path, frames_path):
-        self.image = pygame.image.load(img_path)
-        self.frames_rectangles = MultiFramePygameImage.load_frames_rectangles(
-            frames_path
-        )
-
-    def blit_on_surface(
-            self, surface, top_left_pixel_position, frame_name, **kwargs
-    ):
-        surface.blit(
-            self.image,
-            top_left_pixel_position,
-            area=self.frames_rectangles[frame_name],
-            **kwargs
-        )
-
-    @staticmethod
-    def load_frames_rectangles(json_path):
-        frames_json = load_from_json(json_path)
-
-        if "textures" in frames_json.keys():  # check if its format of soups.json
-            # Get the scale value (default to 1 if not present)
-            scale = float(frames_json["textures"][0].get("scale", "1.0"))
-            frames = frames_json["textures"][0]["frames"]
-        else:  # assume its format of objects.json, terrain.json and chefs.json
-            # Get the scale value (default to 1 if not present)
-            scale = float(frames_json.get("meta", {}).get("scale", "1.0"))
-            frames = []
-            for filename, frame_dict in frames_json["frames"].items():
-                frame_dict["filename"] = filename
-                frames.append(frame_dict)
-
-        result = {}
-        for frame_dict in frames:
-            assert not frame_dict.get("rotated")  # not implemented support yet
-            assert not frame_dict.get("trimmed")  # not implemented support yet
-            frame_name = frame_dict["filename"].split(".")[0]
-            frame = frame_dict["frame"]
-            # Apply the scale factor to the frame coordinates
-            rect = pygame.Rect(
-                int(frame["x"] * scale), 
-                int(frame["y"] * scale), 
-                int(frame["w"] * scale), 
-                int(frame["h"] * scale)
-            )
-            result[frame_name] = rect
-        return result

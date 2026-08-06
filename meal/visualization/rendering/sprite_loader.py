@@ -1,11 +1,10 @@
 """
-Sprite loader for the v2 renderer.
+Sprite loader for the renderer.
 
-Instead of slicing frames from large sprite-sheet PNGs, the v2 renderer reads
-each sprite from its own individual PNG file (produced by
-scripts/extract_sprites.py).  This module provides:
+Reads each sprite from its own individual PNG file in data/sprites/, rather
+than slicing frames out of large sprite-sheet PNGs. This module provides:
 
-  DirectorySpriteLoader  – drop-in replacement for MultiFramePygameImage
+  DirectorySpriteLoader  – loads sprites from a flat directory of PNGs
   colorize_surface       – tint a surface to any RGB colour (used for hats)
   agent_color            – generate a unique colour for any agent index
 """
@@ -25,9 +24,6 @@ import pygame
 class DirectorySpriteLoader:
     """
     Load sprites from individual PNG files in a flat directory.
-
-    Interface is compatible with MultiFramePygameImage.blit_on_surface() so
-    the two can be swapped transparently.
 
     Images are loaded lazily and cached in memory.
     """
@@ -110,18 +106,18 @@ def colorize_surface(
 # Automatic colour generation
 # ---------------------------------------------------------------------------
 
-# Named colours supported for backward compatibility with v1 player_colors
+# Named colours usable via the player_colors config option
 _NAMED_COLORS: dict[str, Tuple[int, int, int]] = {
     "red":    (220,  20,  20),
-    "green":  ( 20, 160,  20),
+    "green":  ( 34, 139,  34),
     "blue":   ( 30,  30, 210),
     "orange": (230, 140,   0),
     "purple": (140,  50, 200),
 }
 
 
-# Ordered palette matching the v1 player_colors list: red, green, orange, blue, purple
-_V1_AGENT_COLORS = [
+# Ordered palette used for the first 5 agents, by index: red, green, orange, blue, purple
+_DEFAULT_AGENT_COLORS = [
     _NAMED_COLORS["red"],
     _NAMED_COLORS["green"],
     _NAMED_COLORS["orange"],
@@ -134,12 +130,11 @@ def agent_color(agent_idx: int) -> Tuple[int, int, int]:
     """
     Return a perceptually distinct RGB colour for *agent_idx*.
 
-    Agents 0-4 use the same colours as the v1 renderer in the same order
-    (red, green, orange, blue, purple).  Higher indices use golden-ratio
-    hue spacing in HSV space.
+    Agents 0-4 use a fixed palette, in order (red, green, orange, blue,
+    purple). Higher indices use golden-ratio hue spacing in HSV space.
     """
-    if agent_idx < len(_V1_AGENT_COLORS):
-        return _V1_AGENT_COLORS[agent_idx]
+    if agent_idx < len(_DEFAULT_AGENT_COLORS):
+        return _DEFAULT_AGENT_COLORS[agent_idx]
     golden_ratio = 0.618033988749895
     hue = (agent_idx * golden_ratio + 0.1) % 1.0
     r, g, b = colorsys.hsv_to_rgb(hue, 0.65, 0.85)

@@ -4,6 +4,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
+build/
 *.ipynb
 *.DS_Store
 .vscode/

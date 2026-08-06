@@ -7,7 +7,7 @@ from meal.visualization.types import (
     DrawableState, Tile, Obj, Player as DPlayer, PotState, Dir
 )
 
-# Tile character constants (same values used by both v1 and v2 renderers)
+# Tile character constants (values used by the renderer)
 EMPTY = " "
 COUNTER = "X"
 ONION_DISPENSER = "O"

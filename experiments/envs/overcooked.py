@@ -138,7 +138,7 @@ class OvercookedAdapter(EnvAdapter):
 
         def record_video(rng, train_state, network, env, task_idx, exp_dir):
             if "visualizer" not in cache:
-                cache["visualizer"] = create_visualizer(env.num_agents, env_cfg.env_name, cfg.renderer_version)
+                cache["visualizer"] = create_visualizer(env.num_agents, env_cfg.env_name)
             visualizer = cache["visualizer"]
             states = rollout_for_video(rng, cfg, train_state, env, network, task_idx, cfg.video_length,
                                        env_adapter=self)

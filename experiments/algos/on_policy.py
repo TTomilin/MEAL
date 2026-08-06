@@ -33,7 +33,6 @@ class OnPolicyConfig(BaseConfig):
     ent_coef: float = 0.01
     vf_coef: float = 0.5
     max_grad_norm: float = 1.0
-    renderer_version: str = "v1"
     reset_optimizer: bool = True
 
     # ═══════════════════════════════════════════════════════════════════════════

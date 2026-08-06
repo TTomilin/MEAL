@@ -695,7 +695,6 @@ class QMIX(OffPolicyAlgo):
                 # Q-value-argmax video rollout is QMIX-owned (see vdn.py's equivalent
                 # comment) -- only verified against Overcooked.
                 if visualizer is None:
-                    # matches original qmix.py: renderer_version arg omitted here
                     visualizer = create_visualizer(self.num_agents, getattr(cfg.env, "env_name", "overcooked"))
                 states = rollout_for_video_qmix(rng, cfg, train_state, env, self.network, task_idx, cfg.video_length)
                 file_path = f"{self.exp_dir}/task_{task_idx}_{env_name}.mp4"

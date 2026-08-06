@@ -1,6 +1,3 @@
-import ast
-import json
-import os
 import textwrap
 
 import jax.numpy as jnp
@@ -115,7 +112,6 @@ def layout_grid_to_dict(grid):
         "B": "plate_pile_idx",
         "O": "onion_pile_idx",
         "P": "pot_idx",
-        # Constants from meal.env.common
         WALL: "wall_idx",
         AGENT: "agent_idx",
         GOAL: "goal_idx",
@@ -147,106 +143,6 @@ def layout_grid_to_dict(grid):
         layout_dict[key] = jnp.array(layout_dict[key], dtype=jnp.int32)
 
     return FrozenDict(layout_dict)
-
-
-def _parse_layout_string(layout_str: str) -> FrozenDict:
-    """Parse a string representation of a FrozenDict layout back to actual FrozenDict."""
-    # Remove the "FrozenDict(" prefix and ")" suffix
-    if layout_str.startswith("FrozenDict("):
-        layout_str = layout_str[11:-1]
-
-    # Parse the dictionary-like string
-    # Replace Array(...) with list representation for parsing
-    import re
-
-    # Extract array contents and convert to lists
-    def array_replacer(match):
-        array_content = match.group(1)
-
-        # Find the array values part (everything between [ and ], before dtype=)
-        # Handle multi-line arrays
-        bracket_match = re.search(r'\[(.*?)\]', array_content, re.DOTALL)
-        if bracket_match:
-            values_str = bracket_match.group(1)
-            # Clean up whitespace and newlines
-            values_str = re.sub(r'\s+', ' ', values_str).strip()
-            # Split by comma and convert to integers
-            try:
-                values = [int(x.strip()) for x in values_str.split(',') if x.strip()]
-                return str(values)
-            except ValueError:
-                # If parsing fails, return empty list
-                return "[]"
-        else:
-            return "[]"
-
-    # Replace Array(...) patterns with lists - use DOTALL flag for multi-line matching
-    layout_str = re.sub(r'Array\(([^)]+(?:\([^)]*\))*[^)]*)\)', array_replacer, layout_str, flags=re.DOTALL)
-
-    # Add quotes around dictionary keys to make it valid Python syntax
-    key_pattern = r'\b(wall_idx|agent_idx|goal_idx|plate_pile_idx|onion_pile_idx|pot_idx|height|width)\b:'
-    layout_str = re.sub(key_pattern, r'"\1":', layout_str)
-
-    # Parse the cleaned string as a dictionary
-    try:
-        layout_dict = ast.literal_eval(layout_str)
-    except (ValueError, SyntaxError) as e:
-        print(f"Failed to parse layout string: {e}")
-        print(f"Cleaned string: {layout_str[:200]}...")
-        # If parsing fails, create a minimal valid layout
-        layout_dict = {
-            "height": 6,
-            "width": 7,
-            "wall_idx": [],
-            "agent_idx": [],
-            "goal_idx": [],
-            "plate_pile_idx": [],
-            "onion_pile_idx": [],
-            "pot_idx": []
-        }
-
-    # Convert lists to JAX arrays with correct dtypes
-    array_keys = ["wall_idx", "agent_idx", "goal_idx", "plate_pile_idx", "onion_pile_idx", "pot_idx"]
-    for key in array_keys:
-        if key in layout_dict:
-            layout_dict[key] = jnp.array(layout_dict[key], dtype=jnp.int32)
-        else:
-            layout_dict[key] = jnp.array([], dtype=jnp.int32)
-
-    return FrozenDict(layout_dict)
-
-
-def _load_layouts_from_json(json_file_path: str) -> dict:
-    """Load layouts from a JSON file and convert them to FrozenDict format."""
-    if not os.path.exists(json_file_path):
-        print(f"Warning: JSON file {json_file_path} not found")
-        return {}
-
-    try:
-        with open(json_file_path, 'r') as f:
-            raw_data = json.load(f)
-
-        layouts = {}
-        for i, item in enumerate(raw_data):
-            if isinstance(item, dict) and "layout" in item:
-                # Parse the layout string to FrozenDict
-                layout_str = item["layout"]
-                if isinstance(layout_str, str):
-                    parsed_layout = _parse_layout_string(layout_str)
-                    # Generate a name based on file and index
-                    base_name = os.path.splitext(os.path.basename(json_file_path))[0]
-                    layout_name = f"{base_name}_{i}"
-                    layouts[layout_name] = parsed_layout
-                else:
-                    # Already a proper layout object
-                    base_name = os.path.splitext(os.path.basename(json_file_path))[0]
-                    layout_name = f"{base_name}_{i}"
-                    layouts[layout_name] = item["layout"]
-
-        return layouts
-    except Exception as e:
-        print(f"Error loading layouts from {json_file_path}: {e}")
-        return {}
 
 
 def evaluate_grid(grid):
@@ -596,28 +492,17 @@ W     A   W
 WWWWWWWWWWW
 """
 
-# Load generated layouts from JSON files
-_current_dir = os.path.dirname(os.path.abspath(__file__))
-easy_generated_layouts = _load_layouts_from_json(os.path.join(_current_dir, "gen_20_easy.json"))
-medium_generated_layouts = _load_layouts_from_json(os.path.join(_current_dir, "gen_20_medium.json"))
-hard_generated_layouts = _load_layouts_from_json(os.path.join(_current_dir, "gen_20_hard.json"))
-
 # Hard layouts
-hard_layouts_legacy = {
+hard_layouts = {
     "forced_coord": FrozenDict(forced_coord),
     "forced_coord_2": layout_grid_to_dict(foorced_coord_2),
     "split_kitchen": layout_grid_to_dict(split_kitchen),
     "basic_cooperative": layout_grid_to_dict(basic_cooperative),
 }
-
-# Combine legacy and generated hard layouts
-hard_layouts = {
-    **hard_layouts_legacy,
-    **hard_generated_layouts,
-}
+hard_layouts_legacy = hard_layouts  # kept for backward compat; no generated layouts merged in anymore
 
 # Medium layouts
-medium_layouts_legacy = {
+medium_layouts = {
     "coord_ring": FrozenDict(coord_ring),
     "efficiency_test": layout_grid_to_dict(efficiency_test),
     "split_work": layout_grid_to_dict(split_work),
@@ -627,15 +512,10 @@ medium_layouts_legacy = {
     "corridor_challenge": layout_grid_to_dict(corridor_challenge),
     "c_kitchen": layout_grid_to_dict(c_kitchen),
 }
-
-# Combine legacy and generated medium layouts
-medium_layouts = {
-    **medium_layouts_legacy,
-    **medium_generated_layouts,
-}
+medium_layouts_legacy = medium_layouts  # kept for backward compat; no generated layouts merged in anymore
 
 # Easy layouts
-easy_layouts_legacy = {
+easy_layouts = {
     "cramped_room": FrozenDict(cramped_room),
     "asymm_advantages": FrozenDict(asymm_advantages),
     "square_arena": layout_grid_to_dict(square_arena),
@@ -649,12 +529,7 @@ easy_layouts_legacy = {
     "resource_sharing": layout_grid_to_dict(resource_sharing),
     "basic_kitchen_large": layout_grid_to_dict(basic_kitchen_large),
 }
-
-# Combine legacy and generated easy layouts
-easy_layouts = {
-    **easy_layouts_legacy,
-    **easy_generated_layouts,
-}
+easy_layouts_legacy = easy_layouts  # kept for backward compat; no generated layouts merged in anymore
 
 # All layouts
 overcooked_layouts = {

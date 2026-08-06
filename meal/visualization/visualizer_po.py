@@ -38,14 +38,12 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
         pot_full: int = 20,
         pot_empty: int = 23,
         tile_px: int = 64,
-        renderer_version=None,
     ):
         super().__init__(
             num_agents=num_agents,
             pot_full=pot_full,
             pot_empty=pot_empty,
             tile_px=tile_px,
-            renderer_version=renderer_version,
         )
         self._init_view_colors()  # semi-transparent
 
@@ -67,8 +65,8 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
         }
 
         # Pull the configured order directly from the StateVisualizer.
-        # With the v2 renderer player_colors defaults to [], so we fall back to
-        # auto-generated colours (same golden-ratio hues used for the hats).
+        # player_colors defaults to [], so we fall back to auto-generated
+        # colours (same golden-ratio hues used for the hats).
         from meal.visualization.rendering.sprite_loader import agent_color as _agent_color
         palette = []
         for name in self.state_visualizer.player_colors:
@@ -76,7 +74,7 @@ class OvercookedVisualizerPO(OvercookedVisualizer):
             palette.append(np.array([rgb[0], rgb[1], rgb[2], alpha], dtype=np.uint8))
 
         if not palette:
-            # v2 renderer (empty player_colors): generate per-agent colours automatically
+            # empty player_colors: generate per-agent colours automatically
             for i in range(self.num_agents):
                 rgb = _agent_color(i)
                 palette.append(np.array([rgb[0], rgb[1], rgb[2], alpha], dtype=np.uint8))
