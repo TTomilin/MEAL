@@ -2,8 +2,7 @@
 
 MEAL is the first **Continual Multi‑Agent Reinforcement Learning (CMARL)** benchmark built around cooperative 
 Overcooked‑style tasks, implemented in JAX for high‑performance training and evaluation. It focuses on learning over 
-extensive sequences of procedurally generated tasks without catastrophic forgetting, across different team sizes, 
-difficulty level, and reward settings.
+extensive sequences of procedurally generated tasks, across different team sizes and difficulty levels.
 
 <div align="center">
   <table>
@@ -22,9 +21,10 @@ difficulty level, and reward settings.
 ## Key Features
 
 - JAX/Flax implementation for scalable, accelerated training
-- Procedurally generated cooperative tasks with adjustable difficulty
-- Built‑in continual learning regularizers and memory methods
-- Multi‑agent baselines: IPPO and MAPPO
+- Procedurally generated cooperative tasks with adjustable difficulty, across four environments
+  (Overcooked, MPE, SMAX, JaxNav)
+- Multi-agent algorithms: IPPO, MAPPO, HAPPO, VDN, QMIX
+- Continual learning methods: EWC, MAS, L2, FT, AGEM, ER-ACE, PackNet
 - Results tooling: W&B integration, download utilities, and plotting scripts
 
 ## Installation
@@ -54,7 +54,7 @@ argument (`ippo`, `mappo`, `happo`, `vdn`, `qmix`), then the continual-learning 
 the environment (`overcooked`, `mpe`, `smax`, `jaxnav`) as a subcommand. Outer flags must
 come before the `env:...` subcommand token.
 
-### Example: IPPO + EWC on generated medium Overcooked tasks
+### Example: IPPO + EWC on generated medium Overcooked tasks with 2 agents
 
 ```bash
 python -m experiments.train ippo \
@@ -63,47 +63,38 @@ python -m experiments.train ippo \
   --num-agents 2 \
   --num-envs 2048 \
   --num-steps 400 \
-  --update-epochs 8 \
-  --use-wandb \
-  --project MEAL \
-  --seed 1 \
   env:overcooked \
   --env.difficulty medium
 ```
 
-### Example: MAPPO + MAS with CNN encoder and 4 agents
-
-```bash
-python -m experiments.train mappo \
-  --cl-method mas \
-  --encoder cnn \
-  --seq-length 8 \
-  --num-agents 4 \
-  --use-wandb \
-  --project MEAL \
-  --seed 2 \
-  env:overcooked \
-  --env.difficulty hard
-```
-
-### Example: VDN + EWC on SMAX
-
-```bash
-python -m experiments.train vdn \
-  --cl-method ewc \
-  --seq-length 5 \
-  --use-wandb \
-  --project MEAL \
-  --seed 3 \
-  env:smax \
-  --env.num-allies 5 \
-  --env.num-enemies 5
-```
+Swap `ippo` for `mappo`/`happo`/`vdn`/`qmix`, `--cl-method ewc` for any of `mas`, `l2`, `ft`,
+`agem`, `er_ace`, `packnet`, and `env:overcooked` for `env:mpe`/`env:smax`/`env:jaxnav`. Every
+combination shares this same CLI shape. Full flag reference, including every algorithm- and
+environment-specific option, is in [experiments/README.MD](experiments/README.MD).
 
 ### Running Experiments
 For running experiments, please refer to [experiments/README.MD](experiments/README.MD).
 To reproduce the experiments from the paper specifically, see
 [scripts/README.MD](scripts/README.MD).
+
+## Python API
+
+Besides the training CLI, MEAL is directly importable as a library. For writing your own
+training loop, or just poking at an environment:
+
+```python
+import meal
+
+env = meal.make_env('overcooked', difficulty='medium')
+obs, state = env.reset(reset_key)
+obs, state, reward, done, info = env.step(step_key, state, actions)
+
+# A continual sequence of tasks, same generation logic the CLI uses:
+tasks = meal.make_sequence(sequence_length=6, num_agents=3, difficulty='hard')
+```
+
+See [examples/](examples/README.md) for small, runnable scripts covering each environment, CL
+task sequences, partial observability, and stochastic-transition wrappers.
 
 ## Environments
 
@@ -125,18 +116,34 @@ For details on how Overcooked layouts themselves are procedurally generated, see
   - `train.py`: single training entry point (algo x cl-method x env)
   - `algos/`: AbstractAlgo/OnPolicyAlgo/OffPolicyAlgo hierarchy (IPPO, MAPPO, HAPPO, VDN, QMIX)
   - `envs/`: EnvAdapter per environment (Overcooked, MPE, SMAX, JaxNav)
-  - `continual/`: implementations of EWC, MAS, L2, FT, AGEM
+  - `continual/`: implementations of EWC, MAS, L2, FT, AGEM, ER-ACE, PackNet
   - `results/`: W&B downloaders and plotting scripts
 - `scripts/`: paper-reproduction sweeps (see [scripts/README.MD](scripts/README.MD)) + env visualization tooling
 - `meal/`
   - `env/`: layouts and utilities
   - `wrappers/`: logging and environment wrappers
   - `visualization/`: rendering utilities
-- `tests/`: smoke tests and image comparisons
+- `tests/`: environment smoke tests, image comparisons, and algorithm-level regression tests
+
+## Documentation
+
+Every subdirectory with its own concerns has a dedicated README:
+
+| Topic | README |
+| --- | --- |
+| Full training CLI reference (all flags, per-algo and per-CL-method options) | [experiments/README.MD](experiments/README.MD) |
+| Downloading W&B run data and generating result tables/figures | [experiments/results/README.MD](experiments/results/README.MD) |
+| Reproducing the paper's experiment sweeps | [scripts/README.MD](scripts/README.MD) |
+| Runnable library-API example scripts (no training CLI) | [examples/README.md](examples/README.md) |
+| Procedural Overcooked layout generation | [meal/README.MD](meal/README.MD) |
+| Overcooked environment details | [meal/env/overcooked/README.md](meal/env/overcooked/README.md) |
+| MPE environment details | [meal/env/mpe/README.md](meal/env/mpe/README.md) |
+| SMAX environment details | [meal/env/smax/README.md](meal/env/smax/README.md) |
+| JaxNav environment details | [meal/env/jaxnav/README.md](meal/env/jaxnav/README.md) |
 
 ## Acknowledgments
 
-- The Overcooked environment is based on [JaxMARL](https://github.com/FLAIROx/JaxMARL).
+- The environments are based on [JaxMARL](https://github.com/FLAIROx/JaxMARL).
 - Our experiments were managed using [WandB](https://wandb.ai).
 
 ## Citation
