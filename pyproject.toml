@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 authors = [
     { name = "Tristan Tomilin", email = "tristan.tomilin@hotmail.com" },
 ]
-license = "MIT"
+license = { file = "LICENSE" }
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
