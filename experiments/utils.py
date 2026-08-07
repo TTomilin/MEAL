@@ -38,6 +38,7 @@ class Transition_MAPPO(NamedTuple):
     log_prob: jnp.ndarray  # the log probability of the action
     obs: jnp.ndarray  # the observation
     global_state: jnp.ndarray  # the global state for centralized critic
+    agent_id: jnp.ndarray  # true agent id per row, carried through shuffling/minibatching
 
 
 def batchify(x, agent_list, num_actors, flatten=True):

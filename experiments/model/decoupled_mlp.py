@@ -71,7 +71,7 @@ class Actor(nn.Module):
     dormant_threshold: float = 0.01
 
     @nn.compact
-    def __call__(self, x, *, env_idx: int = 0):
+    def __call__(self, x, *, env_idx: int = 0, agent_id: jnp.ndarray = None):
         # Choose the activation function based on input parameter.
         act_fn = nn.relu if self.activation == "relu" else nn.tanh
 
@@ -90,12 +90,17 @@ class Actor(nn.Module):
 
         # -------- append agent ID one-hot ------------------------------------
         if self.use_agent_id:
-            # Create agent IDs based on batch position
-            # In MAPPO, observations are batched with all envs for agent 0, then all envs for agent 1, etc.
-            # So agent_id = batch_position // num_envs
-            batch_size = x.shape[0]
-            agent_ids = jnp.arange(batch_size) // self.num_envs
-            agent_onehot = jax.nn.one_hot(agent_ids, self.num_agents)
+            if agent_id is None:
+                # Fallback for callers that don't pass an explicit agent_id (e.g. eval,
+                # importance-fn rollouts): batchify() always produces the blocked layout.
+                # All envs for agent 0, then all envs for agent 1, etc. so
+                # batch_position // num_envs recovers each row's true agent id.
+                # This does NOT hold once a batch has been flattened+shuffled (as PPO's
+                # minibatch construction does), which is why the training loop passes
+                # agent_id explicitly instead of relying on this fallback.
+                batch_size = x.shape[0]
+                agent_id = jnp.arange(batch_size) // self.num_envs
+            agent_onehot = jax.nn.one_hot(agent_id, self.num_agents)
             x = jnp.concatenate([x, agent_onehot], axis=-1)
 
         # Hidden layers

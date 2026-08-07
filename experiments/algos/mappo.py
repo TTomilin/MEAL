@@ -215,8 +215,15 @@ class MAPPO(OnPolicyAlgo):
                     obs_batch = batchify(last_obs, agents, cfg.num_actors, not cfg.use_cnn)
                     global_state = create_global_state_for_critic(last_obs, agents, cfg.num_envs, cfg.use_cnn)
 
+                    # batchify() always produces the blocked layout (all envs for agent 0,
+                    # then all envs for agent 1, ...), so this is the true per-row agent id.
+                    # Computed explicitly (rather than left to the Actor's fallback) so the
+                    # same array can be stored in the transition and carried through the
+                    # PPO update's flatten+shuffle
+                    agent_id_batch = jnp.arange(cfg.num_actors) // cfg.num_envs
+
                     pi, _actor_dormant = actor_network.apply(
-                        train_state.params['actor'], obs_batch, env_idx=env_idx
+                        train_state.params['actor'], obs_batch, env_idx=env_idx, agent_id=agent_id_batch
                     )
                     value_per_env, _critic_dormant = critic_network.apply(
                         train_state.params['critic'], global_state, env_idx=env_idx
@@ -246,7 +253,7 @@ class MAPPO(OnPolicyAlgo):
                         batchify(done, agents, cfg.num_actors, not cfg.use_cnn).squeeze(),
                         action, value,
                         batchify(reward, agents, cfg.num_actors).squeeze(),
-                        log_prob, obs_batch, global_state_batch,
+                        log_prob, obs_batch, global_state_batch, agent_id_batch,
                     )
                     steps_for_env = steps_for_env + cfg.num_envs
                     runner_state = (train_state, env_state, obsv, update_step, steps_for_env, rng, cl_state)
@@ -276,7 +283,9 @@ class MAPPO(OnPolicyAlgo):
                             local_obs = traj_batch.obs
                             global_state = traj_batch.global_state
 
-                            pi, _ = actor_network.apply(params['actor'], local_obs, env_idx=env_idx)
+                            pi, _ = actor_network.apply(
+                                params['actor'], local_obs, env_idx=env_idx, agent_id=traj_batch.agent_id
+                            )
                             value, _ = critic_network.apply(params['critic'], global_state, env_idx=env_idx)
                             log_prob = pi.log_prob(traj_batch.action)
 
