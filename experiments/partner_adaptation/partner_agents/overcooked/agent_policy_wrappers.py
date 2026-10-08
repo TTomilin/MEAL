@@ -2,11 +2,13 @@
 TODO: clean up logic by vectorizing init_hstate. See HeuristicPolicyPopulation.
 '''
 import jax
+import jax.numpy as jnp
 
 from experiments.partner_adaptation.partner_agents.agent_interface import AgentPolicy
 from experiments.partner_adaptation.partner_agents.overcooked.independent_agent import IndependentAgent
 from experiments.partner_adaptation.partner_agents.overcooked.onion_agent import OnionAgent
 from experiments.partner_adaptation.partner_agents.overcooked.plate_agent import PlateAgent
+from experiments.partner_adaptation.partner_agents.overcooked.planner_variants import PlannerAgent
 from experiments.partner_adaptation.partner_agents.overcooked.random_agent import RandomAgent
 from experiments.partner_adaptation.partner_agents.overcooked.static_agent import StaticAgent
 
@@ -119,6 +121,32 @@ class OvercookedRandomPolicyWrapper(AgentPolicy):
         if self.using_log_wrapper:
             env_state = env_state.env_state
         action, new_hstate = self.policy.get_action(obs, env_state, hstate)
+        return action, new_hstate
+
+    def init_hstate(self, batch_size: int, aux_info=None):
+        return self.policy.init_agent_state(aux_info["agent_id"])
+
+
+class OvercookedPlannerPolicyWrapper(AgentPolicy):
+    """Policy wrapper for the configurable planners P01-P12 (see planner_variants.py).
+
+    `params` is a `PlannerParams` (leading population axis of size 1 when used through
+    `HeuristicPolicyPopulation`), so every variant on a layout shares this one wrapper and one compiled graph.
+    Unlike the wrappers above, planner memory is cleared *before* acting when `done` is set, so the first action
+    of a new episode never sees the previous episode's memory.
+    """
+    is_planner = True
+
+    def __init__(self, layout):
+        super().__init__(action_dim=6, obs_dim=None)
+        self.policy = PlannerAgent(layout)
+
+    def get_action(self, params, obs, done, avail_actions, hstate, rng,
+                   env_state, env_id_idx=0, aux_obs=None, test_mode=False):
+        fresh = self.policy.init_agent_state(hstate.agent_id)
+        reset = jnp.asarray(done).reshape(())
+        hstate = jax.tree.map(lambda new, old: jnp.where(reset, new, old), fresh, hstate)
+        action, new_hstate, _ = self.policy.act(params, obs, env_state, hstate, rng)
         return action, new_hstate
 
     def init_hstate(self, batch_size: int, aux_info=None):

@@ -130,7 +130,9 @@ class TrainConfig:
     # (see partner_bank.py), which must declare exactly N partners; N then defaults to the bank size.
     num_population_partners: Optional[int] = None
     partner_bank: str = ""
-    num_heuristic_partners: int = 5  # Number of heuristic partners to train against
+    # Legacy heuristic partners (indp, onin, plate, rndm, static) trained after the bank. Default: 5 without
+    # `partner_bank`, 0 with one (a manifest is the complete, fixed list of partners).
+    num_heuristic_partners: Optional[int] = None
 
     def __post_init__(self):
         ### MEAL ###
@@ -180,6 +182,8 @@ def run_training():
 
     bank = select_partner_bank(config.layout_name, config.partner_bank, config.num_population_partners)
     config.num_population_partners = len(bank)
+    if config.num_heuristic_partners is None:
+        config.num_heuristic_partners = 0 if config.partner_bank else 5
 
     run_string = get_run_string(config)
 
@@ -280,9 +284,11 @@ def run_training():
     partners = load_partners(bank, obs_dim=np.prod(env.observation_space().shape))
     if config.save_dir:
         with open(os.path.join(config.save_dir, "partner_bank.json"), "w") as f:
-            json.dump([dict(partner_id=r.partner_id, label=r.label, checkpoint=r.checkpoint.name,
-                            population_size=r.population_size, generation_seed=r.generation_seed,
-                            payload_sha256=r.payload_sha256) for r in bank.records], f, indent=2)
+            json.dump([dict(partner_id=r.partner_id, kind=r.kind, label=r.label, **(
+                dict(checkpoint=r.checkpoint.name, population_size=r.population_size,
+                     generation_seed=r.generation_seed, payload_sha256=r.payload_sha256) if r.kind == "brdiv" else
+                dict(planner_id=r.planner_id, config=r.config, config_sha256=r.config_sha256)))
+                       for r in bank.records], f, indent=2)
 
     # train partner population
     if config.alg == "br":
@@ -340,8 +346,9 @@ def run_training():
 
         # Add population partners
         for partner in partners:
+            population_cls = HeuristicPolicyPopulation if partner.record.kind == "planner" else DummyPolicyPopulation
             eval_partner.append((
-                DummyPolicyPopulation(policy_cls=partner.policy),
+                population_cls(policy_cls=partner.policy),
                 jax.tree.map(lambda x: x[jnp.newaxis, ...], partner.params),
                 partner_idx
             ))

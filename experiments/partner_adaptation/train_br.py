@@ -195,7 +195,7 @@ def run_br_training(
     keys = make_stage_keys(config.seed, env_id_idx)
     max_soup = list(max_soup_dict.values())[0] if max_soup_dict else None
 
-    if partner_params is not None:  # RL agent
+    if partner_params is not None and not getattr(partner_policy, "is_planner", False):  # RL agent
         partner_params = jax.tree.map(
             lambda x: x[jnp.newaxis, ...], partner_params)
         partner_population = DummyPolicyPopulation(
@@ -204,10 +204,13 @@ def run_br_training(
         )
 
     else:  # heuristic agent
-        # Doesn't matter what we pass for params, since the heuristic agent doesn't use params.
-        # We just need to pass something to vmap over.
-        partner_params = jax.tree.map(
-            lambda x: x[jnp.newaxis, ...], ego_params)
+        if partner_params is not None:  # configurable planner: its params are its configuration
+            partner_params = jax.tree.map(lambda x: x[jnp.newaxis, ...], partner_params)
+        else:
+            # Doesn't matter what we pass for params, since the heuristic agent doesn't use params.
+            # We just need to pass something to vmap over.
+            partner_params = jax.tree.map(
+                lambda x: x[jnp.newaxis, ...], ego_params)
         partner_population = HeuristicPolicyPopulation(
             policy_cls=partner_policy
         )

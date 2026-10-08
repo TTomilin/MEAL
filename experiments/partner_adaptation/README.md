@@ -111,3 +111,110 @@ A budget below one update is rejected.
   is set, refuses to write into a directory that already has member files, and rejects unknown layouts and
   budgets below one update. `scripts/run_teammate_generation.sh` previously called a nonexistent module and is
   replaced; its positional arguments are gone.
+
+## Planner partners P01-P12
+
+Twelve frozen planning partners complete the 24-partner pilot bank next to the 12 BRDiv members. They are
+candidate variants of one planner, not a claim of twelve distinct strategies. Code:
+`partner_agents/overcooked/planner_variants.py` (`PlannerAgent`, registry `PLANNER_SPECS`); the policy wrapper is
+`OvercookedPlannerPolicyWrapper` in `agent_policy_wrappers.py`. The existing planners (`Independent`, `Onion`,
+`Plate`, `Static`, `Random`) and their constructors are untouched; random/static remain the legacy-mode controls
+(`--num-heuristic-partners`) and are not among the twelve.
+
+The configuration of a variant is `PlannerParams`, runtime data passed as the wrapper's `params`. All twelve share
+one wrapper, hence one compiled train/importance function and one vmapped eval group per layout. The shared
+generalist `G` is `p_onion_on_counter=0.4, prefetch_steps=5, priority=NEAREST, yield_wait=1, handoff=NEAREST,
+history_window=0`; every ID changes exactly one option of `G`, one value on each side of it:
+
+| ID | option (value) | ID | option (value) |
+|---|---|---|---|
+| P01 | counter probability 0.0 | P02 | counter probability 0.8 |
+| P03 | prefetch 0 (plate only when soup ready) | P04 | prefetch 10 (plate when <=10 steps remain) |
+| P05 | priority FILL | P06 | priority SERVE |
+| P07 | yield 0 (replan at once) | P08 | yield 2 (wait up to 2 steps) |
+| P09 | handoff: lowest row-major id | P10 | handoff: highest row-major id |
+| P11 | complement, window 8 | P12 | complement, window 32 |
+
+The bracketing values around `G` exist so that all twelve resolved configurations differ; they carry no scientific
+claim. The registry hash of each configuration is stored in the manifest and re-checked on load.
+
+**Decision rule** (exact environment state, not the observation channels, which also mark carried items and the
+non-interactable border). "Reachable" = adjacent to a floor tile of the agent's connected floor component. A free
+counter is an empty `wall` tile next to such floor; counters in the border corners are not counters. Ties between
+equally good targets go to the lowest row-major tile id, never to a random draw.
+
+- Holding an **onion**: nonfull pot or counter. The destination is drawn once per held onion (counter with
+  probability `p`), then kept until the onion leaves the hand. A counter is only chosen if one is feasible: the
+  *handoff* set is free counters reachable from both agents' floors (nearest, or lowest/highest id by P09/P10); if
+  there is none, the onion goes to a pot. With no nonfull pot the onion goes to any free counter; with neither,
+  the agent stays.
+- Holding a **plate**: plate the nearest ready pot; else walk next to the pot with the least time left and wait
+  (no interaction); else put the plate on the nearest free counter; else stay. Holding a **dish**: deliver at the
+  nearest goal, else stay.
+- **Empty-handed**: FILL is feasible if a nonfull pot and an onion source (pile or onion on a counter) are
+  reachable; SERVE if a plate source and a goal are reachable and a pot is ready, or cooking with
+  `<= prefetch_steps` left (`remaining` = pot status). One feasible: do it. Both: P05 fill, P06 serve, generalist
+  the subtask whose first target is nearer (tie fill), P11/P12 the subtask the other agent covered less in the last
+  `window` steps (tie fill). Neither: stay.
+- **Own drops**: an item the agent put on a counter is left for the other agent; while it is still there it is never
+  a pickup target. (Without this, "counter handoff" is the agent re-taking its own onion.)
+- **Other agent's activity** (P11/P12): each step the other agent's inventory change is one event, FILL if an onion
+  was picked up or released (including into a pot), SERVE if a plate or dish was (plate pickup, plating, delivery).
+  The first step after a reset records nothing. A fixed 32-entry history is kept by every planner; the window only
+  selects how much of it P11/P12 read. The planner reads the other agent's inventory from the env state (what the
+  observation paints anyway); the learning ego needs nothing new.
+- **Blocked move**: the previous action was a translation onto a floor tile and the position did not change. P07
+  replans at once; P08 stays up to two steps, ending early as soon as the other agent has moved from where it stood
+  when the block was detected. The generalist waits one step.
+- **Deadlock and livelock recovery**: progress = inventory change, or the Manhattan distance to the current target
+  reaching a new minimum since the inventory last changed (or since the decision was stable for 3 steps). After 8
+  steps without progress the agent takes one random step to a free floor tile (never the other agent's) and starts
+  counting again. Steps with nothing to do and waiting beside a cooking pot never count. This is a generic escape,
+  not a guarantee: two agents in a one-tile corridor can still lock each other for long stretches.
+- **Reset**: the wrapper clears all memory when `done` is set, before acting (the older wrappers clear it after).
+
+### Bank manifest
+
+Planners are ordinary partner records (`"kind": "planner", "planner_id": "P01"`); manifest position is training
+order and `partner_id` must equal it. `--planners P01 ... | all` of `partner_bank.py` appends them after the BRDiv
+members:
+
+```bash
+python -m experiments.partner_adaptation.partner_bank --layout coord_ring --out banks/coord_ring_24.json \
+    --no-bundled --planners all --generation-dirs <four generation dirs of 3 members each>
+```
+
+The bank is validated (24 unique ids, planner ids unique, resolved configurations unique, hash match) and every
+planner's configuration is resolved in `load_partners` before any ego training starts. `run_br.py` writes the
+resolved planner configuration into `partner_bank.json`. In bank mode `--num-heuristic-partners` now defaults to
+0 (it still defaults to 5 without `--partner-bank`); pass it explicitly to append the legacy partners.
+
+### Quality check (a diagnostic, not a benchmark)
+
+```bash
+python -m experiments.partner_adaptation.partner_quality --layouts coord_ring cramped_room \
+    asymm_advantages counter_circuit [--episodes 8 --steps 400 --seed 0 --counterparts independent onion plate]
+```
+
+Every planner plays agent_1 for `--episodes` episodes against each of the existing independent, onion and plate
+planners (agent_0), with identical resets and per-step keys for all planners. It prints soups (team / by the
+planner), idle share and action mix of the planner, items handed over through counters (put by one agent, taken by
+the other), and how often the variant's distinguishing option mattered ("activation": P01 pot routing, P02 counter
+routing, P03 plate pickup with a ready soup, P04 plate pickup before ready, P05/P06 both subtasks feasible, P07 a
+blocked move, P08 a wait, P09/P10 counter choice with >=2 shared counters, P11/P12 a decided complement). Flags:
+layout collapses known from the static geometry, variants that never activated (unless explained by a collapse),
+and planners whose actions and positions are identical in every episode. A few episodes against three fixed
+counterparts do not show diversity, and a low score with these counterparts does not make a partner unsolvable.
+
+Layout limitations, derived from the geometry (`layout_collapses`) and visible in the quality output:
+
+| layout | pairs the layout cannot distinguish |
+|---|---|
+| coord_ring, counter_circuit | none (two reachable pots, shared counters) |
+| cramped_room | P05/P06 and P11/P12: one pot, so fill and serve are never both feasible |
+| asymm_advantages | P01/P02 (no counter shared by the two rooms), P09/P10, P07/P08 (disjoint floors) |
+
+These pairs are still in the bank (24 ids, no replacement); they behave as copies of `G` on that layout. On
+`cramped_room` a 6-episode quality run also found P08 identical to P05/P06/P11/P12 (the waits it triggers end
+after one step because the other agent moves), and on `coord_ring` P05 identical to P11 in sampled behaviour. Such
+coincidences are reported, not fixed.

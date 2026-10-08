@@ -75,7 +75,7 @@ def one_pop_manifest(tmp_path, d, layout="cramped_room", members=((0, "params_se
                           {"p": {"config": f"{d.name}/{config}", "seed_index": seed_index}}, partners)
 
 
-# ----------------------------------------------------------------------------------------- real bundled data
+#  real bundled data
 
 @pytest.mark.parametrize("layout", LAYOUTS)
 def test_bundled_checkpoints_load_and_act(layout):
@@ -105,7 +105,7 @@ def test_legacy_requires_layout():
         select_partner_bank("", "", None)
 
 
-# ---------------------------------------------------------------------------------------- synthetic banks
+#  synthetic banks
 
 def test_bank_from_several_synthetic_populations(tmp_path):
     """Bundled members + synthetic populations of size 3, 3 and 2 -> one bank, two wrappers."""
@@ -133,7 +133,7 @@ def test_bank_from_several_synthetic_populations(tmp_path):
         select_partner_bank("cramped_room", str(tmp_path / "bank" / "bank.json"), 3)
 
 
-# ------------------------------------------------------------------------------------------- rejections
+#  rejections
 
 def test_rejects_missing_checkpoint(tmp_path):
     d = synthetic_population(tmp_path, "g", "cramped_room", 2, 1)
@@ -229,7 +229,7 @@ def test_assemble_rejects_incomplete_generation(tmp_path):
         assemble_bank("cramped_room", str(tmp_path / "bank.json"), [str(d)])
 
 
-# ---------------------------------------------------------------------- generation settings and accounting
+# generation settings and accounting
 
 def test_interaction_counts_separate_joint_and_agent_transitions():
     cfg = TrainConfig(num_envs_xp=2, num_envs_sp=2, num_steps=8, total_timesteps=200, num_seeds=2)
@@ -256,7 +256,7 @@ def test_generation_rejects_budget_below_one_update_and_unknown_layout(tmp_path)
         generate_population(TrainConfig(mode="disabled", layout_name="nope", checkpoint_path=str(tmp_path)))
 
 
-# ------------------------------------------------------------------------------------ generation round trip
+#  generation round trip
 
 def test_tiny_generation_to_loader_round_trip(tmp_path):
     """Runs the real BRDiv generation on a few dozen transitions (untrained partners; format check only),
