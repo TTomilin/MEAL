@@ -15,7 +15,7 @@ import wandb
 
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.model.mlp import ActorCritic as MLPActorCritic
-from experiments.utils import rollout_for_video, init_cl_state
+from experiments.utils import rollout_for_video, init_cl_state, create_visualizer
 from experiments.continual.agem import AGEM, init_agem_memory
 from experiments.continual.er_ace import ERACE
 from experiments.continual.ewc import EWC
@@ -24,7 +24,6 @@ from experiments.continual.l2 import L2
 from experiments.continual.mas import MAS
 from meal.env.overcooked.layouts.presets import overcooked_layouts
 from meal.env.overcooked.max_soup_calculator import calculate_max_soup
-from meal.visualization.visualizer import OvercookedVisualizer
 from meal import make_env
 from meal.wrappers.logging import LogWrapper
 from experiments.partner_adaptation.partner_agents.agent_interface import ActorWithConditionalCriticPolicy, MLPActorCriticPolicyCL
@@ -261,8 +260,12 @@ def run_training():
     layout_name = config.layout_name if config.layout_name != "" else f"layout_{config.layout_idx}"
     max_soup_dict = {layout_name: calculate_max_soup(config.layout["layout"], env.max_steps, n_agents=env.num_agents)}
 
-    # Initialize visualizer for gif recording
-    visualizer = OvercookedVisualizer(num_agents=env.num_agents)
+    # Visualization extras (pygame/imageio) are only needed when recording videos
+    visualizer = None
+    if config.record_video:
+        import optax
+        from flax.training.train_state import TrainState
+        visualizer = create_visualizer(env.num_agents, config.env_name)
 
     rng = jax.random.PRNGKey(config.seed)
     rng, init_rng = jax.random.split(rng, 2)
@@ -318,22 +321,8 @@ def run_training():
 
             print(f"Initialized CL state for method: {config.cl_method.upper()}")
 
-        # Build importance function for regularization-based CL methods (EWC, MAS, L2, FT)
-        importance_fn = None
-        if cl is not None and config.cl_method.lower() not in ("agem", "er_ace"):
-            def reset_switch(key, task_idx):
-                return env.reset(key)
-
-            def step_switch(key, state, actions, task_idx):
-                # Ego actions are for agent_0 only; provide a noop for agent_1
-                full_actions = {**actions, env.agents[1]: jnp.zeros_like(actions[env.agents[0]])}
-                return env.step(key, state, full_actions)
-
-            importance_fn = cl.make_importance_fn(
-                reset_switch, step_switch, ego_policy.network, [env.agents[0]], config.use_cnn,
-                config.importance_episodes, config.importance_steps, config.normalize_importance,
-                config.importance_stride,
-            )
+        # Compiled functions shared by all stages of this run (see train_ppo_ego_agent)
+        compiled_cache = {}
 
         indp = OvercookedIndependentPolicyWrapper(
             layout=config.layout["layout"], p_onion_on_counter=0.5, p_plate_on_counter=0.5)
@@ -378,15 +367,12 @@ def run_training():
             ego_params, cl_state = run_br_training(
                 config, env, partner_agent_config, ego_policy,
                 ego_params, partner_policy, pop_params[i], env_id_idx=i, eval_partner=eval_partner,
-                max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state,
-                importance_fn=importance_fn)
+                max_soup_dict=max_soup_dict, cl=cl, cl_state=cl_state, compiled_cache=compiled_cache)
             # TODO when using vmap over seeds, do the following
             # ego_params = jax.tree.map(lambda x: x[0, ...], ego_params) # take the first params set from the batch dimension
 
             # Record video after training with population partner
-            if hasattr(config, 'record_video') and config.record_video:
-                from flax.training.train_state import TrainState
-                import optax
+            if config.record_video:
                 temp_train_state = TrainState.create(
                     apply_fn=ego_policy.network.apply,
                     params=ego_params,
@@ -408,11 +394,10 @@ def run_training():
             ego_params, cl_state = run_br_training(
                 config, env, partner_agent_config, ego_policy,
                 ego_params, partner_policy_obj, None, env_id_idx=env_id_idx, eval_partner=eval_partner,
-                max_soup_dict=max_soup_dict, layout_names=[layout_name], cl=cl, cl_state=cl_state,
-                importance_fn=importance_fn)
+                max_soup_dict=max_soup_dict, cl=cl, cl_state=cl_state, compiled_cache=compiled_cache)
 
             # Record video after training with heuristic partner
-            if hasattr(config, 'record_video') and config.record_video:
+            if config.record_video:
                 temp_train_state = TrainState.create(
                     apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
                 states = rollout_for_video(rng, config, temp_train_state, env, ego_policy.network, env_idx=env_id_idx,

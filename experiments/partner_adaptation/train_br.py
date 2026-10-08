@@ -4,13 +4,14 @@ Supports training against both RL and heuristic partner agents.
 import logging
 import time
 from functools import partial
+from typing import Any
 
 import jax
 import jax.numpy as jnp
+from flax import struct
 
 from experiments.partner_adaptation.partner_agents.population_interface import AgentPopulation
-from experiments.partner_adaptation.partner_generation.utils import get_metric_names
-from experiments.partner_adaptation.train_ego import train_ppo_ego_agent, log_metrics
+from experiments.partner_adaptation.train_ego import make_stage_keys, train_ppo_ego_agent
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -36,7 +37,7 @@ class DummyPolicyPopulation(AgentPopulation):
             new_hstate: new hidden state with shape (num_envs, ...) or None
         '''
         gathered_params = self.gather_agent_params(pop_params, agent_indices)
-        num_envs = agent_indices.squeeze().shape[0]
+        num_envs = agent_indices.shape[0]
         rngs_batched = jax.random.split(rng, num_envs)
         vmapped_get_action = jax.vmap(partial(self.policy_cls.get_action,
                                               aux_obs=aux_obs,
@@ -74,7 +75,7 @@ class HeuristicPolicyPopulation(AgentPopulation):
             new_hstate: new hidden state with shape (num_envs, ...) or None
         '''
         gathered_params = self.gather_agent_params(pop_params, agent_indices)
-        num_envs = agent_indices.squeeze().shape[0]
+        num_envs = agent_indices.shape[0]
         rngs_batched = jax.random.split(rng, num_envs)
 
         def _policy_cls_get_action(params, obs, done, avail_actions, hstate, rng, env_state
@@ -102,18 +103,97 @@ class HeuristicPolicyPopulation(AgentPopulation):
         return jax.vmap(partial(self.policy_cls.init_hstate, aux_info={"agent_id": 1}))(vmap_dummy_input)
 
 
+@struct.dataclass
+class PartnerRolloutState:
+    """Env state plus everything the frozen partner needs to act on the next step."""
+    env_state: Any
+    partner_obs: Any
+    partner_done: Any
+    partner_hstate: Any
+
+
+def make_partner_switches(env, partner_population, partner_params):
+    """reset/step switches for single-ego importance rollouts in which the frozen partner acts.
+
+    They have the (reset_switch, step_switch) signature the EWC/MAS importance estimators already use,
+    so the estimators are unchanged. The partner is queried through `partner_population.get_actions`,
+    the same interface as in training: available actions come from the env, the done flag of the previous
+    step drives the partner's own reset handling, and heuristic (planner) partners receive the wrapped env
+    state and carry their agent state across steps. The env auto-resets, as in training.
+
+    Args:
+        partner_params: partner parameters with a leading population axis of size 1, as in training.
+    """
+    ego, partner = env.agents[0], env.agents[1]
+
+    def reset_switch(key, task_idx):
+        obs, env_state = env.reset(key)
+        state = PartnerRolloutState(
+            env_state=env_state,
+            partner_obs=obs[partner],
+            partner_done=jnp.zeros((), dtype=bool),
+            partner_hstate=partner_population.init_hstate(1),
+        )
+        return obs, state
+
+    def step_switch(key, state, actions, task_idx):
+        step_key, partner_key = jax.random.split(key)
+        avail = env.get_avail_actions(state.env_state.env_state)[partner].astype(jnp.float32)
+        act_partner, partner_hstate = partner_population.get_actions(
+            partner_params,
+            jnp.zeros((1,), dtype=jnp.int32),
+            state.partner_obs.reshape(1, 1, -1),
+            state.partner_done.reshape(1, 1, 1),
+            avail[None],
+            state.partner_hstate,
+            partner_key,
+            env_state=jax.tree.map(lambda x: x[None], state.env_state),
+            aux_obs=None,
+        )
+        joint = {ego: actions[ego], partner: act_partner.reshape(1).astype(actions[ego].dtype)}
+        obs, env_state, reward, done, info = env.step(step_key, state.env_state, joint)
+        next_state = PartnerRolloutState(
+            env_state=env_state,
+            partner_obs=obs[partner],
+            partner_done=done["__all__"],
+            partner_hstate=partner_hstate,
+        )
+        return obs, next_state, reward, done, info
+
+    return reset_switch, step_switch
+
+
+def make_partner_importance_fn(cl, env, ego_network, partner_population, config):
+    """Jitted `fn(ego_params, env_idx, rng, partner_params)` computing CL importance with the partner acting.
+
+    Partner parameters are an argument, so one compiled function serves every partner that shares a
+    policy class and parameter shapes.
+    """
+
+    def importance(ego_params, env_idx, rng, partner_params):
+        reset_switch, step_switch = make_partner_switches(env, partner_population, partner_params)
+        fn = cl.make_importance_fn(
+            reset_switch, step_switch, ego_network, [env.agents[0]], config.use_cnn,
+            config.importance_episodes, config.importance_steps, config.normalize_importance,
+            config.importance_stride)
+        return fn(ego_params, env_idx, rng)
+
+    return jax.jit(importance)
+
+
 def run_br_training(
         config, env, partner_agent_config, ego_policy, ego_params, partner_policy, partner_params=None,
-        partner_test_mode=False, env_id_idx=0, eval_partner=[], max_soup_dict=None, layout_names=None, cl=None,
-        cl_state=None, importance_fn=None):
+        partner_test_mode=False, env_id_idx=0, eval_partner=[], max_soup_dict=None, cl=None,
+        cl_state=None, log_fn=None, compiled_cache=None):
     '''Run ego agent training against a single partner agent.
 
     Args:
         max_soup_dict: dict, maximum soup counts for each layout (for unified soup metrics)
-        layout_names: list, names of layouts/partners for evaluation metrics
+        log_fn: callable receiving metric dicts; defaults to wandb.log
+        compiled_cache: dict shared by all stages of one run so compatible stages reuse compiled functions
     '''
-    rng = jax.random.PRNGKey(config.seed)
-    rng, init_rng, train_rng = jax.random.split(rng, 3)
+    keys = make_stage_keys(config.seed, env_id_idx)
+    max_soup = list(max_soup_dict.values())[0] if max_soup_dict else None
 
     if partner_params is not None:  # RL agent
         partner_params = jax.tree.map(
@@ -139,7 +219,7 @@ def run_br_training(
     out = train_ppo_ego_agent(
         config=config,
         env=env,
-        train_rng=train_rng,
+        train_rng=keys.train,
         ego_policy=ego_policy,
         init_ego_params=ego_params,
         n_ego_train_seeds=1,
@@ -148,7 +228,11 @@ def run_br_training(
         env_id_idx=env_id_idx,
         eval_partner=eval_partner,
         cl=cl,
-        cl_state=cl_state
+        cl_state=cl_state,
+        eval_rng=keys.eval,
+        log_fn=log_fn,
+        max_soup=max_soup,
+        compiled_cache=compiled_cache,
     )
 
     log.info(f"Training completed in {time.time() - start_time:.2f} seconds")
@@ -159,14 +243,20 @@ def run_br_training(
             # Memory-based methods (AGEM, ER-ACE): cl_state is updated inside the training scan
             cl_state = out["final_cl_state"]
             log.info(f"Updated memory CL state after training on partner {env_id_idx}")
+        elif cl.name == "ft":
+            # Plain fine-tuning stores nothing, so no importance rollout is needed.
+            pass
         else:
-            # Importance-based methods (EWC, MAS, L2, FT): use pre-built importance_fn
-            importance = importance_fn(out["final_params"], env_id_idx, train_rng)
+            # Importance-based methods (EWC, MAS, L2): states come from rollouts where the frozen partner acts
+            cache = compiled_cache if compiled_cache is not None else {}
+            cache_key = ("importance", id(config), env, ego_policy, cl, type(partner_population),
+                         partner_population.policy_cls, getattr(partner_population, "test_mode", None))
+            if cache_key not in cache:
+                cache[cache_key] = make_partner_importance_fn(
+                    cl, env, ego_policy.network, partner_population, config)
+            importance = cache[cache_key](
+                out["final_params"], jnp.asarray(env_id_idx, jnp.int32), keys.importance, partner_params)
             cl_state = cl.update_state(cl_state, out["final_params"], importance)
             log.info(f"Updated CL state after training on partner {env_id_idx}")
-
-    # process and log metrics
-    metric_names = get_metric_names("overcooked")
-    log_metrics(config, out, metric_names, max_soup_dict, layout_names, env_id_idx=env_id_idx)
 
     return out["final_params"], cl_state

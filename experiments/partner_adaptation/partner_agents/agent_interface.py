@@ -95,7 +95,7 @@ class MLPActorCriticPolicyCL(AgentPolicy):
         # self.activation = activation
         self.network = ac
 
-    @partial(jax.jit, static_argnums=(0, 7))
+    @partial(jax.jit, static_argnums=(0,))
     def get_action(self, params, obs, done, avail_actions, hstate, rng,
                    env_id_idx=0, aux_obs=None, env_state=None, test_mode=False):
         """Get actions for the MLP policy."""
@@ -105,7 +105,7 @@ class MLPActorCriticPolicyCL(AgentPolicy):
                               lambda: pi.sample(seed=rng))
         return action, None  # no hidden state
 
-    @partial(jax.jit, static_argnums=(0, 7))
+    @partial(jax.jit, static_argnums=(0,))
     def get_action_value_policy(self, params, obs, done, avail_actions, hstate, rng,
                                 env_id_idx=0, aux_obs=None, env_state=None):
         """Get actions, values, and policy for the MLP policy."""
