@@ -390,7 +390,6 @@ def train_ppo_ego_agent(
             init_partner_hstate = partner_population.init_hstate(
                 config.num_uncontrolled_actors)
 
-            eval_every = int(getattr(config, "eval_every", 1))  # evaluate every N updates
             num_ckpts = int(getattr(config, "num_checkpoints", 1))  # 1 = only final
 
             rew_shaping_horizon = float(getattr(config, "reward_shaping_horizon", 0.0))

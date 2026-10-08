@@ -457,6 +457,9 @@ def execute(config: TrainConfig) -> RunResult:
                         config.importance_episodes * config.importance_steps
                         if config.cl_method and config.cl_method.lower() in IMPORTANCE_METHODS else 0)},
                 "schedule": schedule_description(config, labels),
+                "normalization": {
+                    "max_soup": float(max_soup_dict[layout_name]),
+                    "definition": "W&B *_scaled metrics = soups / max_soup; the CSVs hold raw soups"},
                 "partners": identities, "bank": {"name": bank.name, "source": str(bank.source)},
             })
         else:

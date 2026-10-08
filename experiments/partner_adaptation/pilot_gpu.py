@@ -86,6 +86,7 @@ def verify_run(result, partners: int, config):
     d = result.run_dir
     status = json.loads((d / "status.json").read_text())
     assert status["state"] == "complete" and status["stages_completed"] == partners, status
+    assert json.loads((d / "run.json").read_text())["normalization"]["max_soup"] >= 0
     train = read_csv(d / "train_metrics.csv")
     assert len(train) == partners * int(config.num_updates), len(train)
     assert all(math.isfinite(float(r[c])) for r in train for c in ("actor_loss", "value_loss", "entropy")), \
@@ -481,15 +482,17 @@ def projection_totals(sel, ego, brdiv, updates: int, partner_counts) -> Dict[str
     return {"parts": parts, "missing": missing, "ego_jobs": jobs}
 
 
-def generation_seconds(sel, brdiv) -> Optional[Dict[str, float]]:
+def generation_seconds(sel, brdiv, root: Path) -> Optional[Dict[str, float]]:
+    """Time of the generation jobs that are still to be run (valid existing populations cost nothing)."""
     from experiments.partner_adaptation.partner_generation.run import interaction_counts
+    from experiments.partner_adaptation.pilot import generation_jobs
     if brdiv is None:
         return None
-    cfg = generation_config(sel.layouts[0], sel.gen_seeds[0], Path("."), sel.pop_size, sel.gen_total_timesteps,
-                            "disabled")
-    updates = interaction_counts(cfg)["num_updates"]
-    n = len(sel.layouts) * len(sel.gen_seeds)
-    return {f"generation {k}": v * n for k, v in brdiv_job_seconds(brdiv, updates)["components"].items()}
+    todo = [(cfg, state) for _, _, cfg, state, _ in generation_jobs(sel, root) if state != "valid"]
+    if not todo:
+        return {}
+    updates = interaction_counts(todo[0][0])["num_updates"]
+    return {f"generation {k}": v * len(todo) for k, v in brdiv_job_seconds(brdiv, updates)["components"].items()}
 
 
 def report_projection(sel, root: Path, jobs_info, gate: bool = False) -> int:
@@ -529,7 +532,7 @@ def report_projection(sel, root: Path, jobs_info, gate: bool = False) -> int:
         s = brdiv["settings"]
         print(f"  brdiv profile: {describe_device(brdiv['device'])}, {s['num_envs_xp']}+{s['num_envs_sp']} envs x "
               f"{s['num_steps']} steps ({human(s['agent_transitions_per_update'])} agent transitions/update)")
-    gen = generation_seconds(sel, brdiv)
+    gen = generation_seconds(sel, brdiv, root)
     status = 0
 
     def table(updates):

@@ -6,7 +6,6 @@ competent planners as counterparts. Nothing here measures strength or diversity 
 `partner_quality.py` for the diagnostic.
 """
 import json
-import pickle
 from functools import lru_cache
 from pathlib import Path
 

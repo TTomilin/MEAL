@@ -89,6 +89,14 @@ def test_mas_only_maps_to_online_mas_and_selects_no_other_work(tmp_path, capsys,
     assert launched.calls == []                                        # dry run starts nothing
 
 
+def test_a_bank_that_does_not_hold_24_partners_is_rejected(tmp_path, capsys):
+    path = pilot.bank_path(tmp_path, "cramped_room", 24)
+    assemble_bank("cramped_room", str(path), [], bundled=True, planners=("P01",))       # 4 partners at the 24 path
+    code, out = run_main(["plan", "--root", str(tmp_path), "--layouts", "cramped_room", "--methods", "ft", *PLAN],
+                         capsys)
+    assert code == 2 and "num_population_partners=24 but the bank declares 4" in out.err
+
+
 def test_one_seed_by_default_and_several_only_when_listed(tmp_path):
     one = pilot.make_jobs(pilot.Plan(root=str(tmp_path), layouts=("coord_ring",), steps_per_partner=4915200), tmp_path)
     assert sorted({j.seed for j in one}) == [0] and len(one) == 2
@@ -181,8 +189,8 @@ def test_unmeasured_budget_and_target_are_not_claimed(tmp_path, capsys):
 # ---------------------------------------------------------------------------------------------------------
 
 def make_population(root, layout="coord_ring", seed=1001, status="complete", total=2 * 8 * 4 * 2, members=True,
-                    **extra):
-    cfg = pilot.generation_config(layout, seed, root, 3, total, "disabled", **extra)
+                    gen_mode="disabled", **extra):
+    cfg = pilot.generation_config(layout, seed, root, 3, total, gen_mode, **extra)
     d = pilot.population_dir(cfg)
     d.mkdir(parents=True)
     files = [MEMBER_FILE_FMT.format(i=0, j=j) for j in range(3)]
@@ -440,9 +448,19 @@ def test_suggested_budget_is_the_largest_that_fits_and_is_labelled(tmp_path, cap
 
     def total(u):
         parts = pilot_gpu.projection_totals(sel, ego_profile, brdiv_profile, u, counts)["parts"]
-        return sum(parts.values()) + sum(pilot_gpu.generation_seconds(sel, brdiv_profile).values())
+        return sum(parts.values()) + sum(pilot_gpu.generation_seconds(sel, brdiv_profile, tmp_path).values())
 
     assert total(updates) <= 13 * 3600 < total(updates + 1)
+
+
+def test_projection_counts_only_populations_still_to_generate(tmp_path):
+    _, brdiv = write_profiles(tmp_path)
+    sel = pilot.Plan(root=str(tmp_path), layouts=("coord_ring",), gen_seeds=(1001, 1002))
+    full = sum(pilot_gpu.generation_seconds(sel, json.loads(Path(brdiv).read_text()), tmp_path).values())
+    pop_cfg = pilot.generation_config("coord_ring", 1001, tmp_path, 3, None, "online")
+    make_population(tmp_path, total=int(pop_cfg.total_timesteps), gen_mode="online")
+    half = sum(pilot_gpu.generation_seconds(sel, json.loads(Path(brdiv).read_text()), tmp_path).values())
+    assert half == pytest.approx(full / 2)
 
 
 def test_over_budget_train_is_refused_with_per_layout_commands_unless_accepted(tmp_path, capsys):

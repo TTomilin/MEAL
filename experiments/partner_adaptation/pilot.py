@@ -412,7 +412,8 @@ def make_jobs(sel: TrainSelection, root: Path) -> List[Job]:
             for seed in sel.seeds:
                 tag = identity_tag(task_id, multihead)
                 overrides = dict(
-                    layout_name=layout, partner_bank=str(bank_path(root, layout, total)), num_heuristic_partners=0,
+                    layout_name=layout, partner_bank=str(bank_path(root, layout, total)), num_population_partners=total,
+                    num_heuristic_partners=0,
                     seed=seed, checkpoint_path=str(root / "runs" / layout / f"{method}__{tag}" / f"seed{seed}"),
                     mode=sel.wandb_mode, project=sel.wandb_project, group=sel.wandb_group,
                     tags=["PARTNER_ADAPTATION", "CPA_PILOT", layout, method],

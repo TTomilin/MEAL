@@ -20,7 +20,7 @@ planner that scores badly with these counterparts is not thereby proven unsolvab
 """
 import hashlib
 from dataclasses import dataclass, field
-from typing import Dict, List, Sequence
+from typing import Dict, List
 
 import jax
 import jax.numpy as jnp

@@ -828,11 +828,13 @@ def run_brdiv(config, timings=None):
                         conf_policy=conf_policy, br_policy=br_policy)
             )
         )
-        compile_start = time.time()
-        executable = vmapped_train_fn.lower(rngs).compile()
-        run_start = time.time()
-        out = jax.block_until_ready(executable(rngs))
-        if timings is not None:
+        if timings is None:
+            out = vmapped_train_fn(rngs)
+        else:
+            compile_start = time.time()
+            executable = vmapped_train_fn.lower(rngs).compile()
+            run_start = time.time()
+            out = jax.block_until_ready(executable(rngs))
             timings.update(compile_s=run_start - compile_start, run_s=time.time() - run_start)
 
     end = time.time()

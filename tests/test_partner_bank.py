@@ -8,7 +8,6 @@ Three kinds of data are used, and each test says which:
 Nothing is written outside pytest's tmp dirs.
 """
 import json
-import pickle
 import shutil
 from pathlib import Path
 
@@ -144,7 +143,7 @@ def test_rejects_missing_checkpoint(tmp_path):
 
 
 def test_rejects_same_resolved_file_under_two_populations(tmp_path):
-    d = synthetic_population(tmp_path, "g", "cramped_room", 2, 1)
+    synthetic_population(tmp_path, "g", "cramped_room", 2, 1)
     partners = [{"partner_id": i, "population": p, "member_index": 0, "checkpoint": "g/params_seed0_agent0.pt"}
                 for i, p in enumerate(["a", "b"])]
     cfg = {"config": "g/generation.json"}
@@ -183,7 +182,7 @@ def test_rejects_bad_member_indices(tmp_path):
 
 
 def test_rejects_wrong_count_and_partner_id(tmp_path):
-    d = synthetic_population(tmp_path, "g", "cramped_room", 2, 1)
+    synthetic_population(tmp_path, "g", "cramped_room", 2, 1)
     partners = [{"partner_id": 0, "population": "p", "member_index": 0, "checkpoint": "g/params_seed0_agent0.pt"}]
     pops = {"p": {"config": "g/generation.json"}}
     with pytest.raises(PartnerBankError, match="declares 2 partners but lists 1"):

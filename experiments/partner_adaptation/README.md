@@ -1,11 +1,15 @@
 # Continual partner adaptation (CPA)
 
 `run_br.py` trains an ego agent against a sequence of fixed partners (BRDiv population partners, then
-heuristic planners) with a continual-learning method (FT, EWC, MAS, ...). See `scripts/partner_adaptation.sh`.
+heuristic planners) with a continual-learning method (FT, EWC, MAS, ...). `scripts/partner_adaptation.sh` is the
+original 8-partner sweep (unchanged, still 3 bundled + 5 heuristic partners); the 24-partner pilot is run with
+`scripts/cpa_pilot.sh` (see "Running the 24-partner pilot" below).
 
 ## Behaviour corrections
 
-These change results relative to earlier runs; they are not optimizations.
+These change results relative to earlier runs; they are not optimizations. Runs made before them (and published
+numbers from them) are not comparable with corrected runs: keep them in separate output directories and W&B groups
+and do not pool them. The pilot writes under its own root with W&B group `cpa-pilot`.
 
 - **Importance rollouts use the real partner.** EWC/MAS importance used to be computed with the partner
   replaced by action `0`, which is `up` (stay is `4`). The frozen partner of the stage now acts through the
@@ -305,108 +309,251 @@ are the authoritative record.
 
 Not verified on GPU or with a real online W&B session.
 
+## Running the 24-partner pilot
 
-## Pilot launcher (24 partners, FT / Online EWC / Online MAS)
+**Design.** One learning ego (`agent_0`, one set of network parameters) is trained **one partner after another**
+against 24 frozen alternative partners (`agent_1`), one stage per partner: 12 learned BRDiv partners (the 3 bundled
+ones, then three generated populations of 3 from generation seeds 1001-1003) followed by the 12 planners P01-P12. It
+is not 24 simultaneous agents; at any moment the ego plays exactly one partner, and a stage index is also the ego's
+head index. Methods: `ft` (plain fine-tuning, no importance estimate), `online_ewc` (`--cl-method ewc
+--importance-mode online`) and `online_mas` (`--cl-method mas --importance-mode online`); they differ only in the
+continual-learning term and get the same per-partner budget. Identity input and multi-head routing are on by default;
+`--identity hidden` removes **both** (a single head and no identity input), `--use-task-id` / `--use-multihead`
+override each alone (`partner_adaptation.sh --no-use-multihead` alone keeps the identity input, as before).
 
-One launcher with explicit actions, dry-run by default for anything that starts work:
+**Two kinds of seed.** `--gen-seeds` (default `1001 1002 1003`) creates one three-member BRDiv population per seed
+and layout; more generation seeds mean more partners, not replications. `--seeds` (default `0`) is the **ego** seed
+(initialization, rollout and evaluation keys); extra ego seeds must be listed and each is a separate full sequence.
+The initial pilot is therefore 6 generation jobs (2 layouts x 3 seeds) plus 4 ego sequences of 24 stages (2 layouts x
+FT/EWC x 1 seed). Everything below runs from the repository root; `scripts/cpa_pilot.sh` is a wrapper for
+`python -m experiments.partner_adaptation.pilot`.
+
+### 1. Local setup and checks (CPU, no GPU, no W&B)
+
+Python 3.10. `pip install -e ".[utils]"` is all the CPA code needs (`[viz]` is only for `--record-video`).
 
 ```bash
-scripts/cpa_pilot.sh --help            # or: python -m experiments.partner_adaptation.pilot --help
+python3.10 -m venv .venv && source .venv/bin/activate && pip install --upgrade pip && pip install -e ".[utils]"
+JAX_PLATFORMS=cpu python -m pytest tests/test_cpa_metrics.py tests/test_cpa_training.py tests/test_partner_bank.py tests/test_planner_variants.py tests/test_run_outputs.py tests/test_pilot.py -q
+scripts/cpa_pilot.sh --help
+scripts/cpa_pilot.sh plan --root /tmp/cpa_plan --steps-per-partner 4915200
+JAX_PLATFORMS=cpu scripts/cpa_pilot.sh smoke --root /tmp/cpa_smoke --layouts cramped_room
 ```
 
-| action | what it does |
-|---|---|
-| `smoke` | local CPU checks without W&B: tiny BRDiv generation, bank assembly, FT / Online EWC / Online MAS ego runs, no-op resume |
-| `preflight` | short GPU preflight: real CUDA device (no silent CPU fallback), bundled policies, a tiny optimizer step and evaluation against a learned partner and a planner, checkpoint and metric writes, W&B login |
-| `profile`, `profile-brdiv` | compile vs synchronized steady-state timings, written to `<root>/profiles/*.json`; never train a full sequence |
-| `plan` | dry run: populations, banks, jobs, partner counts, interaction units, budgets, schedules, output paths, projection |
-| `generate` | missing BRDiv populations only (one job per layout and generation seed) |
-| `bank` | assemble and check the 24-partner banks |
-| `train` | the selected layouts x methods x seeds, one job after another |
-| `resume` | resume an interrupted run from its directory |
+`plan` only prints (nothing is created); `smoke` runs tiny generation, bank assembly, FT/EWC/MAS runs and a no-op
+resume with W&B disabled (a few minutes per method on a laptop CPU) and says nothing about learning or speed. The
+whole suite is `JAX_PLATFORMS=cpu python -m pytest tests -q`.
 
-`generate`, `train` and `resume` print their plan and the exact command unless `--run` (or `RUN=1`) is given. Defaults
-are the pilot: layouts `coord_ring cramped_room`, methods `ft online_ewc`, ego seed `0`, identity input and multi-head
-routing both on, W&B online, evaluation of all 24 partners with 5 episodes at initialization and after every stage plus
-the current partner every 5 updates and at stage end. Nothing is a Cartesian sweep by default: further ego seeds
-(`--seeds 0 1`), the other layouts and `--methods online_mas` must be listed. `--gen-seeds` (default 1001 1002 1003)
-selects generation populations, not ego replications. `--identity hidden` removes both the identity input and the
-oracle head routing; `--use-task-id` / `--use-multihead` override each alone (a warning is printed for the mixed case).
-`online_mas` maps to `cl_method=mas, importance_mode=online`.
+### 2. RunPod environment (Linux, NVIDIA GPU)
+
+Separate from the CPU instructions above. Per the [official JAX installation guide](https://docs.jax.dev/en/latest/installation.html),
+NVIDIA GPU support on Linux comes from the CUDA wheels (`jax[cuda12]`/`jax[cuda13]`, CUDA and cuDNN from pip), needs
+an NVIDIA driver >= 525 for CUDA 12 (>= 580 for CUDA 13) and requires `LD_LIBRARY_PATH` not to point at another CUDA.
+This project resolves to JAX 0.6.2 on Python 3.10, which publishes CUDA 12 wheels only, so the command below pins the
+GPU wheels to whatever JAX the project install selected instead of guessing a version. Use a pod image with a
+current driver; `nvidia-smi` shows it.
 
 ```bash
-export MEAL_CPA_ROOT=/workspace/cpa            # a persistent volume: see below
-scripts/cpa_pilot.sh smoke                     # CPU, no W&B
-scripts/cpa_pilot.sh preflight                 # GPU pod; add --wandb-mode ... to skip the login check
-scripts/cpa_pilot.sh profile --layout coord_ring            # needs the banks for an expanded-bank (non-provisional) profile
+python3.10 -m venv /workspace/venv-meal && source /workspace/venv-meal/bin/activate && pip install --upgrade pip && pip install -e ".[utils]"
+pip install "jax[cuda12]==$(pip show jax | awk '/^Version:/{print $2}')"
+unset LD_LIBRARY_PATH          # in every shell that runs the pilot
+nvidia-smi && python -c "import jax; print(jax.devices())"
+```
+
+The last command must list a `CudaDevice`; if it lists a `CpuDevice` the pilot refuses to run (below). If the pod has
+no `python3.10`, create one with conda (`conda create -n meal python=3.10 -y`) instead. This was not run on a GPU
+machine here.
+
+W&B: the key is read from the environment (or a stored `wandb login`) and is never written to files or printed.
+Type it without echo, or provide it as a pod secret exposed as `WANDB_API_KEY`:
+
+```bash
+read -rsp "WANDB_API_KEY: " WANDB_API_KEY; echo; export WANDB_API_KEY
+python -c "import wandb; print('W&B login ok:', wandb.login(verify=True))"
+```
+
+Choose one output root on storage that survives pod replacement (a network volume), for every command below:
+
+```bash
+export MEAL_CPA_ROOT=/workspace/cpa && mkdir -p "$MEAL_CPA_ROOT" && df -h "$MEAL_CPA_ROOT"
+```
+
+### 3. GPU preflight and profiling
+
+Run inside `tmux`/`screen`. Preflight stops at once without a real CUDA device, then loads the bundled policies,
+trains one tiny EWC update and evaluates a learned partner and a planner, writes and re-reads checkpoint and CSVs and
+checks the W&B login. Profiling is short, never trains a full sequence and writes `$MEAL_CPA_ROOT/profiles/*.json`.
+
+```bash
+scripts/cpa_pilot.sh preflight --layout coord_ring
 scripts/cpa_pilot.sh profile-brdiv --layout coord_ring
-scripts/cpa_pilot.sh generate --run            # skips valid populations, refuses conflicting/incomplete ones
-scripts/cpa_pilot.sh bank
-scripts/cpa_pilot.sh plan --profile $MEAL_CPA_ROOT/profiles/ego_*.json --brdiv-profile .../brdiv_*.json --suggest-budget
-scripts/cpa_pilot.sh train --steps-per-partner <chosen> --run
-scripts/cpa_pilot.sh resume <run directory> --run
-scripts/cpa_pilot.sh train --methods online_mas --steps-per-partner <same> --run   # MAS only; FT/EWC/generation untouched
+scripts/cpa_pilot.sh profile --layout coord_ring
 ```
 
-`scripts/run_br.sh` remains the single raw `run_br` invocation (repaired: it pointed to a module that no longer
-exists); the pilot and `scripts/partner_adaptation.sh` use the same `run_br` entry point.
+The first `profile` has no expanded bank yet (bundled population + 2 planners) and is labelled **PROVISIONAL**;
+repeat it with the real bank after step 5. Compile time and synchronized steady-state time are reported separately,
+for the learned and the planner path, full-bank evaluation, current-partner evaluation and importance rollouts.
 
-### Persistent output root
+### 4. Generate the BRDiv populations (coord_ring and cramped_room only)
 
-Everything the pilot writes is under `--root` / `$MEAL_CPA_ROOT` (`populations/`, `banks/`, `runs/`, `profiles/`,
-`logs/`); there is no default because a default inside the container would be lost with the pod. Put the root on
-storage that survives pod replacement (a network volume or a mounted bucket), and keep the code checkout elsewhere.
-Existing populations, banks and run directories are never modified by `plan`, `generate` or `train`; completed
-populations are read-only inputs.
+The defaults are those layouts, generation seeds 1001-1003, populations of 3 and the repository BRDiv budget (2.5e8
+agent transitions each). The first command lists the six jobs and their state, the second runs the missing ones:
 
-### Reuse and completion
+```bash
+scripts/cpa_pilot.sh generate
+scripts/cpa_pilot.sh generate --run
+```
 
-A population is reused only if `generation.json` says `complete`, its member files exist and the settings that define
-it equal the request; otherwise the command stops and touches nothing. A training job is skipped only if a run
-directory under its output path has the **same resume fingerprint** (configuration and partner identities, as computed
-by `run_br`) and `status.json` says `complete` with every partner done and the export present. A matching incomplete
-run blocks the job (use `resume <dir>`, or `--restart` for a new run); a directory that merely exists counts for
-nothing. Jobs run sequentially on one device; a failing command makes the launcher exit nonzero and stops the queue
-unless `--keep-going`.
+A valid existing population is skipped, an interrupted or differently configured one stops the command untouched.
+A different budget is `--gen-total-timesteps <agent transitions>`; pass the same value to `bank` and `plan`, because
+it is part of what defines a population. `--gen-mode disabled` turns off W&B for generation.
 
-### Budgets, schedules and units
+### 5. Assemble and check the banks
 
-There is no default training budget. `--steps-per-partner` is in joint environment steps per partner (agent
-transitions are twice that) and must be a whole number of updates (`num_envs x num_steps`, 819,200 at the defaults);
-zero updates, budgets that are not a whole number of updates, minibatch counts that do not divide the batch,
-`num_steps != 400` (unless `--allow-protocol-change`) and mismatching dimensions are rejected before launch.
-Every method gets the same per-partner budget. A shorter budget changes what the fixed schedules mean: reward
-shaping goes 1 -> 0 over `--reward-shaping-horizon` joint steps (default 2.5e7) and restarts at every partner, and the
-learning rate is constant unless `--anneal-lr`; `plan` prints both as resolved, never changes them, and labels
-fewer evaluation episodes, a different current-partner interval or a different horizon as `PROTOCOL CHANGE`.
-`run_br` keeps its earlier evaluation schedule (`--eval-schedule all`, every `--eval-every` updates) unless
-`--eval-schedule pilot` is passed, which the launcher always does. Evaluation uses its own RNG stream, so raising `--eval-episodes` adds episodes without changing training.
+```bash
+scripts/cpa_pilot.sh bank
+scripts/cpa_pilot.sh bank --check-only
+python -m experiments.partner_adaptation.partner_quality --layouts coord_ring cramped_room --episodes 8
+scripts/cpa_pilot.sh profile --layout coord_ring --bank "$MEAL_CPA_ROOT/banks/coord_ring_bank24.json"
+```
 
-The plan lists, per job: partners, joint and agent interaction units per partner and in total, evaluation and
-importance-rollout steps (not training), and the output directory.
+`bank` writes `banks/<layout>_bank24.json` (3 bundled + 3 x 3 generated + 12 planners, each member keeping the
+architecture of its own population) and fails unless exactly that many load; `train` passes the expected 24 to
+`run_br`, which rejects a manifest with another count. The quality check is a diagnostic (see above), not a benchmark.
 
-### Runtime projection
+### 6. Choose a budget and train FT + Online EWC
 
-`profile` times, at the real batch settings and `block_until_ready`-synchronized, the compilation and steady-state
-update of the learned path and the planner path separately, the full-bank evaluation (the first one including its
-compilation), the current-partner evaluation, and the importance overhead of EWC/MAS. `profile-brdiv` times BRDiv from
-two short runs. `plan --profile ... --brdiv-profile ...` multiplies those measurements out for the six generation jobs
-plus every ego sequence and prints the components, the device, the batch settings and the interaction units; a profile
-that did not use the expanded 24-partner bank is labelled **PROVISIONAL**. Start-up, bank loading and W&B upload
-time are not measured. `--suggest-budget` prints the largest per-partner budget projected within 8-13 GPU-hours; it is
-a suggestion only and nothing is promised. If `train --run` projects above 13 hours it refuses (unless
-`--accept-over-budget`), names the bottlenecks and prints one `train` command per layout, so the second layout is
-never dropped silently. Without profile files no runtime or speedup is stated at all.
+There is no default budget. `plan` with both profiles prints the projected components and a labelled suggestion; the
+budget is yours to choose, in joint environment steps per partner and a whole number of updates (819,200 each at the
+defaults).
 
-### Checked on CPU and not yet checked on GPU
+```bash
+scripts/cpa_pilot.sh plan --profile "$(ls -t $MEAL_CPA_ROOT/profiles/ego_coord_ring_*.json | head -1)" --brdiv-profile "$(ls -t $MEAL_CPA_ROOT/profiles/brdiv_coord_ring_*.json | head -1)" --suggest-budget
+export STEPS_PER_PARTNER=<your choice, a multiple of 819200>
+scripts/cpa_pilot.sh plan --steps-per-partner "$STEPS_PER_PARTNER"
+```
 
-Checked on CPU (tests/test_pilot.py and a real `smoke` run): argument parsing and dry-run plans for all four layouts,
-default/MAS-only/one-seed/multi-seed selection, identity controls, budget and configuration rejection, command
-failures and exit codes, completed-job reuse and incomplete-run blocking by fingerprint, generation reuse and
-conflict handling, resume dry run and command, projection arithmetic on synthetic profiles, the evaluation schedule,
-the refusal to run preflight/profile on CPU, and a CPU rehearsal of preflight, profile and profile-brdiv with tiny
-settings. Pending on a GPU: the CUDA device check passing, real compile and steady-state timings and therefore any
-projection or budget suggestion, memory fit of the default 2048-environment batch, online W&B authentication, BRDiv
-generation speed, and whether the six generation jobs plus four ego sequences fit the 8-13 GPU-hour target (no
-measurement exists). If the pilot trains but acquisition is negligible, that shows in the per-stage learning curves and
-soups of `train_metrics.csv`/`eval_metrics.csv`; it must not be called forgetting.
+Initial training, both layouts, FT and Online EWC, ego seed 0, W&B online, sequentially (one line):
+
+```bash
+scripts/cpa_pilot.sh train --layouts coord_ring cramped_room --methods ft online_ewc --seeds 0 --steps-per-partner "$STEPS_PER_PARTNER" --run
+```
+
+One layout first: `--layouts coord_ring`, the second later (`--layouts cramped_room`). The same command without `--run`
+prints the plan and the exact `run_br` commands. If a profile projects above 13 hours, `--run` refuses unless
+`--accept-over-budget`, and prints one command per layout; a requested layout is never dropped silently.
+
+### 7. Add Online MAS later (nothing else is repeated)
+
+```bash
+scripts/cpa_pilot.sh train --layouts coord_ring cramped_room --methods online_mas --seeds 0 --steps-per-partner "$STEPS_PER_PARTNER" --run
+```
+
+Same banks, same budget, same seed; populations are not touched and FT/EWC runs are not selected.
+
+### 8. Resume after an interruption
+
+A resume continues from the last finished partner (the interrupted partner restarts from its beginning; the optimizer
+is re-created at every partner anyway). Re-running `train` reports `INCOMPLETE <run directory>` instead of starting a
+duplicate; resume it, or pass `--restart` for a new run.
+
+```bash
+ls -d "$MEAL_CPA_ROOT"/runs/*/*/seed*/br_*
+scripts/cpa_pilot.sh resume "<run directory from the line above>" --run
+```
+
+`resume` reads the saved configuration (the arguments cannot drift), checks the fingerprint, and logs to a new W&B run
+`<name>_resume<n>`; the CSVs keep one record per event.
+
+### 9. Later: asymm_advantages and counter_circuit
+
+Same code and flags; only the layout selection changes.
+
+```bash
+scripts/cpa_pilot.sh generate --layouts asymm_advantages counter_circuit --run
+scripts/cpa_pilot.sh bank --layouts asymm_advantages counter_circuit
+python -m experiments.partner_adaptation.partner_quality --layouts asymm_advantages counter_circuit --episodes 8
+scripts/cpa_pilot.sh train --layouts asymm_advantages counter_circuit --methods ft online_ewc --seeds 0 --steps-per-partner "$STEPS_PER_PARTNER" --run
+```
+
+Layout geometry makes some planner pairs identical on some layouts (see "Planner partners"); profile these layouts
+before reusing a budget chosen on the first two.
+
+### 10. Changing the seed, budget and evaluation count
+
+```bash
+scripts/cpa_pilot.sh train --layouts coord_ring --methods ft online_ewc --seeds 1 --steps-per-partner "$STEPS_PER_PARTNER" --run
+scripts/cpa_pilot.sh train --layouts coord_ring --methods ft online_ewc --seeds 0 --steps-per-partner <other budget> --run
+scripts/cpa_pilot.sh train --layouts coord_ring --methods ft online_ewc --seeds 0 --steps-per-partner "$STEPS_PER_PARTNER" --eval-episodes 20 --eval-current-every 10 --run
+```
+
+`--seeds 0 1` runs two seeds one after the other. Any change of seed, budget or evaluation setting is a new
+configuration and therefore a new run directory; existing runs are never modified or reused for it, and a resume
+refuses changed settings. More evaluation episodes do not change the training random numbers (the evaluation keys
+are independent), but they are still a different run. The reference evaluation is 5 episodes per partner, all 24
+partners at initialization and after every stage, plus the current partner every 5 updates; other values are reported
+as `PROTOCOL CHANGE` in the plan. The episode horizon stays 400. A shorter per-partner budget changes what the fixed
+schedules mean (reward shaping anneals over 2.5e7 joint steps and restarts at every partner; the learning rate is
+constant): `plan` prints both as resolved and never changes them.
+
+### 11. Outputs to keep
+
+Under `$MEAL_CPA_ROOT` (nothing is written inside the checkout):
+
+| path | content |
+|---|---|
+| `populations/brdiv_<layout>_pop3_gseed<seed>/` | member checkpoints, `config.pckl`, `generation.json` (settings, seed, member list, interactions); read-only once complete |
+| `banks/<layout>_bank24.json` | the partner manifest of a layout |
+| `runs/<layout>/<method>__<identity>/seed<seed>/br_*/` | one run: `run.json`, `config.json`, `partner_bank.json`, `status.json`, `train_metrics.csv`, `eval_metrics.csv`, `stage_timings.csv`, `latest.ckpt`, `params_seed<seed>.pt` |
+| `profiles/*.json`, `logs/*.log` | profiling results; one log per launched job |
+
+Keep `runs/` and `populations/` + `banks/` (the run fingerprint pins the partner payload hashes) and the profile JSONs
+that justify the chosen budget.
+
+### 12. Reading the results
+
+`eval_metrics.csv` holds raw per-episode `soups` and `ego_return` (the sparse delivery return; shaping is never
+included). `scope == "full"` rows are the evaluation of all 24 partners at initialization (`stage 0, update 0`) and
+after each stage; `scope == "current"` rows are the partner being trained. W&B additionally logs `*_scaled` metrics =
+soups / the layout's maximum soup count (stored as `normalization.max_soup` in `run.json`); the CSVs are not
+normalized. The stage-by-partner matrix and a learning curve:
+
+```bash
+python - "<run directory>" <<'PY'
+import json, sys, pandas as pd
+run = sys.argv[1]
+max_soup = json.load(open(f"{run}/run.json"))["normalization"]["max_soup"]
+e = pd.read_csv(f"{run}/eval_metrics.csv")
+full = e[e.scope == "full"].groupby(["stage", "update", "eval_partner_id"]).soups.mean().unstack()
+print((full / max_soup).round(2).to_string())          # rows: initialization, then end of each stage; columns: partners
+t = pd.read_csv(f"{run}/train_metrics.csv")
+print((t.groupby("stage").soups.agg(["first", "last"]) / max_soup).round(2).to_string())   # training soups, first vs last update
+PY
+```
+
+Read the matrix row by row (a partner's column over later stages shows retention) and the per-stage curves for
+acquisition. One seed with 5 episodes per cell is exploratory: it supports looking, not confidence intervals or
+significance claims, and nothing here is a formal learning-speed forward-transfer measure, which would need a
+from-scratch baseline per partner. If acquisition is negligible (flat curves, near-zero soups), that is a failure to
+learn within the budget, not forgetting.
+
+### Reuse, budgets and checks
+
+A population is reused only if `generation.json` is `complete`, its members exist and its settings equal the request.
+A training job is skipped only if a run directory of that job has the same resume fingerprint (configuration and
+partner identities) and `status.json` is `complete` with every partner done and the export present; a matching
+incomplete run blocks the job. Jobs run sequentially on one device and a failing job makes the launcher exit nonzero.
+Zero updates, budgets that are not a whole number of updates, minibatches that do not divide the batch and an episode
+horizon other than 400 (without `--allow-protocol-change`) are rejected before launch. `run_br` itself keeps its
+earlier evaluation schedule (`--eval-schedule all`) unless `--eval-schedule pilot` is given, which the launcher always
+does.
+
+### What is verified
+
+Checked on CPU: the CPA tests (`tests/test_pilot.py` and the other `test_cpa_*`, `test_partner_bank`,
+`test_planner_variants`, `test_run_outputs`), launcher parsing and dry-runs for all four layouts, legacy eight-partner
+resolution, rejection of a bank that does not hold 24 partners, and CPU rehearsals of `smoke`, `preflight
+--allow-cpu`, `profile --allow-cpu` and `profile-brdiv --allow-cpu` with tiny settings. **Not verified on a GPU:** the
+CUDA install above, the CUDA device check, memory fit of 2048 environments, real compile and steady-state timings,
+any projection or budget suggestion, online W&B authentication, BRDiv generation speed and whether the 8-13 GPU-hour
+target is reachable. No training quality, partner diversity or speed has been measured.
