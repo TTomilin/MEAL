@@ -131,6 +131,15 @@ class LoadedPartner:
     params: Any
 
 
+def partner_identity(record: Union[PartnerRecord, PlannerRecord]) -> Dict[str, Any]:
+    """JSON-serialisable identity of one bank partner: what a saved run needs to recognise the same partner."""
+    base = dict(partner_id=record.partner_id, kind=record.kind, label=record.label)
+    if record.kind == "brdiv":
+        return dict(base, checkpoint=record.checkpoint.name, population_size=record.population_size,
+                    generation_seed=record.generation_seed, payload_sha256=record.payload_sha256)
+    return dict(base, planner_id=record.planner_id, config=record.config, config_sha256=record.config_sha256)
+
+
 def _read_config(path: Path) -> Dict[str, Any]:
     if not path.is_file():
         raise PartnerBankError(f"population config not found: {path}")

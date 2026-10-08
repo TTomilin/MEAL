@@ -218,3 +218,173 @@ These pairs are still in the bank (24 ids, no replacement); they behave as copie
 `cramped_room` a 6-episode quality run also found P08 identical to P05/P06/P11/P12 (the waits it triggers end
 after one step because the other agent moves), and on `coord_ring` P05 identical to P11 in sampled behaviour. Such
 coincidences are reported, not fixed.
+
+## Run outputs, checkpoints and resume
+
+Every invocation of `run_br` creates a new directory `<checkpoint_path>/<run string>_<YYYYMMDD-HHMMSS>_<8 hex>`
+(`mkdir` is atomic and a clash is retried, so equal layout/method/seed never overwrite an earlier run). It holds:
+
+| file | content |
+|---|---|
+| `config.json` / `config.pckl` | resolved `TrainConfig` (defaults such as `reg_coef` and the heuristic count filled in) |
+| `run.json` | code revision (`git` commit, counts of modified/untracked files; `available: false` outside git), devices and library versions, architecture and parameter count, planned budget, schedule/reset description, exact partner list, resume fingerprint |
+| `partner_bank.json` | partners in training order (checkpoint/planner identity and hashes; legacy heuristics included) |
+| `status.json` | `running`/`complete`/`failed`/`interrupted`, completed stages, **actual** interaction counters, one entry per attempt (start or resume) |
+| `train_metrics.csv` | one row per PPO update |
+| `eval_metrics.csv` | one row per (evaluation event, evaluated partner, episode) |
+| `stage_timings.csv` | one row per partner |
+| `latest.ckpt` | the single rolling boundary checkpoint |
+| `params_seed{seed}.pt` | final policy export, unchanged format (`{"actor_params": ...}`) |
+
+Counters are joint environment steps (one step = both agents act once in each parallel env), consistent with
+`Eval/EnvSteps`: `train_env_steps`, `eval_env_steps` (evaluation partners x episodes x steps per event) and
+`importance_env_steps` (`importance_episodes x importance_steps` per importance-based stage) are kept separate;
+`env_steps` in the CSVs and as the W&B step is the cumulative **training** count.
+
+CSV columns. `train_metrics.csv`: `env_steps, stage, partner_id, partner, update, episodes, soups, ego_return,
+sparse_reward, shaped_reward, shaping_coef, actor_loss, value_loss, entropy, cl_penalty, grad_norm, attempt`.
+`soups`/`ego_return` are means over episodes completed in that update (blank if none); `sparse_reward` and
+`shaped_reward` are the ego's reward summed over one rollout of one env (`num_steps`), the shaped value being the
+raw unannealed shaping term and `shaping_coef` the weight applied to it (computed on the host from the schedule).
+Shaped returns exist for training only: the evaluation episodes do not track them. `eval_metrics.csv`:
+`event_id` (`s<stage>-u<update>`), unique `row_id`, `env_steps, stage, update, train_episodes, eval_partner_id,
+eval_partner, eval_episode, episode_key, soups, ego_return, completed, attempt`. `episode_key` names the episode's
+RNG stream: it is split from `fold_in(eval_key(seed, stage), update)`. `stage_timings.csv`: `compile_s`,
+`compile_cached` (the stage reused an earlier executable), `train_eval_s` (the training scan **including** its
+in-scan evaluation events), `eval_events`, `eval_event_s` (one evaluation event timed separately on the final
+parameters, so evaluation share is about `eval_events x eval_event_s`), `importance_s` (includes its compilation when
+`importance_compiled_here`; blank for FT), `stage_wall_s`, backend/device kind, `peak_bytes_in_use` and
+`memory_status`. Memory is only taken from the backend's own statistics (a process-lifetime peak on GPUs); on CPU it
+is blank and marked `unavailable`. Nothing is estimated.
+
+### W&B
+
+`--mode online|offline|disabled` is respected; the default stays `online`, and `wandb.login` is only called for
+`online` (the key is read from `WANDB_API_KEY` or the stored login and is never printed). `disabled` needs no login.
+The W&B step is the cumulative environment-step count, and each update is logged **once**: training and evaluation
+metrics of the same update are merged into one call, and updates are committed in order even though the training
+scan delivers its host callbacks unordered, so no point is logged behind a later step. Existing metric names are
+kept (`Train/*`, `Eval/*`, `train_step`) and `Train/CLPenalty`, `Train/EgoSparseReward`, `Train/EgoShapedReward`,
+`Train/EnvSteps` and `env_steps` are added. The CSVs are written first; if W&B raises, the run continues, the
+failure is stored in `status.json`, and no local record is lost. Videos, when enabled, are still uploaded by the
+visualizer and use the cumulative step.
+
+### Checkpoint and resume
+
+A checkpoint is written only after a partner has finished training, its importance/CL update is applied and its CSV
+rows are on disk. It replaces `latest.ckpt` atomically (temporary file, `fsync`, rename) and is a `flax` msgpack
+payload behind a magic header and a SHA-256, so a truncated or modified file is rejected before use. It stores the
+ego parameters, the CL state (FT, EWC, MAS, L2, A-GEM/ER-ACE memory), the number of completed stages, counters and
+the fingerprint. `--no-save-checkpoints` turns it off.
+
+What is *not* saved is deliberate: the optimizer (Adam moments and step count), the learning-rate and reward-shaping
+anneal counters are re-created at the start of every partner (see `schedule` in `run.json`), and train, evaluation
+and importance keys are derived from `(seed, stage)`. A boundary resume therefore reproduces the algorithm of an
+uninterrupted run, which the tests check for FT and EWC.
+
+```bash
+python -m experiments.partner_adaptation.run_br <the original arguments> --resume <run directory>
+```
+
+`--resume` accepts the run directory (or its `latest.ckpt`) and continues in it. The original arguments must be
+given again; the resume is rejected, before anything is touched, when anything that affects results differs: the
+partner list, order or payload hashes, layout, architecture, CL method and coefficients, seed, or the per-partner
+schedule (`total_timesteps`, `num_envs`, `num_steps`, evaluation settings, ...). The budget is **per partner**; a larger
+`total_timesteps` does not extend finished partners, it is refused. Logging settings (`--mode`, project, tags) may
+change.
+
+A crash in the middle of a partner restarts that partner from the last completed boundary (no mid-update resume).
+Records of the interrupted partner are cut from the CSVs on resume (the count is stored in `status.json`), so each
+local evaluation event appears once. The interrupted attempt's W&B run keeps whatever it had already logged for that
+partner; the resumed attempt is a **new W&B run** (`<run>_resume<n>`), because W&B cannot rewind steps. The local CSVs
+are the authoritative record.
+
+### Not available here
+
+The launcher referred to as "RunPod" is not part of this checkout; `scripts/partner_adaptation.sh` submits
+`run_br` with the default (online) mode. Not verified on GPU or with a real online W&B session.
+
+## Run outputs, checkpoints and resume
+
+Every invocation of `run_br` creates a new directory `<checkpoint_path>/<run string>_<YYYYMMDD-HHMMSS>_<8 hex>`
+(`mkdir` is atomic and a clash is retried, so equal layout/method/seed never overwrite an earlier run). It holds:
+
+| file | content |
+|---|---|
+| `config.json` / `config.pckl` | resolved `TrainConfig` (defaults such as `reg_coef` and the heuristic count filled in) |
+| `run.json` | code revision (`git` commit, counts of modified/untracked files; `available: false` outside git), devices and library versions, architecture and parameter count, planned budget, schedule/reset description, exact partner list, resume fingerprint |
+| `partner_bank.json` | partners in training order (checkpoint/planner identity and hashes; legacy heuristics included) |
+| `status.json` | `running`/`complete`/`failed`/`interrupted`, completed stages, **actual** interaction counters, one entry per attempt (start or resume) |
+| `train_metrics.csv` | one row per PPO update |
+| `eval_metrics.csv` | one row per (evaluation event, evaluated partner, episode) |
+| `stage_timings.csv` | one row per partner |
+| `latest.ckpt` | the single rolling boundary checkpoint |
+| `params_seed{seed}.pt` | final policy export, unchanged format (`{"actor_params": ...}`) |
+
+Counters are joint environment steps (one step = both agents act once in each parallel env), consistent with
+`Eval/EnvSteps`: `train_env_steps`, `eval_env_steps` (evaluation partners x episodes x steps per event) and
+`importance_env_steps` (`importance_episodes x importance_steps` per importance-based stage) are kept separate;
+`env_steps` in the CSVs and as the W&B step is the cumulative **training** count.
+
+CSV columns. `train_metrics.csv`: `env_steps, stage, partner_id, partner, update, episodes, soups, ego_return,
+sparse_reward, shaped_reward, shaping_coef, actor_loss, value_loss, entropy, cl_penalty, grad_norm, attempt`.
+`soups`/`ego_return` are means over episodes completed in that update (blank if none); `sparse_reward` and
+`shaped_reward` are the ego's reward summed over one rollout of one env (`num_steps`), the shaped value being the
+raw unannealed shaping term and `shaping_coef` the weight applied to it (computed on the host from the schedule).
+Shaped returns exist for training only: the evaluation episodes do not track them. `eval_metrics.csv`:
+`event_id` (`s<stage>-u<update>`), unique `row_id`, `env_steps, stage, update, train_episodes, eval_partner_id,
+eval_partner, eval_episode, episode_key, soups, ego_return, completed, attempt`. `episode_key` names the episode's
+RNG stream: it is split from `fold_in(eval_key(seed, stage), update)`. `stage_timings.csv`: `compile_s`,
+`compile_cached` (the stage reused an earlier executable), `train_eval_s` (the training scan **including** its
+in-scan evaluation events), `eval_events`, `eval_event_s` (one evaluation event timed separately on the final
+parameters, so evaluation share is about `eval_events x eval_event_s`), `importance_s` (includes its compilation when
+`importance_compiled_here`; blank for FT), `stage_wall_s`, backend/device kind, `peak_bytes_in_use` and
+`memory_status`. Memory is only taken from the backend's own statistics (a process-lifetime peak on GPUs); on CPU it
+is blank and marked `unavailable`. Nothing is estimated.
+
+### W&B
+
+`--mode online|offline|disabled` is respected; the default stays `online`, and `wandb.login` is only called for
+`online` (the key is read from `WANDB_API_KEY` or the stored login and is never printed). `disabled` needs no login.
+The W&B step is the cumulative environment-step count, and each update is logged **once**: training and evaluation
+metrics of the same update are merged into one call, and updates are committed in order even though the training
+scan delivers its host callbacks unordered, so no point is logged behind a later step. Existing metric names are
+kept (`Train/*`, `Eval/*`, `train_step`) and `Train/CLPenalty`, `Train/EgoSparseReward`, `Train/EgoShapedReward`,
+`Train/EnvSteps` and `env_steps` are added. The CSVs are written first; if W&B raises, the run continues, the
+failure is stored in `status.json`, and no local record is lost. Videos, when enabled, are still uploaded by the
+visualizer and use the cumulative step.
+
+### Checkpoint and resume
+
+A checkpoint is written only after a partner has finished training, its importance/CL update is applied and its CSV
+rows are on disk. It replaces `latest.ckpt` atomically (temporary file, `fsync`, rename) and is a `flax` msgpack
+payload behind a magic header and a SHA-256, so a truncated or modified file is rejected before use. It stores the
+ego parameters, the CL state (FT, EWC, MAS, L2, A-GEM/ER-ACE memory), the number of completed stages, counters and
+the fingerprint. `--no-save-checkpoints` turns it off.
+
+What is *not* saved is deliberate: the optimizer (Adam moments and step count), the learning-rate and reward-shaping
+anneal counters are re-created at the start of every partner (see `schedule` in `run.json`), and train, evaluation
+and importance keys are derived from `(seed, stage)`. A boundary resume therefore reproduces the algorithm of an
+uninterrupted run, which the tests check for FT and EWC.
+
+```bash
+python -m experiments.partner_adaptation.run_br <the original arguments> --resume <run directory>
+```
+
+`--resume` accepts the run directory (or its `latest.ckpt`) and continues in it. The original arguments must be
+given again; the resume is rejected, before anything is touched, when anything that affects results differs: the
+partner list, order or payload hashes, layout, architecture, CL method and coefficients, seed, or the per-partner
+schedule (`total_timesteps`, `num_envs`, `num_steps`, evaluation settings, ...). The budget is **per partner**; a larger
+`total_timesteps` does not extend finished partners, it is refused. Logging settings (`--mode`, project, tags) may
+change.
+
+A crash in the middle of a partner restarts that partner from the last completed boundary (no mid-update resume).
+Records of the interrupted partner are cut from the CSVs on resume (the count is stored in `status.json`), so each
+local evaluation event appears once. The interrupted attempt's W&B run keeps whatever it had already logged for that
+partner; the resumed attempt is a **new W&B run** (`<run>_resume<n>`), because W&B cannot rewind steps. The local CSVs
+are the authoritative record.
+
+### Not available here
+
+The launcher referred to as "RunPod" is not part of this checkout; `scripts/partner_adaptation.sh` submits
+`run_br` with the default (online) mode. Not verified on GPU or with a real online W&B session.

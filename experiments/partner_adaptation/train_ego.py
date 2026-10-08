@@ -13,6 +13,7 @@ Suggested debug command:
 python ego_agent_training/run.py algorithm=ppo_ego/lbf task=lbf logger.mode=disabled label=debug algorithm.TOTAL_TIMESTEPS=1e5
 '''
 import logging
+import time
 from typing import NamedTuple
 
 import jax
@@ -164,8 +165,37 @@ def build_eval_event(stage_id, update_steps, train_episodes, partner_ids, team_s
     return record, log_dict
 
 
+def shaping_coefficient(horizon, update_steps, steps_per_update):
+    """Weight of the shaped reward during the rollout of update `update_steps` (1-based) of a stage.
+
+    The anneal counts from the start of every stage, not from the start of the run.
+    """
+    if not float(horizon) > 0:
+        return 0.0
+    return 1.0 - min(1.0, (int(update_steps) - 1) * int(steps_per_update) / float(int(horizon)))
+
+
+def build_train_record(stage_id, update_steps, num_updates, steps_per_update, n_episodes, team_soup, ego_return,
+                       sparse_reward, shaped_reward, shaping_coef, actor_loss, value_loss, entropy, cl_penalty,
+                       grad_norm):
+    """One compact per-update training record (episode statistics are blank when no episode completed)."""
+    n_episodes = int(n_episodes)
+    return {
+        "stage_id": int(stage_id), "update": int(update_steps),
+        "env_steps": (int(stage_id) * int(num_updates) + int(update_steps)) * int(steps_per_update),
+        "episodes": n_episodes,
+        "soups": float(team_soup) if n_episodes else None,
+        "ego_return": float(ego_return) if n_episodes else None,
+        "sparse_reward": float(sparse_reward), "shaped_reward": float(shaped_reward),
+        "shaping_coef": float(shaping_coef),
+        "actor_loss": float(actor_loss), "value_loss": float(value_loss), "entropy": float(entropy),
+        "cl_penalty": float(cl_penalty), "grad_norm": float(grad_norm),
+    }
+
+
 def build_train_log(stage_id, update_steps, num_updates, n_episodes, team_soup, ego_return, value_loss, actor_loss,
-                    entropy_loss, grad_norm, max_soup=None):
+                    entropy_loss, grad_norm, max_soup=None, *, cl_penalty=None, sparse_reward=None,
+                    shaped_reward=None, env_steps=None):
     log_dict = {
         "Train/EgoValueLoss": float(value_loss),
         "Train/EgoActorLoss": float(actor_loss),
@@ -174,6 +204,10 @@ def build_train_log(stage_id, update_steps, num_updates, n_episodes, team_soup, 
         "Train/EpisodesCompleted": int(n_episodes),
         "train_step": int(stage_id) * int(num_updates) + int(update_steps) - 1,
     }
+    for name, value in (("Train/CLPenalty", cl_penalty), ("Train/EgoSparseReward", sparse_reward),
+                        ("Train/EgoShapedReward", shaped_reward), ("Train/EnvSteps", env_steps)):
+        if value is not None:
+            log_dict[name] = float(value)
     if int(n_episodes) > 0:
         log_dict["Train/EgoReturn"] = float(ego_return)
         log_dict["Train/EgoSoup"] = float(team_soup)
@@ -187,7 +221,7 @@ def train_ppo_ego_agent(
         ego_policy, init_ego_params, n_ego_train_seeds,
         partner_population: AgentPopulation,
         partner_params, env_id_idx=0, eval_partner=[], cl=None, cl_state=None,
-        eval_rng=None, log_fn=None, max_soup=None, compiled_cache=None
+        eval_rng=None, log_fn=None, max_soup=None, compiled_cache=None, record_fn=None, stats=None
 ):
     '''
     Train PPO ego agent using the given partner checkpoints and initial ego parameters.
@@ -211,6 +245,12 @@ def train_ppo_ego_agent(
         compiled_cache: optional dict reused across stages of one run. Stages whose static pieces
             (config, env, ego policy, partner population type/policy, CL method, eval groups) match
             share one compiled train function; params, CL state and stage id are runtime arguments.
+        record_fn: optional callable(kind, record, log_dict) called once per training update ("train") and
+            per evaluation event ("eval"), in whatever order the device delivers them. When given and
+            `log_fn` is not, nothing is sent to wandb from here (the receiver owns logging).
+        stats: optional dict filled with host-side measurements of this call: compile_s, compile_cached,
+            train_eval_s (the scan, including its in-scan evaluation events), eval_event_s (one separate
+            evaluation event on the final parameters), eval_events, peak_bytes_in_use (None if unavailable).
     '''
     if eval_rng is None:
         eval_rng = jax.random.fold_in(train_rng, 1)
@@ -240,13 +280,39 @@ def train_ppo_ego_agent(
                             isinstance(cl_state, AGEMMemory))
         num_updates = int(config.num_updates)
         steps_per_update = int(config.num_envs) * int(config.num_steps)
-        emit = log_fn if log_fn is not None else (lambda d: wandb.log(d))
+        if log_fn is not None:
+            emit = log_fn
+        elif record_fn is not None:
+            emit = lambda d: None
+        else:
+            emit = lambda d: wandb.log(d)
 
         def linear_schedule(count):
             frac = 1.0 - \
                    (count // (config.num_minibatches *
                               config.update_epochs)) / config.num_updates
             return config.lr * frac
+
+        max_episode_steps = config.num_steps
+
+        def run_eval(ego_params, event_key, eval_params, eval_ids):
+            """Evaluate the ego on every evaluation partner; returns compact (P, E) arrays."""
+            soups, rets, done, ids = [], [], [], []
+            for policy, params, group_ids in zip(eval_policies, eval_params, eval_ids):
+                last_infos = jax.vmap(lambda p, i: run_episodes(
+                    event_key, env,
+                    agent_0_param=ego_params, agent_0_policy=ego_policy,
+                    agent_1_param=p, agent_1_policy=policy,
+                    max_episode_steps=max_episode_steps,
+                    env_id_idx=i,
+                    num_eps=config.num_eval_episodes
+                ))(params, group_ids)
+                s, r, c = team_episode_summary(
+                    last_infos["returned_episode_soups"], last_infos["returned_episode_returns"],
+                    last_infos["returned_episode"])
+                soups.append(s), rets.append(r), done.append(c), ids.append(group_ids)
+            return (jnp.concatenate(ids), jnp.concatenate(soups), jnp.concatenate(rets),
+                    jnp.concatenate(done))
 
         def train(rng, eval_key, init_ego_params, partner_params, cl_state, env_id_idx, eval_params, eval_ids):
             if config.anneal_lr:
@@ -396,7 +462,8 @@ def train_ppo_ego_agent(
                 new_runner_state = (train_state, env_state_next, obs_next, done_next,
                                     new_ego_hstate, new_partner_hstate, updated_partner_indices, rng,
                                     update_steps_inner)
-                return new_runner_state, (transition, team_ep_soups)
+                return new_runner_state, (transition, team_ep_soups,
+                                          jnp.stack([reward["agent_0"], shaped_reward_0]))
 
             def _calculate_gae(traj_batch, last_val):
                 def _get_advantages(gae_and_next_value, transition):
@@ -558,7 +625,7 @@ def train_ppo_ego_agent(
                                 init_ego_hstate, init_partner_hstate, new_partner_indices, rng,
                                 update_steps)
 
-                runner_state, (traj_batch, team_ep_soups) = jax.lax.scan(
+                runner_state, (traj_batch, team_ep_soups, step_rewards) = jax.lax.scan(
                     _env_step, runner_state, None, config.num_steps)
                 (train_state, env_state, obs, done, ego_hstate, partner_hstate, partner_indices, rng, _) = runner_state
 
@@ -619,6 +686,9 @@ def train_ppo_ego_agent(
                     "cl_penalty": loss_terms[3].mean(),
                     "avg_grad_norm": avg_grad_norm.mean(),
                     "n_episodes": n_episodes,
+                    # ego rewards per rollout of one env: sparse (delivery) and raw unannealed shaped
+                    "sparse_reward": step_rewards[:, 0].sum() / config.num_envs,
+                    "shaped_reward": step_rewards[:, 1].sum() / config.num_envs,
                     "team_soup": jnp.where(ep_mask, team_ep_soups, 0.0).sum() / denom,
                     "ego_return": jnp.where(ep_mask, traj_batch.info["returned_episode_returns"], 0.0).sum() / denom,
                 }
@@ -639,40 +709,34 @@ def train_ppo_ego_agent(
                     lambda x: jnp.zeros((num_ckpts,) + x.shape, x.dtype),
                     params_pytree)
 
-            max_episode_steps = config.num_steps
-
             def _run_eval(ego_params, event_key):
-                """Evaluate the ego on every evaluation partner; returns compact (P, E) arrays."""
-                soups, rets, done, ids = [], [], [], []
-                for policy, params, group_ids in zip(eval_policies, eval_params, eval_ids):
-                    last_infos = jax.vmap(lambda p, i: run_episodes(
-                        event_key, env,
-                        agent_0_param=ego_params, agent_0_policy=ego_policy,
-                        agent_1_param=p, agent_1_policy=policy,
-                        max_episode_steps=max_episode_steps,
-                        env_id_idx=i,
-                        num_eps=config.num_eval_episodes
-                    ))(params, group_ids)
-                    s, r, c = team_episode_summary(
-                        last_infos["returned_episode_soups"], last_infos["returned_episode_returns"],
-                        last_infos["returned_episode"])
-                    soups.append(s), rets.append(r), done.append(c), ids.append(group_ids)
-                return (jnp.concatenate(ids), jnp.concatenate(soups), jnp.concatenate(rets),
-                        jnp.concatenate(done))
+                return run_eval(ego_params, event_key, eval_params, eval_ids)
 
             def _on_eval_event(args):
                 stage_id, update_steps, train_episodes, partner_ids, soups, rets, completed = args
-                _, log_dict = build_eval_event(
+                record, log_dict = build_eval_event(
                     stage_id, update_steps, train_episodes, partner_ids, soups, rets, completed,
                     num_updates, steps_per_update, max_soup_val)
+                if record_fn is not None:
+                    record_fn("eval", record, log_dict)
                 emit(log_dict)
 
             def _on_train_step(args):
                 (stage_id, update_steps, n_episodes, team_soup, ego_return,
-                 value_loss, actor_loss, entropy_loss, grad_norm) = args
-                emit(build_train_log(
+                 value_loss, actor_loss, entropy_loss, grad_norm, cl_penalty, sparse_reward, shaped_reward) = args
+                log_dict = build_train_log(
                     stage_id, update_steps, num_updates, n_episodes, team_soup, ego_return,
-                    value_loss, actor_loss, entropy_loss, grad_norm, max_soup_val))
+                    value_loss, actor_loss, entropy_loss, grad_norm, max_soup_val, cl_penalty=cl_penalty,
+                    sparse_reward=sparse_reward, shaped_reward=shaped_reward,
+                    env_steps=(int(stage_id) * num_updates + int(update_steps)) * steps_per_update)
+                if record_fn is not None:
+                    record_fn("train", build_train_record(
+                        stage_id, update_steps, num_updates, steps_per_update, n_episodes, team_soup, ego_return,
+                        sparse_reward, shaped_reward,
+                        shaping_coefficient(getattr(config, "reward_shaping_horizon", 0.0), update_steps,
+                                            steps_per_update),
+                        actor_loss, value_loss, entropy_loss, cl_penalty, grad_norm), log_dict)
+                emit(log_dict)
 
             def _update_step_with_ckpt(state_with_ckpt, unused):
                 (update_state, checkpoint_array, ckpt_idx, train_episodes) = state_with_ckpt
@@ -727,7 +791,8 @@ def train_ppo_ego_agent(
                 jax.experimental.io_callback(
                     _on_train_step, None,
                     (env_id_idx, update_steps, metric["n_episodes"], metric["team_soup"], metric["ego_return"],
-                     metric["value_loss"], metric["actor_loss"], metric["entropy_loss"], metric["avg_grad_norm"]),
+                     metric["value_loss"], metric["actor_loss"], metric["entropy_loss"], metric["avg_grad_norm"],
+                     metric["cl_penalty"], metric["sparse_reward"], metric["shaped_reward"]),
                     ordered=False,
                 )
 
@@ -765,7 +830,7 @@ def train_ppo_ego_agent(
                 out["final_cl_state"] = final_runner_state[3]
             return out
 
-        return train
+        return train, run_eval
 
     # ------------------------------
     # Actually run the PPO training
@@ -775,22 +840,81 @@ def train_ppo_ego_agent(
     eval_rngs = jax.random.split(eval_rng, n_ego_train_seeds)
     if n_ego_train_seeds == 1:
         if compiled_cache is None:
-            train_fn = jax.jit(make_ppo_train(config))
+            stage_fn = _StageFn(*make_ppo_train(config))
         else:
             cache_key = (id(config), env, ego_policy, type(partner_population), partner_population.policy_cls,
-                         getattr(partner_population, "test_mode", None), cl, type(cl_state), log_fn, max_soup,
-                         eval_policies)
+                         getattr(partner_population, "test_mode", None), cl, type(cl_state), log_fn, record_fn,
+                         max_soup, eval_policies)
             if cache_key not in compiled_cache:
-                compiled_cache[cache_key] = jax.jit(make_ppo_train(config))
-            train_fn = compiled_cache[cache_key]
-        out = train_fn(rngs[0], eval_rngs[0], init_ego_params, partner_params, cl_state, stage_id,
-                       eval_params, eval_ids)
+                compiled_cache[cache_key] = _StageFn(*make_ppo_train(config))
+            stage_fn = compiled_cache[cache_key]
+        args = (rngs[0], eval_rngs[0], init_ego_params, partner_params, cl_state, stage_id, eval_params, eval_ids)
+        out, timing = stage_fn.run(args)
+        if stats is not None:
+            stats.update(timing)
+            stats["eval_events"] = int(sum(
+                bool(should_evaluate(u, int(getattr(config, "eval_every", 1)), int(config.num_updates)))
+                for u in range(1, int(config.num_updates) + 1)))
+            stats["eval_event_s"] = stage_fn.time_eval(out["final_params"], eval_rngs[0], eval_params, eval_ids)
+            stats["peak_bytes_in_use"] = peak_device_memory()
     else:
-        train_fn = jax.jit(jax.vmap(make_ppo_train(config), in_axes=(0, 0, None, None, None, None, None, None)))
+        train_fn = jax.jit(jax.vmap(make_ppo_train(config)[0], in_axes=(0, 0, None, None, None, None, None, None)))
         out = train_fn(rngs, eval_rngs, init_ego_params, partner_params, cl_state, stage_id, eval_params, eval_ids)
     jax.block_until_ready(out)
     jax.effects_barrier()  # flush unordered io_callbacks so every event is logged before returning
     return out
+
+
+def peak_device_memory():
+    """Peak bytes in use on the first local device, or None when the backend reports no memory statistics."""
+    try:
+        stats = jax.local_devices()[0].memory_stats()
+    except Exception:
+        return None
+    return int(stats["peak_bytes_in_use"]) if stats and "peak_bytes_in_use" in stats else None
+
+
+class _StageFn:
+    """Jitted train function of a stage plus the pieces needed to time it honestly.
+
+    Executables are compiled ahead of time (so compile time is measured on its own) and reused for equal
+    argument shapes; later stages that share this object report `compile_cached`.
+    """
+
+    def __init__(self, train, run_eval):
+        self._train, self._eval = jax.jit(train), jax.jit(run_eval)
+        self._executables = {}
+
+    @staticmethod
+    def _signature(args):
+        return jax.tree.structure(args), tuple((np.shape(x), str(jnp.result_type(x))) for x in jax.tree.leaves(args))
+
+    def _executable(self, fn, args, tag):
+        key = (tag, self._signature(args))
+        cached = key in self._executables
+        compile_s = 0.0
+        if not cached:
+            start = time.perf_counter()
+            self._executables[key] = fn.lower(*args).compile()
+            compile_s = time.perf_counter() - start
+        return self._executables[key], compile_s, cached
+
+    def run(self, args):
+        executable, compile_s, cached = self._executable(self._train, args, "train")
+        start = time.perf_counter()
+        out = executable(*args)
+        jax.block_until_ready(out)
+        jax.effects_barrier()
+        return out, {"compile_s": compile_s, "compile_cached": cached,
+                     "train_eval_s": time.perf_counter() - start}
+
+    def time_eval(self, ego_params, eval_key, eval_params, eval_ids):
+        """Seconds for one evaluation event (all evaluation partners) outside the training scan."""
+        args = (ego_params, jax.random.fold_in(eval_key, 2 ** 20), eval_params, eval_ids)
+        executable, _, _ = self._executable(self._eval, args, "eval")
+        start = time.perf_counter()
+        jax.block_until_ready(executable(*args))
+        return time.perf_counter() - start
 
 
 def mean_over_all_but_updates(arr, num_updates: int):

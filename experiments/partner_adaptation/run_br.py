@@ -1,10 +1,12 @@
 '''Main entry point for running teammate generation algorithms.'''
 import json
+import logging
 import os
 import pickle
+import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
-from typing import List, Optional
+from pathlib import Path
+from typing import Any, List, NamedTuple, Optional
 
 import jax
 import jax.numpy as jnp
@@ -29,9 +31,17 @@ from experiments.partner_adaptation.partner_agents.agent_interface import MLPAct
 from experiments.partner_adaptation.partner_agents.overcooked.agent_policy_wrappers import OvercookedIndependentPolicyWrapper, \
     OvercookedOnionPolicyWrapper, OvercookedPlatePolicyWrapper, OvercookedRandomPolicyWrapper, \
     OvercookedStaticPolicyWrapper
-from experiments.partner_adaptation.partner_bank import load_partners, select_partner_bank
+from experiments.partner_adaptation.partner_bank import load_partners, partner_identity, select_partner_bank
+from experiments.partner_adaptation.run_outputs import (
+    RunRecorder, RunStatus, allocate_run_dir, atomic_write, build_fingerprint, check_resume, code_revision,
+    device_info, read_checkpoint, resolve_resume, restore_state, save_checkpoint, truncate_csv, write_json)
 from experiments.partner_adaptation.partner_generation.utils import frozendict_from_layout_repr
 from experiments.partner_adaptation.train_br import DummyPolicyPopulation, HeuristicPolicyPopulation, run_br_training
+
+log = logging.getLogger(__name__)
+
+HEURISTIC_NAMES = ["Independent_Policy", "Onion_Policy", "Plate_Policy", "Random_Policy", "Static_Policy"]
+IMPORTANCE_METHODS = ("ewc", "mas", "l2")
 
 
 @dataclass
@@ -44,7 +54,11 @@ class TrainConfig:
     tags: List[str] = field(default_factory=list)
     checkpoint_path: str = "checkpoints"
     checkpoint_freq: int = 50  # Checkpoint every N updates
-    save_dir: str = ""  # Set programmatically based on wandb run name
+    save_dir: str = ""  # Set programmatically: the unique run directory created under `checkpoint_path`
+    # Resume a run from its last completed partner: a run directory (or its latest.ckpt). Pass the original
+    # arguments as well; anything that differs from the saved run is rejected (see run_outputs.py).
+    resume: str = ""
+    save_checkpoints: bool = True  # Replace <run dir>/latest.ckpt after every completed partner
 
     # MEAL
     # Pregenerated MEAL layouts that we are interested in.
@@ -177,121 +191,138 @@ def get_run_string(config: TrainConfig):
     )
 
 
-def run_training():
-    config = tyro.cli(TrainConfig)
+class Stage(NamedTuple):
+    """One partner of the training sequence; its index in the sequence is the ego head / evaluation id."""
+    identity: dict
+    policy: Any
+    params: Any
+    agent_config: dict
 
+
+class RunResult(NamedTuple):
+    run_dir: Path
+    ego_params: Any
+    cl_state: Any
+    counters: dict
+
+
+def build_cl_method(config):
+    if config.cl_method is None:
+        return None
+    # Set default regularization coefficient based on the CL method if not specified
+    if config.reg_coef is None:
+        if config.cl_method.lower() == "ewc":
+            config.reg_coef = 1e11
+        elif config.cl_method.lower() == "mas":
+            config.reg_coef = 1e9
+        elif config.cl_method.lower() == "l2":
+            config.reg_coef = 1e7
+
+    method_map = dict(
+        ewc=EWC(mode=config.importance_mode, decay=config.importance_decay),
+        mas=MAS(mode=config.importance_mode, decay=config.importance_decay),
+        l2=L2(),
+        ft=FT(),
+        agem=AGEM(memory_size=config.agem_memory_size, sample_size=config.agem_sample_size),
+        er_ace=ERACE(memory_size=config.agem_memory_size, sample_size=config.agem_sample_size),
+    )
+    if config.cl_method.lower() not in method_map:
+        raise ValueError(f"Unknown continual learning method: {config.cl_method}")
+    print(f"Initialized continual learning method: {config.cl_method.upper()}")
+    return method_map[config.cl_method.lower()]
+
+
+def schedule_description(config, labels):
+    """What is, and is not, carried from one partner to the next (read from train_ego.py)."""
+    spu = int(config.num_envs) * int(config.num_steps)
+    return {
+        "stage_order": labels,
+        "stage_budget": f"every partner is trained for {int(config.num_updates)} updates ({int(config.num_updates) * spu} "
+                        f"joint environment steps); the budget is per partner, not cumulative",
+        "optimizer": "Adam with global-norm clipping, re-created at every partner: moments and step count reset "
+                     "at each boundary, so a boundary resume starts from a fresh optimizer by design",
+        "learning_rate": ("linear anneal over the updates of each partner, restarting at every partner"
+                          if config.anneal_lr else "constant"),
+        "reward_shaping": f"linear 1 -> 0 over {config.reward_shaping_horizon:g} joint steps counted from the "
+                          f"start of every partner",
+        "carried_across_partners": "ego parameters and the continual-learning state only",
+        "continual_learning_update": ("after every partner: importance rollouts with the frozen partner acting"
+                                      if config.cl_method and config.cl_method.lower() in IMPORTANCE_METHODS else
+                                      "memory updated inside training" if config.cl_method else "none"),
+        "rng": "train, evaluation and importance keys are derived from (seed, partner index); no RNG state is carried",
+        "evaluation": f"every {config.eval_every} updates, after update 1 and after the last, "
+                      f"{config.num_eval_episodes} episodes against every evaluation partner",
+    }
+
+
+def execute(config: TrainConfig) -> RunResult:
+    """Train the ego agent partner by partner and record the run (see run_outputs.py)."""
     bank = select_partner_bank(config.layout_name, config.partner_bank, config.num_population_partners)
     config.num_population_partners = len(bank)
     if config.num_heuristic_partners is None:
         config.num_heuristic_partners = 0 if config.partner_bank else 5
 
     run_string = get_run_string(config)
+    cl = build_cl_method(config)
 
-    # Create a unique run name with timestamp
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")[:-3]
-    run_name = f"{run_string}_{timestamp}"
+    num_heuristics = min(config.num_heuristic_partners, len(HEURISTIC_NAMES))
+    identities = [partner_identity(r) for r in bank.records] + [
+        dict(partner_id=len(bank) + i, kind="heuristic", label=HEURISTIC_NAMES[i]) for i in range(num_heuristics)]
+    labels = [i["label"] for i in identities]
+    fingerprint = build_fingerprint(asdict(config), identities)
 
-    # Initialize WandB
-    wandb_tags = config.tags if config.tags is not None else []
-    wandb.login(key=os.environ.get("WANDB_API_KEY"))
-    run = wandb.init(
-        project=config.project,
-        config=asdict(config),
-        sync_tensorboard=True,
-        mode=config.mode,
-        tags=wandb_tags,
-        group=config.group,
-        name=run_name,
-        id=run_name,
-        save_code=True,
-    )
-
-    wandb.define_metric("train_step")
-    wandb.define_metric("Train/*", step_metric="train_step")
-    wandb.define_metric("Eval/*", step_metric="train_step")
-
-    print("XPID ID name:")
-    print(run.name)
-    print("-------------")
-
-    # Use a shorter name for checkpoint directory (keep wandb id as is)
-    checkpoint_dir_name = run_string
-
-    # Initialize continual learning method if specified
-    cl = None
-    if config.cl_method is not None:
-        # Set default regularization coefficient based on the CL method if not specified
-        if config.reg_coef is None:
-            if config.cl_method.lower() == "ewc":
-                config.reg_coef = 1e11
-            elif config.cl_method.lower() == "mas":
-                config.reg_coef = 1e9
-            elif config.cl_method.lower() == "l2":
-                config.reg_coef = 1e7
-
-        # Initialize the continual learning method
-        method_map = dict(
-            ewc=EWC(mode=config.importance_mode, decay=config.importance_decay),
-            mas=MAS(mode=config.importance_mode, decay=config.importance_decay),
-            l2=L2(),
-            ft=FT(),
-            agem=AGEM(memory_size=config.agem_memory_size, sample_size=config.agem_sample_size),
-            er_ace=ERACE(memory_size=config.agem_memory_size, sample_size=config.agem_sample_size),
-        )
-
-        if config.cl_method.lower() in method_map:
-            cl = method_map[config.cl_method.lower()]
-            print(f"Initialized continual learning method: {config.cl_method.upper()}")
-        else:
-            raise ValueError(f"Unknown continual learning method: {config.cl_method}")
-
-    if config.checkpoint_path is not None:
-        save_dir = os.path.join(config.checkpoint_path, checkpoint_dir_name)
-        config.save_dir = save_dir
-        # Make sure we can write the checkpoint later _before_ we wait 1 day for training!
-        os.makedirs(save_dir, exist_ok=True)
-        config_dict = asdict(config)
-        with open(f"{save_dir}/config.pckl", 'wb') as f:
-            pickle.dump(config_dict, f)
-
-        print(f"Saved to {save_dir}/config.pckl")
-
-    if config.layout_name != "":
-        layout_dict = {"layout": overcooked_layouts[config.layout_name]}
+    checkpoint_meta = None
+    if config.resume:
+        run_dir, checkpoint_file = resolve_resume(config.resume)
+        checkpoint_meta, checkpoint_state = read_checkpoint(checkpoint_file)
+        check_resume(checkpoint_meta, fingerprint)
+        run_uid = checkpoint_meta["run_uid"]
     else:
-        layouts = read_layouts(config)
-        layout_dict = {"layout": frozendict_from_layout_repr(
-            layouts[config.layout_idx]["layout"])}
+        run_dir, run_uid = allocate_run_dir(config.checkpoint_path, run_string)
+    config.save_dir = str(run_dir)
+    run_name = run_dir.name
+    start_stage = checkpoint_meta["stages_completed"] if checkpoint_meta else 0
 
-    config.layout = layout_dict.copy()  # These are env kwargs
-    env = make_env(config.env_name, **config.layout, max_steps=config.num_steps)
-    env = LogWrapper(env)
+    status = RunStatus(run_dir)
+    code, device = code_revision(), device_info()
+    attempt = status.begin_attempt({"resumed_from_stage": start_stage if checkpoint_meta else None,
+                                    "code": code, "device": device})
+    recorder = run = None
+    try:
+        counters = (dict(checkpoint_meta["counters"]) if checkpoint_meta else dict(
+            stages_completed=0, train_env_steps=0, train_episodes=0, eval_events=0, eval_episodes=0,
+            eval_env_steps=0, importance_env_steps=0))
 
-    # Calculate max soup for the layout
-    layout_name = config.layout_name if config.layout_name != "" else f"layout_{config.layout_idx}"
-    max_soup_dict = {layout_name: calculate_max_soup(config.layout["layout"], env.max_steps, n_agents=env.num_agents)}
+        if config.layout_name != "":
+            layout_dict = {"layout": overcooked_layouts[config.layout_name]}
+        else:
+            layouts = read_layouts(config)
+            layout_dict = {"layout": frozendict_from_layout_repr(
+                layouts[config.layout_idx]["layout"])}
 
-    # Visualization extras (pygame/imageio) are only needed when recording videos
-    visualizer = None
-    if config.record_video:
-        import optax
-        from flax.training.train_state import TrainState
-        visualizer = create_visualizer(env.num_agents, config.env_name)
+        config.layout = layout_dict.copy()  # These are env kwargs
+        env = make_env(config.env_name, **config.layout, max_steps=config.num_steps)
+        env = LogWrapper(env)
 
-    rng = jax.random.PRNGKey(config.seed)
-    rng, init_rng = jax.random.split(rng, 2)
+        # Calculate max soup for the layout
+        layout_name = config.layout_name if config.layout_name != "" else f"layout_{config.layout_idx}"
+        max_soup_dict = {layout_name: calculate_max_soup(config.layout["layout"], env.max_steps, n_agents=env.num_agents)}
 
-    partners = load_partners(bank, obs_dim=np.prod(env.observation_space().shape))
-    if config.save_dir:
-        with open(os.path.join(config.save_dir, "partner_bank.json"), "w") as f:
-            json.dump([dict(partner_id=r.partner_id, kind=r.kind, label=r.label, **(
-                dict(checkpoint=r.checkpoint.name, population_size=r.population_size,
-                     generation_seed=r.generation_seed, payload_sha256=r.payload_sha256) if r.kind == "brdiv" else
-                dict(planner_id=r.planner_id, config=r.config, config_sha256=r.config_sha256)))
-                       for r in bank.records], f, indent=2)
+        # Visualization extras (pygame/imageio) are only needed when recording videos
+        visualizer = None
+        if config.record_video:
+            import optax
+            from flax.training.train_state import TrainState
+            visualizer = create_visualizer(env.num_agents, config.env_name)
 
-    # train partner population
-    if config.alg == "br":
+        rng = jax.random.PRNGKey(config.seed)
+        rng, init_rng = jax.random.split(rng, 2)
+
+        partners = load_partners(bank, obs_dim=np.prod(env.observation_space().shape))
+
+        if config.alg != "br":
+            raise NotImplementedError("Selected method not implemented.")
+
         # Initialize ego agent
         ac_cls = CNNActorCritic if config.use_cnn else MLPActorCritic
 
@@ -327,6 +358,74 @@ def run_training():
 
             print(f"Initialized CL state for method: {config.cl_method.upper()}")
 
+        if checkpoint_meta:
+            ego_params = restore_state(checkpoint_state["ego_params"], ego_params, "ego parameters")
+            cl_state = restore_state(checkpoint_state["cl_state"], cl_state, "continual-learning state")
+
+        steps_per_update = int(config.num_envs) * int(config.num_steps)
+        num_stages = len(identities)
+        num_eval_partners = num_stages
+        if not config.resume:
+            config_dict = asdict(config)
+            write_json(run_dir / "config.json", dict(config_dict, layout_name_resolved=layout_name))
+            atomic_write(run_dir / "config.pckl", pickle.dumps(config_dict))
+            write_json(run_dir / "partner_bank.json", identities)
+            write_json(run_dir / "run.json", {
+                "run_name": run_name, "run_uid": run_uid, "created": status.data["attempts"][0]["started_utc"],
+                "code": code, "device": device, "fingerprint": fingerprint,
+                "architecture": {
+                    "network": f"{ac_cls.__module__}.{ac_cls.__name__}", "hidden_size": config.hidden_size,
+                    "num_layers": config.num_layers, "activation": config.activation,
+                    "use_layer_norm": config.use_layer_norm, "use_cnn": config.use_cnn,
+                    "use_task_id": config.use_task_id, "use_multihead": config.use_multihead,
+                    "shared_backbone": config.shared_backbone, "num_heads": seq_length,
+                    "observation_dim": int(np.prod(env.observation_space().shape)),
+                    "parameter_count": int(sum(np.size(x) for x in jax.tree.leaves(ego_params)))},
+                "budget": {
+                    "unit": "joint environment steps (one step = both agents act once in each parallel env)",
+                    "num_envs": config.num_envs, "num_steps": config.num_steps,
+                    "total_timesteps_per_stage": config.total_timesteps,
+                    "updates_per_stage": int(config.num_updates), "env_steps_per_update": steps_per_update,
+                    "env_steps_per_stage": int(config.num_updates) * steps_per_update, "planned_stages": num_stages,
+                    "planned_train_env_steps": num_stages * int(config.num_updates) * steps_per_update,
+                    "evaluation_partners": num_eval_partners, "eval_episodes_per_partner": config.num_eval_episodes,
+                    "eval_env_steps_per_event": num_eval_partners * config.num_eval_episodes * config.num_steps,
+                    "importance_env_steps_per_stage": (
+                        config.importance_episodes * config.importance_steps
+                        if config.cl_method and config.cl_method.lower() in IMPORTANCE_METHODS else 0)},
+                "schedule": schedule_description(config, labels),
+                "partners": identities, "bank": {"name": bank.name, "source": str(bank.source)},
+            })
+        else:
+            dropped = sum(truncate_csv(run_dir / f, start_stage - 1)
+                          for f in ("train_metrics.csv", "eval_metrics.csv", "stage_timings.csv"))
+            status.update_attempt(attempt, discarded_rows_of_uncommitted_stages=dropped)
+            for stale in run_dir.glob(".*.tmp"):
+                stale.unlink()
+
+        # Initialize WandB (credentials come from the environment / stored login, never from this code)
+        wandb_name = run_name if attempt == 0 else f"{run_name}_resume{attempt}"
+        if config.mode == "online":
+            wandb.login(key=os.environ.get("WANDB_API_KEY"))
+        run = wandb.init(
+            project=config.project,
+            config=asdict(config),
+            sync_tensorboard=True,
+            mode=config.mode,
+            tags=config.tags if config.tags is not None else [],
+            group=config.group,
+            name=wandb_name,
+            id=wandb_name,
+            save_code=True,
+        )
+        status.update_attempt(attempt, wandb={"mode": config.mode, "run_name": wandb_name})
+        print("XPID ID name:")
+        print(run.name)
+        print("-------------")
+
+        recorder = RunRecorder(run_dir, labels, config.seed, attempt=attempt,
+                               wandb_log=lambda d, step: run.log(d, step=step))
+
         # Compiled functions shared by all stages of this run (see train_ppo_ego_agent)
         compiled_cache = {}
 
@@ -336,9 +435,15 @@ def run_training():
         plate = OvercookedPlatePolicyWrapper(layout=config.layout["layout"])
         rndm = OvercookedRandomPolicyWrapper(layout=config.layout["layout"])
         static = OvercookedStaticPolicyWrapper(layout=config.layout["layout"])
+        heuristic_policies = [indp, onin, plate, rndm, static]
 
         fake_params = jax.tree.map(
             lambda x: x[jnp.newaxis, ...], ego_params)
+
+        stages = [Stage(identity, partner.policy, partner.params, partner.record.config)
+                  for identity, partner in zip(identities, partners)]
+        stages += [Stage(identities[len(partners) + i], heuristic_policies[i], None, bank.records[0].config)
+                   for i in range(num_heuristics)]
 
         # Build evaluation partner list based on configuration
         eval_partner = []
@@ -355,9 +460,7 @@ def run_training():
             partner_idx += 1
 
         # Add heuristic partners
-        heuristic_policies = [indp, onin, plate, rndm, static]
-
-        for i in range(min(config.num_heuristic_partners, len(heuristic_policies))):
+        for i in range(num_heuristics):
             eval_partner.append((
                 HeuristicPolicyPopulation(policy_cls=heuristic_policies[i]),
                 fake_params,
@@ -365,61 +468,81 @@ def run_training():
             ))
             partner_idx += 1
 
-        # Train ego agent against partners in a configurable schedule
-        heuristic_policies = [indp, onin, plate, rndm, static]
-        heuristic_names = ["Independent_Policy", "Onion_Policy", "Plate_Policy", "Random_Policy", "Static_Policy"]
-
-        # Train against population partners
-        for i, partner in enumerate(partners):
+        # Train the ego against the partners in order: bank partners first, then legacy heuristics
+        for k in range(start_stage, num_stages):
+            stage, stats = stages[k], {}
+            stage_start = time.perf_counter()
+            recorder.begin_stage(k, int(config.num_updates), config.eval_every)
             ego_params, cl_state = run_br_training(
-                config, env, partner.record.config, ego_policy,
-                ego_params, partner.policy, partner.params, env_id_idx=i, eval_partner=eval_partner,
-                max_soup_dict=max_soup_dict, cl=cl, cl_state=cl_state, compiled_cache=compiled_cache)
-            # TODO when using vmap over seeds, do the following
-            # ego_params = jax.tree.map(lambda x: x[0, ...], ego_params) # take the first params set from the batch dimension
+                config, env, stage.agent_config, ego_policy,
+                ego_params, stage.policy, stage.params, env_id_idx=k, eval_partner=eval_partner,
+                max_soup_dict=max_soup_dict, cl=cl, cl_state=cl_state, compiled_cache=compiled_cache,
+                record_fn=recorder.handle, stats=stats)
+            summary = recorder.end_stage()
+            counters["stages_completed"] = k + 1
+            counters["train_env_steps"] += summary["updates"] * steps_per_update
+            counters["train_episodes"] += summary["train_episodes"]
+            counters["eval_events"] += summary["eval_events"]
+            counters["eval_episodes"] += summary["eval_episodes"]
+            counters["eval_env_steps"] += (summary["eval_events"] * num_eval_partners
+                                           * config.num_eval_episodes * config.num_steps)
+            if "importance_s" in stats:
+                counters["importance_env_steps"] += config.importance_episodes * config.importance_steps
+            peak = stats.get("peak_bytes_in_use")
+            recorder.write_timing(dict(
+                stage=k, partner_id=k, partner=labels[k], attempt=attempt, updates=summary["updates"],
+                env_steps_end=summary["env_steps_end"], compile_s=stats.get("compile_s"),
+                compile_cached=stats.get("compile_cached"), train_eval_s=stats.get("train_eval_s"),
+                eval_events=summary["eval_events"], eval_event_s=stats.get("eval_event_s"),
+                importance_s=stats.get("importance_s"),
+                importance_compiled_here=stats.get("importance_compiled_here"),
+                stage_wall_s=time.perf_counter() - stage_start, backend=device["backend"],
+                device_kind=device["devices"][0]["device_kind"], peak_bytes_in_use=peak,
+                memory_status="device peak since process start" if peak is not None else "unavailable"))
+            # A partner counts as done only once its records are on disk and the checkpoint has replaced the old one.
+            if config.save_checkpoints:
+                save_checkpoint(run_dir, ego_params, cl_state, {
+                    "run_uid": run_uid, "stages_completed": k + 1, "counters": counters,
+                    "fingerprint": fingerprint, "attempt": attempt})
+            status.update(state="running", stages_completed=k + 1, counters=counters,
+                          wandb_failures=recorder.wandb_failures, wandb_error=recorder.wandb_error)
 
-            # Record video after training with population partner
+            # Record video after training with this partner
             if config.record_video:
                 temp_train_state = TrainState.create(
                     apply_fn=ego_policy.network.apply,
                     params=ego_params,
                     tx=optax.adam(1e-4)  # dummy optimizer
                 )
-                states = rollout_for_video(rng, config, temp_train_state, env, ego_policy.network, env_idx=i,
+                states = rollout_for_video(rng, config, temp_train_state, env, ego_policy.network, env_idx=k,
                                            max_steps=config.gif_len)
-                partner_name = f"BRDiv_Partner_{i}"
-                file_path = f"videos/{run.name}/task_{i}_{partner_name}.mp4"
-                final_step = (i + 1) * int(config.num_updates) - 1
-                visualizer.animate(states, out_path=file_path, task_idx=i, env=env, wandb_step=final_step)
+                if k < len(partners):
+                    file_path = f"videos/{run.name}/task_{k}_BRDiv_Partner_{k}.mp4"
+                else:
+                    file_path = f"gifs/{run.name}/task_{k}_{HEURISTIC_NAMES[k - len(partners)]}.mp4"
+                visualizer.animate(states, out_path=file_path, task_idx=k, env=env,
+                                   wandb_step=(k + 1) * int(config.num_updates) * steps_per_update)
 
-        # Train against heuristic partners if enabled
-        for i in range(min(config.num_heuristic_partners, len(heuristic_policies))):
-            env_id_idx = config.num_population_partners + i
-            partner_policy_obj = heuristic_policies[i]
-            partner_name = heuristic_names[i]
+        atomic_write(run_dir / f"params_seed{config.seed}.pt", pickle.dumps({"actor_params": ego_params}))
+        status.update(state="complete", stages_completed=num_stages, counters=counters,
+                      wandb_failures=recorder.wandb_failures, wandb_error=recorder.wandb_error)
+        return RunResult(run_dir, ego_params, cl_state, counters)
+    except BaseException as e:
+        status.update(state="interrupted" if isinstance(e, KeyboardInterrupt) else "failed",
+                      error=f"{type(e).__name__}: {e}")
+        raise
+    finally:
+        if recorder is not None:
+            recorder.close()
+        if run is not None:
+            try:
+                run.finish()
+            except Exception as e:  # noqa: BLE001 - local records are already complete
+                log.warning("closing the W&B run failed: %s", e)
 
-            ego_params, cl_state = run_br_training(
-                config, env, bank.records[0].config, ego_policy,
-                ego_params, partner_policy_obj, None, env_id_idx=env_id_idx, eval_partner=eval_partner,
-                max_soup_dict=max_soup_dict, cl=cl, cl_state=cl_state, compiled_cache=compiled_cache)
 
-            # Record video after training with heuristic partner
-            if config.record_video:
-                temp_train_state = TrainState.create(
-                    apply_fn=ego_policy.network.apply, params=ego_params, tx=optax.adam(1e-4))
-                states = rollout_for_video(rng, config, temp_train_state, env, ego_policy.network, env_idx=env_id_idx,
-                                           max_steps=config.gif_len)
-                file_path = f"gifs/{run.name}/task_{env_id_idx}_{partner_name}.mp4"
-                final_step = (env_id_idx + 1) * int(config.num_updates) - 1
-                visualizer.animate(states, out_path=file_path, task_idx=env_id_idx, env=env, wandb_step=final_step)
-    else:
-        raise NotImplementedError("Selected method not implemented.")
-
-    if config.checkpoint_path is not None:
-        path = f"{save_dir}/"
-        os.makedirs(path, exist_ok=True)
-        payload = {"actor_params": ego_params}
-        pickle.dump(payload, open(path + f"params_seed{config.seed}.pt", "wb"))
+def run_training():
+    execute(tyro.cli(TrainConfig))
 
 
 if __name__ == '__main__':

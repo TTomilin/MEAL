@@ -184,13 +184,16 @@ def make_partner_importance_fn(cl, env, ego_network, partner_population, config)
 def run_br_training(
         config, env, partner_agent_config, ego_policy, ego_params, partner_policy, partner_params=None,
         partner_test_mode=False, env_id_idx=0, eval_partner=[], max_soup_dict=None, cl=None,
-        cl_state=None, log_fn=None, compiled_cache=None):
+        cl_state=None, log_fn=None, compiled_cache=None, record_fn=None, stats=None):
     '''Run ego agent training against a single partner agent.
 
     Args:
         max_soup_dict: dict, maximum soup counts for each layout (for unified soup metrics)
         log_fn: callable receiving metric dicts; defaults to wandb.log
         compiled_cache: dict shared by all stages of one run so compatible stages reuse compiled functions
+        record_fn, stats: see `train_ppo_ego_agent`; `stats` also receives `importance_s` (wall time of the
+            post-stage importance computation, including its compilation on first use) and
+            `importance_compiled_here` when an importance estimate was computed
     '''
     keys = make_stage_keys(config.seed, env_id_idx)
     max_soup = list(max_soup_dict.values())[0] if max_soup_dict else None
@@ -236,6 +239,8 @@ def run_br_training(
         log_fn=log_fn,
         max_soup=max_soup,
         compiled_cache=compiled_cache,
+        record_fn=record_fn,
+        stats=stats,
     )
 
     log.info(f"Training completed in {time.time() - start_time:.2f} seconds")
@@ -254,11 +259,17 @@ def run_br_training(
             cache = compiled_cache if compiled_cache is not None else {}
             cache_key = ("importance", id(config), env, ego_policy, cl, type(partner_population),
                          partner_population.policy_cls, getattr(partner_population, "test_mode", None))
-            if cache_key not in cache:
+            first_use = cache_key not in cache
+            if first_use:
                 cache[cache_key] = make_partner_importance_fn(
                     cl, env, ego_policy.network, partner_population, config)
+            importance_start = time.perf_counter()
             importance = cache[cache_key](
                 out["final_params"], jnp.asarray(env_id_idx, jnp.int32), keys.importance, partner_params)
+            jax.block_until_ready(importance)
+            if stats is not None:
+                stats["importance_s"] = time.perf_counter() - importance_start
+                stats["importance_compiled_here"] = first_use
             cl_state = cl.update_state(cl_state, out["final_params"], importance)
             log.info(f"Updated CL state after training on partner {env_id_idx}")
 
