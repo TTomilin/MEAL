@@ -46,11 +46,16 @@ plotting results afterward.
 
 It reads population partners from a pre-generated BRDiv population under
 `experiments/partner_adaptation/partner_agents/BRDiv_population/<layout>/`. If that's missing
-for a layout, generate it first:
+for a layout, or from an explicit partner bank (`--partner-bank`), generate populations first (same
+preview / `RUN=1` interface as the other scripts; configured through `LAYOUTS`, `GEN_SEEDS`,
+`PARTNER_POP_SIZE`, `TOTAL_TIMESTEPS`, see the header of the script):
 
 ```bash
-scripts/run_teammate_generation.sh <device> <difficulty> <layout_idx> <layout_name>
+scripts/run_teammate_generation.sh
 ```
+
+See [`experiments/partner_adaptation/README.md`](../experiments/partner_adaptation/README.md) for
+assembling a bank from the outputs.
 
 `scripts/run_br.sh` is a minimal single-invocation example of the same
 `experiments.partner_adaptation.run_br` entry point `partner_adaptation.sh` sweeps over.

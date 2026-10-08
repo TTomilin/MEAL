@@ -4,7 +4,6 @@ import os
 import pickle
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import List, Optional
 
 import jax
@@ -26,10 +25,11 @@ from meal.env.overcooked.layouts.presets import overcooked_layouts
 from meal.env.overcooked.max_soup_calculator import calculate_max_soup
 from meal import make_env
 from meal.wrappers.logging import LogWrapper
-from experiments.partner_adaptation.partner_agents.agent_interface import ActorWithConditionalCriticPolicy, MLPActorCriticPolicyCL
+from experiments.partner_adaptation.partner_agents.agent_interface import MLPActorCriticPolicyCL
 from experiments.partner_adaptation.partner_agents.overcooked.agent_policy_wrappers import OvercookedIndependentPolicyWrapper, \
     OvercookedOnionPolicyWrapper, OvercookedPlatePolicyWrapper, OvercookedRandomPolicyWrapper, \
     OvercookedStaticPolicyWrapper
+from experiments.partner_adaptation.partner_bank import load_partners, select_partner_bank
 from experiments.partner_adaptation.partner_generation.utils import frozendict_from_layout_repr
 from experiments.partner_adaptation.train_br import DummyPolicyPopulation, HeuristicPolicyPopulation, run_br_training
 
@@ -125,7 +125,11 @@ class TrainConfig:
     log_train_out: bool = True
 
     # Partner/Task Configuration
-    num_population_partners: int = 3  # Number of population partners to train against
+    # Population partners come from the bundled BRDiv population of `layout_name` (first N members, default 3;
+    # asking for more than exist is an error) or, with `partner_bank`, from that JSON manifest
+    # (see partner_bank.py), which must declare exactly N partners; N then defaults to the bank size.
+    num_population_partners: Optional[int] = None
+    partner_bank: str = ""
     num_heuristic_partners: int = 5  # Number of heuristic partners to train against
 
     def __post_init__(self):
@@ -173,6 +177,9 @@ def get_run_string(config: TrainConfig):
 
 def run_training():
     config = tyro.cli(TrainConfig)
+
+    bank = select_partner_bank(config.layout_name, config.partner_bank, config.num_population_partners)
+    config.num_population_partners = len(bank)
 
     run_string = get_run_string(config)
 
@@ -270,19 +277,12 @@ def run_training():
     rng = jax.random.PRNGKey(config.seed)
     rng, init_rng = jax.random.split(rng, 2)
 
-    # TODO: Fix this to work with difficulty and seed also if layout_name is not given
-    pop_dir = f"{Path(__file__).resolve().parent}/partner_agents/BRDiv_population/{config.layout_name}"
-    with open(os.path.join(pop_dir, "config.pckl"), "rb") as f:
-        partner_agent_config = pickle.load(f)  # has 'partner_pop_size'
-    pop_params = []
-    for p in sorted(os.listdir(pop_dir)):
-        if "param" in p:
-            with open(os.path.join(pop_dir, p), "rb") as f:
-                pop_params.append(pickle.load(f)["actor_params"])
-
-    pop_size = partner_agent_config["partner_pop_size"]
-    partner_policy = ActorWithConditionalCriticPolicy(
-        6, obs_dim=np.prod(env.observation_space().shape), pop_size=pop_size)
+    partners = load_partners(bank, obs_dim=np.prod(env.observation_space().shape))
+    if config.save_dir:
+        with open(os.path.join(config.save_dir, "partner_bank.json"), "w") as f:
+            json.dump([dict(partner_id=r.partner_id, label=r.label, checkpoint=r.checkpoint.name,
+                            population_size=r.population_size, generation_seed=r.generation_seed,
+                            payload_sha256=r.payload_sha256) for r in bank.records], f, indent=2)
 
     # train partner population
     if config.alg == "br":
@@ -339,10 +339,10 @@ def run_training():
         partner_idx = 0
 
         # Add population partners
-        for i in range(min(config.num_population_partners, len(pop_params))):
+        for partner in partners:
             eval_partner.append((
-                DummyPolicyPopulation(policy_cls=partner_policy),
-                jax.tree.map(lambda x: x[jnp.newaxis, ...], pop_params[i]),
+                DummyPolicyPopulation(policy_cls=partner.policy),
+                jax.tree.map(lambda x: x[jnp.newaxis, ...], partner.params),
                 partner_idx
             ))
             partner_idx += 1
@@ -363,10 +363,10 @@ def run_training():
         heuristic_names = ["Independent_Policy", "Onion_Policy", "Plate_Policy", "Random_Policy", "Static_Policy"]
 
         # Train against population partners
-        for i in range(min(config.num_population_partners, len(pop_params))):
+        for i, partner in enumerate(partners):
             ego_params, cl_state = run_br_training(
-                config, env, partner_agent_config, ego_policy,
-                ego_params, partner_policy, pop_params[i], env_id_idx=i, eval_partner=eval_partner,
+                config, env, partner.record.config, ego_policy,
+                ego_params, partner.policy, partner.params, env_id_idx=i, eval_partner=eval_partner,
                 max_soup_dict=max_soup_dict, cl=cl, cl_state=cl_state, compiled_cache=compiled_cache)
             # TODO when using vmap over seeds, do the following
             # ego_params = jax.tree.map(lambda x: x[0, ...], ego_params) # take the first params set from the batch dimension
@@ -392,7 +392,7 @@ def run_training():
             partner_name = heuristic_names[i]
 
             ego_params, cl_state = run_br_training(
-                config, env, partner_agent_config, ego_policy,
+                config, env, bank.records[0].config, ego_policy,
                 ego_params, partner_policy_obj, None, env_id_idx=env_id_idx, eval_partner=eval_partner,
                 max_soup_dict=max_soup_dict, cl=cl, cl_state=cl_state, compiled_cache=compiled_cache)
 
