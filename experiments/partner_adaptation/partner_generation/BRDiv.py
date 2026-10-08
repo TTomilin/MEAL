@@ -794,7 +794,9 @@ def get_brdiv_population(config, out, env):
     return partner_params, partner_population
 
 
-def run_brdiv(config):
+def run_brdiv(config, timings=None):
+    """Train the population(s) of `config`. `timings`, if given, receives `compile_s` (ahead-of-time compilation)
+    and `run_s` (execution until the outputs are ready on the device)."""
     env = make_env(config.env_name, **config.layout)
     env = LogWrapper(env)
     print("Starting BRDiv training...")
@@ -826,7 +828,12 @@ def run_brdiv(config):
                         conf_policy=conf_policy, br_policy=br_policy)
             )
         )
-        out = vmapped_train_fn(rngs)
+        compile_start = time.time()
+        executable = vmapped_train_fn.lower(rngs).compile()
+        run_start = time.time()
+        out = jax.block_until_ready(executable(rngs))
+        if timings is not None:
+            timings.update(compile_s=run_start - compile_start, run_s=time.time() - run_start)
 
     end = time.time()
     print(f"BRDiv training complete in {end - start} seconds")

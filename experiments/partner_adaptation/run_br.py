@@ -37,6 +37,7 @@ from experiments.partner_adaptation.run_outputs import (
     device_info, read_checkpoint, resolve_resume, restore_state, save_checkpoint, truncate_csv, write_json)
 from experiments.partner_adaptation.partner_generation.utils import frozendict_from_layout_repr
 from experiments.partner_adaptation.train_br import DummyPolicyPopulation, HeuristicPolicyPopulation, run_br_training
+from experiments.partner_adaptation.train_ego import EVAL_SCHEDULES, eval_plan
 
 log = logging.getLogger(__name__)
 
@@ -132,7 +133,15 @@ class TrainConfig:
 
     # Eval
     num_eval_episodes: int = 5
-    eval_every: int = 2         # Run eval every N update steps (1 = every step)
+    eval_every: int = 2         # Run eval every N update steps (1 = every step); used by eval_schedule="all"
+    # "all": every evaluation partner after update 1, every `eval_every` updates and after the last (original).
+    # "pilot": every partner before the first stage and after each stage (stage end = next stage's start), plus
+    # the partner being trained every `eval_current_every` updates (0 = never). Events never overlap.
+    eval_schedule: str = "all"
+    eval_current_every: int = 5
+    # Profiling only: train just these stage indices (heads, evaluation partners and schedules stay those of the
+    # whole bank). Empty = every stage. Not resumable, not for results.
+    only_stages: List[int] = field(default_factory=list)
     record_video: bool = False  # Record and upload gifs after each partner training
     gif_len: int = 100          # Maximum steps for gif recording
 
@@ -189,6 +198,63 @@ def get_run_string(config: TrainConfig):
         f"_{network}_pop{config.num_population_partners}"
         f"_heur{config.num_heuristic_partners}_seed{config.seed}"
     )
+
+
+def validate_config(config: TrainConfig):
+    """Reject settings that would silently train or evaluate something other than what was asked for."""
+    problems = []
+    update_size = config.num_envs * config.num_steps
+    if config.num_envs < 1 or config.num_steps < 1:
+        problems.append("num_envs and num_steps must be positive")
+    elif int(config.num_updates) < 1:
+        problems.append(f"total_timesteps={config.total_timesteps:g} is less than one update "
+                        f"({update_size} joint environment steps = num_envs x num_steps); the run would not train")
+    if config.num_minibatches < 1 or update_size % max(config.num_minibatches, 1):
+        problems.append(f"num_envs x num_steps = {update_size} is not divisible by "
+                        f"num_minibatches={config.num_minibatches}; samples would be dropped")
+    if config.update_epochs < 1:
+        problems.append("update_epochs must be positive")
+    if config.num_eval_episodes < 1:
+        problems.append("num_eval_episodes must be at least 1")
+    if config.eval_schedule not in EVAL_SCHEDULES:
+        problems.append(f"eval_schedule must be one of {EVAL_SCHEDULES}, got {config.eval_schedule!r}")
+    if config.eval_schedule == "all" and config.eval_every < 1:
+        problems.append("eval_every must be at least 1")
+    if config.eval_current_every < 0:
+        problems.append("eval_current_every must be >= 0 (0 disables current-partner evaluation)")
+    if config.cl_method and config.cl_method.lower() in IMPORTANCE_METHODS and (
+            config.importance_episodes < 1 or config.importance_steps < 1):
+        problems.append("importance_episodes and importance_steps must be positive")
+    if problems:
+        raise ValueError("invalid configuration:\n  " + "\n  ".join(problems))
+
+
+class Resolved(NamedTuple):
+    bank: Any
+    cl: Any
+    identities: list
+    labels: list
+    fingerprint: dict
+    num_heuristics: int
+
+
+def resolve_run(config: TrainConfig) -> Resolved:
+    """Fill in derived settings of `config` (in place) and return the partner list and resume fingerprint.
+
+    Shared by `execute` and by the launcher, so a planned job and the run it produces are compared on the
+    same identity.
+    """
+    bank = select_partner_bank(config.layout_name, config.partner_bank, config.num_population_partners)
+    config.num_population_partners = len(bank)
+    if config.num_heuristic_partners is None:
+        config.num_heuristic_partners = 0 if config.partner_bank else 5
+    validate_config(config)
+    cl = build_cl_method(config)
+    num_heuristics = min(config.num_heuristic_partners, len(HEURISTIC_NAMES))
+    identities = [partner_identity(r) for r in bank.records] + [
+        dict(partner_id=len(bank) + i, kind="heuristic", label=HEURISTIC_NAMES[i]) for i in range(num_heuristics)]
+    labels = [i["label"] for i in identities]
+    return Resolved(bank, cl, identities, labels, build_fingerprint(asdict(config), identities), num_heuristics)
 
 
 class Stage(NamedTuple):
@@ -250,26 +316,18 @@ def schedule_description(config, labels):
                                       if config.cl_method and config.cl_method.lower() in IMPORTANCE_METHODS else
                                       "memory updated inside training" if config.cl_method else "none"),
         "rng": "train, evaluation and importance keys are derived from (seed, partner index); no RNG state is carried",
-        "evaluation": f"every {config.eval_every} updates, after update 1 and after the last, "
-                      f"{config.num_eval_episodes} episodes against every evaluation partner",
+        "evaluation": (f"{config.num_eval_episodes} episodes per partner: every partner before stage 0 and after "
+                       f"every stage; the current partner every {config.eval_current_every} updates"
+                       if config.eval_schedule == "pilot" else
+                       f"every {config.eval_every} updates, after update 1 and after the last, "
+                       f"{config.num_eval_episodes} episodes against every evaluation partner"),
     }
 
 
 def execute(config: TrainConfig) -> RunResult:
     """Train the ego agent partner by partner and record the run (see run_outputs.py)."""
-    bank = select_partner_bank(config.layout_name, config.partner_bank, config.num_population_partners)
-    config.num_population_partners = len(bank)
-    if config.num_heuristic_partners is None:
-        config.num_heuristic_partners = 0 if config.partner_bank else 5
-
+    bank, cl, identities, labels, fingerprint, num_heuristics = resolve_run(config)
     run_string = get_run_string(config)
-    cl = build_cl_method(config)
-
-    num_heuristics = min(config.num_heuristic_partners, len(HEURISTIC_NAMES))
-    identities = [partner_identity(r) for r in bank.records] + [
-        dict(partner_id=len(bank) + i, kind="heuristic", label=HEURISTIC_NAMES[i]) for i in range(num_heuristics)]
-    labels = [i["label"] for i in identities]
-    fingerprint = build_fingerprint(asdict(config), identities)
 
     checkpoint_meta = None
     if config.resume:
@@ -290,8 +348,8 @@ def execute(config: TrainConfig) -> RunResult:
     recorder = run = None
     try:
         counters = (dict(checkpoint_meta["counters"]) if checkpoint_meta else dict(
-            stages_completed=0, train_env_steps=0, train_episodes=0, eval_events=0, eval_episodes=0,
-            eval_env_steps=0, importance_env_steps=0))
+            stages_completed=0, train_env_steps=0, train_episodes=0, eval_events=0, eval_full_events=0,
+            eval_current_events=0, eval_episodes=0, eval_env_steps=0, importance_env_steps=0))
 
         if config.layout_name != "":
             layout_dict = {"layout": overcooked_layouts[config.layout_name]}
@@ -389,7 +447,12 @@ def execute(config: TrainConfig) -> RunResult:
                     "env_steps_per_stage": int(config.num_updates) * steps_per_update, "planned_stages": num_stages,
                     "planned_train_env_steps": num_stages * int(config.num_updates) * steps_per_update,
                     "evaluation_partners": num_eval_partners, "eval_episodes_per_partner": config.num_eval_episodes,
-                    "eval_env_steps_per_event": num_eval_partners * config.num_eval_episodes * config.num_steps,
+                    "eval_env_steps_per_full_event": num_eval_partners * config.num_eval_episodes * config.num_steps,
+                    "evaluation_schedule": config.eval_schedule,
+                    "planned_full_evaluations": (num_stages + (1 if config.eval_schedule == "pilot" else 0)
+                                                 if config.eval_schedule == "pilot" else
+                                                 num_stages * list(eval_plan(config).values()).count("full")),
+                    "planned_current_evaluations": num_stages * list(eval_plan(config).values()).count("current"),
                     "importance_env_steps_per_stage": (
                         config.importance_episodes * config.importance_steps
                         if config.cl_method and config.cl_method.lower() in IMPORTANCE_METHODS else 0)},
@@ -469,23 +532,25 @@ def execute(config: TrainConfig) -> RunResult:
             partner_idx += 1
 
         # Train the ego against the partners in order: bank partners first, then legacy heuristics
-        for k in range(start_stage, num_stages):
+        profiling = bool(config.only_stages)
+        plan = eval_plan(config)
+        for k in (config.only_stages if profiling else range(start_stage, num_stages)):
             stage, stats = stages[k], {}
             stage_start = time.perf_counter()
-            recorder.begin_stage(k, int(config.num_updates), config.eval_every)
+            init_eval = config.eval_schedule == "pilot" and k == 0 and not checkpoint_meta
+            recorder.begin_stage(k, int(config.num_updates), plan, init_eval=init_eval)
             ego_params, cl_state = run_br_training(
                 config, env, stage.agent_config, ego_policy,
                 ego_params, stage.policy, stage.params, env_id_idx=k, eval_partner=eval_partner,
                 max_soup_dict=max_soup_dict, cl=cl, cl_state=cl_state, compiled_cache=compiled_cache,
-                record_fn=recorder.handle, stats=stats)
+                record_fn=recorder.handle, stats=stats, init_eval=init_eval)
             summary = recorder.end_stage()
             counters["stages_completed"] = k + 1
             counters["train_env_steps"] += summary["updates"] * steps_per_update
             counters["train_episodes"] += summary["train_episodes"]
-            counters["eval_events"] += summary["eval_events"]
-            counters["eval_episodes"] += summary["eval_episodes"]
-            counters["eval_env_steps"] += (summary["eval_events"] * num_eval_partners
-                                           * config.num_eval_episodes * config.num_steps)
+            for key in ("eval_events", "eval_full_events", "eval_current_events", "eval_episodes"):
+                counters[key] = counters.get(key, 0) + summary[key]
+            counters["eval_env_steps"] += summary["eval_episodes"] * config.num_steps
             if "importance_s" in stats:
                 counters["importance_env_steps"] += config.importance_episodes * config.importance_steps
             peak = stats.get("peak_bytes_in_use")
@@ -493,14 +558,16 @@ def execute(config: TrainConfig) -> RunResult:
                 stage=k, partner_id=k, partner=labels[k], attempt=attempt, updates=summary["updates"],
                 env_steps_end=summary["env_steps_end"], compile_s=stats.get("compile_s"),
                 compile_cached=stats.get("compile_cached"), train_eval_s=stats.get("train_eval_s"),
-                eval_events=summary["eval_events"], eval_event_s=stats.get("eval_event_s"),
+                eval_events=summary["eval_full_events"], eval_event_s=stats.get("eval_event_s"),
+                eval_current_events=summary["eval_current_events"],
+                eval_current_event_s=stats.get("eval_current_event_s"), init_eval_s=stats.get("init_eval_s"),
                 importance_s=stats.get("importance_s"),
                 importance_compiled_here=stats.get("importance_compiled_here"),
                 stage_wall_s=time.perf_counter() - stage_start, backend=device["backend"],
                 device_kind=device["devices"][0]["device_kind"], peak_bytes_in_use=peak,
                 memory_status="device peak since process start" if peak is not None else "unavailable"))
             # A partner counts as done only once its records are on disk and the checkpoint has replaced the old one.
-            if config.save_checkpoints:
+            if config.save_checkpoints and not profiling:
                 save_checkpoint(run_dir, ego_params, cl_state, {
                     "run_uid": run_uid, "stages_completed": k + 1, "counters": counters,
                     "fingerprint": fingerprint, "attempt": attempt})
@@ -523,6 +590,9 @@ def execute(config: TrainConfig) -> RunResult:
                 visualizer.animate(states, out_path=file_path, task_idx=k, env=env,
                                    wandb_step=(k + 1) * int(config.num_updates) * steps_per_update)
 
+        if profiling:
+            status.update(state="profile", counters=counters)
+            return RunResult(run_dir, ego_params, cl_state, counters)
         atomic_write(run_dir / f"params_seed{config.seed}.pt", pickle.dumps({"actor_params": ego_params}))
         status.update(state="complete", stages_completed=num_stages, counters=counters,
                       wandb_failures=recorder.wandb_failures, wandb_error=recorder.wandb_error)

@@ -184,7 +184,8 @@ def make_partner_importance_fn(cl, env, ego_network, partner_population, config)
 def run_br_training(
         config, env, partner_agent_config, ego_policy, ego_params, partner_policy, partner_params=None,
         partner_test_mode=False, env_id_idx=0, eval_partner=[], max_soup_dict=None, cl=None,
-        cl_state=None, log_fn=None, compiled_cache=None, record_fn=None, stats=None):
+        cl_state=None, log_fn=None, compiled_cache=None, record_fn=None, stats=None,
+        init_eval=False):
     '''Run ego agent training against a single partner agent.
 
     Args:
@@ -241,6 +242,7 @@ def run_br_training(
         compiled_cache=compiled_cache,
         record_fn=record_fn,
         stats=stats,
+        init_eval=init_eval,
     )
 
     log.info(f"Training completed in {time.time() - start_time:.2f} seconds")

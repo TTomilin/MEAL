@@ -33,7 +33,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import serialization
 
-from experiments.partner_adaptation.train_ego import peak_device_memory, should_evaluate
+from experiments.partner_adaptation.train_ego import peak_device_memory
 
 log = logging.getLogger(__name__)
 
@@ -45,11 +45,12 @@ TRAIN_COLUMNS = [
     "env_steps", "stage", "partner_id", "partner", "update", "episodes", "soups", "ego_return", "sparse_reward",
     "shaped_reward", "shaping_coef", "actor_loss", "value_loss", "entropy", "cl_penalty", "grad_norm", "attempt"]
 EVAL_COLUMNS = [
-    "event_id", "row_id", "env_steps", "stage", "update", "train_episodes", "eval_partner_id", "eval_partner",
-    "eval_episode", "episode_key", "soups", "ego_return", "completed", "attempt"]
+    "event_id", "row_id", "scope", "env_steps", "stage", "update", "train_episodes", "eval_partner_id",
+    "eval_partner", "eval_episode", "episode_key", "soups", "ego_return", "completed", "attempt"]
 TIMING_COLUMNS = [
     "stage", "partner_id", "partner", "attempt", "updates", "env_steps_end", "compile_s", "compile_cached",
-    "train_eval_s", "eval_events", "eval_event_s", "importance_s", "importance_compiled_here", "stage_wall_s",
+    "train_eval_s", "eval_events", "eval_event_s", "eval_current_events", "eval_current_event_s", "init_eval_s",
+    "importance_s", "importance_compiled_here", "stage_wall_s",
     "backend", "device_kind", "peak_bytes_in_use", "memory_status"]
 
 # Settings that do not change what is trained or evaluated: logging, output location, resume mechanics.
@@ -271,14 +272,15 @@ class RunRecorder:
     def _label(self, partner_id):
         return self.labels[partner_id] if 0 <= partner_id < len(self.labels) else f"partner{partner_id}"
 
-    def begin_stage(self, stage: int, num_updates: int, eval_every: int):
+    def begin_stage(self, stage: int, num_updates: int, eval_plan: Dict[int, str], init_eval: bool = False):
+        """`eval_plan` maps update -> "full"/"current" (see train_ego.eval_plan); `init_eval` adds the evaluation
+        before the first update (update 0), which has no training event."""
         with self._lock:
             self._stage, self._num_updates = int(stage), int(num_updates)
-            self._eval_updates = {u for u in range(1, self._num_updates + 1)
-                                  if bool(should_evaluate(u, int(eval_every), self._num_updates))}
-            self._pending, self._next = {}, 1
-            self._summary = {"updates": 0, "train_episodes": 0, "eval_events": 0, "eval_episodes": 0,
-                             "env_steps_end": None}
+            self._eval_updates = set(eval_plan) | ({0} if init_eval else set())
+            self._pending, self._next = {}, 0 if init_eval else 1
+            self._summary = {"updates": 0, "train_episodes": 0, "eval_events": 0, "eval_full_events": 0,
+                             "eval_current_events": 0, "eval_episodes": 0, "env_steps_end": None}
 
     def handle(self, kind: str, record: Dict[str, Any], log_dict: Dict[str, Any]):
         """Host-callback entry point; must not raise into JAX, so errors are kept for `end_stage`."""
@@ -298,30 +300,34 @@ class RunRecorder:
     def _drain(self):
         while self._next <= self._num_updates:
             slot = self._pending.get(self._next, {})
-            if "train" not in slot or (self._next in self._eval_updates and "eval" not in slot):
+            if (self._next > 0 and "train" not in slot) or (self._next in self._eval_updates and "eval" not in slot):
                 return
             self._commit(self._next, slot)
             del self._pending[self._next]
             self._next += 1
 
     def _commit(self, update, slot):
-        train, train_log = slot["train"]
-        stage, env_steps = train["stage_id"], train["env_steps"]
-        self.train_log.write([dict(train, stage=stage, partner_id=stage, partner=self._label(stage),
-                                   attempt=self.attempt)])
-        merged = dict(train_log)
-        self._summary["updates"] += 1
-        self._summary["train_episodes"] += train["episodes"]
-        self._summary["env_steps_end"] = env_steps
+        merged, stage, env_steps = {}, self._stage, None
+        if "train" in slot:
+            train, train_log = slot["train"]
+            stage, env_steps = train["stage_id"], train["env_steps"]
+            self.train_log.write([dict(train, stage=stage, partner_id=stage, partner=self._label(stage),
+                                       attempt=self.attempt)])
+            merged.update(train_log)
+            self._summary["updates"] += 1
+            self._summary["train_episodes"] += train["episodes"]
+            self._summary["env_steps_end"] = env_steps
         if "eval" in slot:
             ev, ev_log = slot["eval"]
+            env_steps = ev["env_steps"]
+            scope = ev.get("scope", "full")
             event_id = f"s{stage:03d}-u{update:05d}"
             rows = []
             for row, pid in enumerate(ev["partner_ids"]):
                 for ep in ev["episode_ids"]:
                     done = bool(ev["completed"][row][ep])
                     rows.append({
-                        "event_id": event_id, "row_id": f"{event_id}-p{pid:03d}-e{ep:03d}",
+                        "event_id": event_id, "row_id": f"{event_id}-p{pid:03d}-e{ep:03d}", "scope": scope,
                         "env_steps": ev["env_steps"], "stage": stage, "update": update,
                         "train_episodes": ev["train_episodes"], "eval_partner_id": pid,
                         "eval_partner": self._label(pid), "eval_episode": ep,
@@ -332,6 +338,7 @@ class RunRecorder:
             self.eval_log.write(rows)
             merged.update(ev_log)
             self._summary["eval_events"] += 1
+            self._summary["eval_full_events" if scope == "full" else "eval_current_events"] += 1
             self._summary["eval_episodes"] += len(rows)
         merged["env_steps"] = env_steps
         self._mirror(merged, env_steps)

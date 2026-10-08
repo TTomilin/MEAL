@@ -73,6 +73,46 @@ def should_evaluate(update_steps, eval_every: int, num_updates: int):
     )
 
 
+EVAL_SCHEDULES = ("all", "pilot")
+
+
+def eval_flags(update_steps, eval_schedule, eval_every, current_every, num_updates):
+    """(full, current) evaluation flags after update `update_steps` (1-based) of a stage.
+
+    "all": every partner after update 1, every `eval_every` updates and after the last (the original schedule).
+    "pilot": every partner after the last update only (initialization is evaluated before stage 0 and the end
+    of the previous stage is the initialization of the next one), plus the current partner every
+    `current_every` updates; the stage end is covered by the full evaluation, so the two never overlap.
+    """
+    if eval_schedule == "pilot":
+        last = jnp.equal(update_steps, num_updates)
+        if int(current_every) > 0:
+            current = jnp.logical_and(jnp.equal(jnp.mod(update_steps, int(current_every)), 0), jnp.logical_not(last))
+        else:
+            current = jnp.zeros_like(last)
+        return last, current
+    full = should_evaluate(update_steps, int(eval_every), num_updates)
+    return full, jnp.zeros_like(full)
+
+
+def eval_flag_args(config):
+    return (getattr(config, "eval_schedule", "all"), int(getattr(config, "eval_every", 1)),
+            int(getattr(config, "eval_current_every", 0)), int(config.num_updates))
+
+
+def eval_plan(config):
+    """{update: "full" | "current"} for the evaluation events inside one stage (not counting initialization)."""
+    schedule, every, current_every, n = eval_flag_args(config)
+    plan = {}
+    for u in range(1, n + 1):
+        full, current = eval_flags(u, schedule, every, current_every, n)
+        if bool(full):
+            plan[u] = "full"
+        elif bool(current):
+            plan[u] = "current"
+    return plan
+
+
 def group_eval_partners(eval_partner, current=None):
     """Group evaluation partners that share a policy object so each group is one vmapped graph.
 
@@ -113,7 +153,7 @@ def group_eval_partners(eval_partner, current=None):
 
 
 def build_eval_event(stage_id, update_steps, train_episodes, partner_ids, team_soups, team_returns, completed,
-                     num_updates, steps_per_update, max_soup=None):
+                     num_updates, steps_per_update, max_soup=None, scope="full"):
     """Turn one evaluation event into (record, log_dict).
 
     team_soups/team_returns/completed have shape (num_partners, num_eval_episodes). Means are taken
@@ -138,6 +178,7 @@ def build_eval_event(stage_id, update_steps, train_episodes, partner_ids, team_s
         "team_soups": team_soups,
         "team_returns": team_returns,
         "completed": completed,
+        "scope": scope,
     }
 
     log_dict = {
@@ -221,7 +262,8 @@ def train_ppo_ego_agent(
         ego_policy, init_ego_params, n_ego_train_seeds,
         partner_population: AgentPopulation,
         partner_params, env_id_idx=0, eval_partner=[], cl=None, cl_state=None,
-        eval_rng=None, log_fn=None, max_soup=None, compiled_cache=None, record_fn=None, stats=None
+        eval_rng=None, log_fn=None, max_soup=None, compiled_cache=None, record_fn=None, stats=None,
+        init_eval=False
 ):
     '''
     Train PPO ego agent using the given partner checkpoints and initial ego parameters.
@@ -250,7 +292,9 @@ def train_ppo_ego_agent(
             `log_fn` is not, nothing is sent to wandb from here (the receiver owns logging).
         stats: optional dict filled with host-side measurements of this call: compile_s, compile_cached,
             train_eval_s (the scan, including its in-scan evaluation events), eval_event_s (one separate
-            evaluation event on the final parameters), eval_events, peak_bytes_in_use (None if unavailable).
+            evaluation event on the final parameters), eval_events (full), eval_current_events,
+            eval_current_event_s, init_eval_s, peak_bytes_in_use (None if unavailable).
+        init_eval: evaluate the incoming ego on every evaluation partner before training (update 0 of this stage).
     '''
     if eval_rng is None:
         eval_rng = jax.random.fold_in(train_rng, 1)
@@ -295,10 +339,10 @@ def train_ppo_ego_agent(
 
         max_episode_steps = config.num_steps
 
-        def run_eval(ego_params, event_key, eval_params, eval_ids):
-            """Evaluate the ego on every evaluation partner; returns compact (P, E) arrays."""
+        def evaluate(ego_params, event_key, policies, eval_params, eval_ids):
+            """Evaluate the ego on the given partner groups; returns compact (P, E) arrays."""
             soups, rets, done, ids = [], [], [], []
-            for policy, params, group_ids in zip(eval_policies, eval_params, eval_ids):
+            for policy, params, group_ids in zip(policies, eval_params, eval_ids):
                 last_infos = jax.vmap(lambda p, i: run_episodes(
                     event_key, env,
                     agent_0_param=ego_params, agent_0_policy=ego_policy,
@@ -313,6 +357,14 @@ def train_ppo_ego_agent(
                 soups.append(s), rets.append(r), done.append(c), ids.append(group_ids)
             return (jnp.concatenate(ids), jnp.concatenate(soups), jnp.concatenate(rets),
                     jnp.concatenate(done))
+
+        def run_eval(ego_params, event_key, eval_params, eval_ids):
+            return evaluate(ego_params, event_key, eval_policies, eval_params, eval_ids)
+
+        def run_current(ego_params, event_key, partner_params, stage_id):
+            """Evaluate the ego on the partner being trained only."""
+            return evaluate(ego_params, event_key, (partner_population.policy_cls,), [partner_params],
+                            [jnp.reshape(stage_id, (1,)).astype(jnp.int32)])
 
         def train(rng, eval_key, init_ego_params, partner_params, cl_state, env_id_idx, eval_params, eval_ids):
             if config.anneal_lr:
@@ -712,14 +764,17 @@ def train_ppo_ego_agent(
             def _run_eval(ego_params, event_key):
                 return run_eval(ego_params, event_key, eval_params, eval_ids)
 
-            def _on_eval_event(args):
-                stage_id, update_steps, train_episodes, partner_ids, soups, rets, completed = args
-                record, log_dict = build_eval_event(
-                    stage_id, update_steps, train_episodes, partner_ids, soups, rets, completed,
-                    num_updates, steps_per_update, max_soup_val)
-                if record_fn is not None:
-                    record_fn("eval", record, log_dict)
-                emit(log_dict)
+            def _make_eval_callback(scope):
+                def _on_eval_event(args):
+                    stage_id, update_steps, train_episodes, partner_ids, soups, rets, completed = args
+                    record, log_dict = build_eval_event(
+                        stage_id, update_steps, train_episodes, partner_ids, soups, rets, completed,
+                        num_updates, steps_per_update, max_soup_val, scope=scope)
+                    if record_fn is not None:
+                        record_fn("eval", record, log_dict)
+                    emit(log_dict)
+                return _on_eval_event
+            _on_eval_event, _on_current_event = _make_eval_callback("full"), _make_eval_callback("current")
 
             def _on_train_step(args):
                 (stage_id, update_steps, n_episodes, team_soup, ego_return,
@@ -753,7 +808,7 @@ def train_ppo_ego_agent(
                 train_episodes = train_episodes + metric["n_episodes"]
 
                 # To eval or not to eval
-                to_eval = should_evaluate(update_steps, eval_every, num_updates)
+                to_eval, to_eval_current = eval_flags(update_steps, *eval_flag_args(config)[:3], num_updates)
                 # Only store a checkpoint at the very end when num_ckpts == 1
                 to_store_ckpt = jnp.equal(update_steps, config.num_updates)
 
@@ -763,6 +818,17 @@ def train_ppo_ego_agent(
                     ids, soups, rets, completed = _run_eval(train_state.params, event_key)
                     jax.experimental.io_callback(
                         _on_eval_event, None,
+                        (env_id_idx, update_steps, train_episodes, ids, soups, rets, completed),
+                        ordered=False,
+                    )
+                    return jnp.array(True)
+
+                def do_eval_current(_):
+                    event_key = jax.random.fold_in(eval_key, update_steps)
+                    ids, soups, rets, completed = run_current(train_state.params, event_key, partner_params,
+                                                              env_id_idx)
+                    jax.experimental.io_callback(
+                        _on_current_event, None,
                         (env_id_idx, update_steps, train_episodes, ids, soups, rets, completed),
                         ordered=False,
                     )
@@ -786,6 +852,7 @@ def train_ppo_ego_agent(
                 )
 
                 metric["evaluated"] = jax.lax.cond(to_eval, do_eval, skip_eval, None)
+                metric["evaluated_current"] = jax.lax.cond(to_eval_current, do_eval_current, skip_eval, None)
 
                 # --- In-scan logging via io_callback (same approach as ippo.py) ---
                 jax.experimental.io_callback(
@@ -830,7 +897,7 @@ def train_ppo_ego_agent(
                 out["final_cl_state"] = final_runner_state[3]
             return out
 
-        return train, run_eval
+        return train, run_eval, run_current
 
     # ------------------------------
     # Actually run the PPO training
@@ -848,14 +915,31 @@ def train_ppo_ego_agent(
             if cache_key not in compiled_cache:
                 compiled_cache[cache_key] = _StageFn(*make_ppo_train(config))
             stage_fn = compiled_cache[cache_key]
+        if init_eval:
+            start = time.perf_counter()
+            ids, soups, rets, completed = stage_fn.eval_host(
+                (init_ego_params, jax.random.fold_in(eval_rngs[0], 0), eval_params, eval_ids))
+            record, log_dict = build_eval_event(
+                int(env_id_idx), 0, 0, ids, soups, rets, completed, int(config.num_updates),
+                int(config.num_envs) * int(config.num_steps), None if max_soup is None else float(max_soup))
+            if record_fn is not None:
+                record_fn("eval", record, log_dict)
+            if log_fn is not None:
+                log_fn(log_dict)
+            elif record_fn is None:
+                wandb.log(log_dict)
+            if stats is not None:
+                stats["init_eval_s"] = time.perf_counter() - start
         args = (rngs[0], eval_rngs[0], init_ego_params, partner_params, cl_state, stage_id, eval_params, eval_ids)
         out, timing = stage_fn.run(args)
         if stats is not None:
             stats.update(timing)
-            stats["eval_events"] = int(sum(
-                bool(should_evaluate(u, int(getattr(config, "eval_every", 1)), int(config.num_updates)))
-                for u in range(1, int(config.num_updates) + 1)))
+            kinds = list(eval_plan(config).values())
+            stats["eval_events"], stats["eval_current_events"] = kinds.count("full"), kinds.count("current")
             stats["eval_event_s"] = stage_fn.time_eval(out["final_params"], eval_rngs[0], eval_params, eval_ids)
+            if stats["eval_current_events"]:
+                stats["eval_current_event_s"] = stage_fn.time_eval_current(
+                    out["final_params"], eval_rngs[0], partner_params, stage_id)
             stats["peak_bytes_in_use"] = peak_device_memory()
     else:
         train_fn = jax.jit(jax.vmap(make_ppo_train(config)[0], in_axes=(0, 0, None, None, None, None, None, None)))
@@ -881,8 +965,8 @@ class _StageFn:
     argument shapes; later stages that share this object report `compile_cached`.
     """
 
-    def __init__(self, train, run_eval):
-        self._train, self._eval = jax.jit(train), jax.jit(run_eval)
+    def __init__(self, train, run_eval, run_current):
+        self._train, self._eval, self._current = jax.jit(train), jax.jit(run_eval), jax.jit(run_current)
         self._executables = {}
 
     @staticmethod
@@ -907,6 +991,19 @@ class _StageFn:
         jax.effects_barrier()
         return out, {"compile_s": compile_s, "compile_cached": cached,
                      "train_eval_s": time.perf_counter() - start}
+
+    def eval_host(self, args):
+        """One full evaluation event with an ahead-of-time compiled executable; returns numpy arrays."""
+        executable, _, _ = self._executable(self._eval, args, "eval")
+        return jax.tree.map(np.asarray, jax.block_until_ready(executable(*args)))
+
+    def time_eval_current(self, ego_params, eval_key, partner_params, stage_id):
+        """Seconds for one evaluation event against the current partner only."""
+        args = (ego_params, jax.random.fold_in(eval_key, 2 ** 20), partner_params, stage_id)
+        executable, _, _ = self._executable(self._current, args, "current")
+        start = time.perf_counter()
+        jax.block_until_ready(executable(*args))
+        return time.perf_counter() - start
 
     def time_eval(self, ego_params, eval_key, eval_params, eval_ids):
         """Seconds for one evaluation event (all evaluation partners) outside the training scan."""

@@ -57,5 +57,9 @@ scripts/run_teammate_generation.sh
 See [`experiments/partner_adaptation/README.md`](../experiments/partner_adaptation/README.md) for
 assembling a bank from the outputs.
 
-`scripts/run_br.sh` is a minimal single-invocation example of the same
+`scripts/run_br.sh [gpu] [layout] [run_br options ...]` is a minimal single-invocation example of the same
 `experiments.partner_adaptation.run_br` entry point `partner_adaptation.sh` sweeps over.
+
+The 24-partner pilot (BRDiv generation, bank assembly, GPU preflight/profiling, resumable training with W&B) has its
+own launcher, [`cpa_pilot.sh`](cpa_pilot.sh); see "Pilot launcher" in
+[`experiments/partner_adaptation/README.md`](../experiments/partner_adaptation/README.md).

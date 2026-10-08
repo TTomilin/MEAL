@@ -247,12 +247,14 @@ sparse_reward, shaped_reward, shaping_coef, actor_loss, value_loss, entropy, cl_
 `shaped_reward` are the ego's reward summed over one rollout of one env (`num_steps`), the shaped value being the
 raw unannealed shaping term and `shaping_coef` the weight applied to it (computed on the host from the schedule).
 Shaped returns exist for training only: the evaluation episodes do not track them. `eval_metrics.csv`:
-`event_id` (`s<stage>-u<update>`), unique `row_id`, `env_steps, stage, update, train_episodes, eval_partner_id,
+`event_id` (`s<stage>-u<update>`), unique `row_id`, `scope` (`full` or `current`), `env_steps, stage, update, train_episodes, eval_partner_id,
 eval_partner, eval_episode, episode_key, soups, ego_return, completed, attempt`. `episode_key` names the episode's
 RNG stream: it is split from `fold_in(eval_key(seed, stage), update)`. `stage_timings.csv`: `compile_s`,
 `compile_cached` (the stage reused an earlier executable), `train_eval_s` (the training scan **including** its
 in-scan evaluation events), `eval_events`, `eval_event_s` (one evaluation event timed separately on the final
-parameters, so evaluation share is about `eval_events x eval_event_s`), `importance_s` (includes its compilation when
+parameters, so evaluation share is about `eval_events x eval_event_s`), `eval_current_events`/`eval_current_event_s`
+(the same for current-partner events), `init_eval_s` (the first full-bank evaluation of the run, **including its
+compilation**), `importance_s` (includes its compilation when
 `importance_compiled_here`; blank for FT), `stage_wall_s`, backend/device kind, `peak_bytes_in_use` and
 `memory_status`. Memory is only taken from the backend's own statistics (a process-lifetime peak on GPUs); on CPU it
 is blank and marked `unavailable`. Nothing is estimated.
@@ -301,90 +303,110 @@ are the authoritative record.
 
 ### Not available here
 
-The launcher referred to as "RunPod" is not part of this checkout; `scripts/partner_adaptation.sh` submits
-`run_br` with the default (online) mode. Not verified on GPU or with a real online W&B session.
+Not verified on GPU or with a real online W&B session.
 
-## Run outputs, checkpoints and resume
 
-Every invocation of `run_br` creates a new directory `<checkpoint_path>/<run string>_<YYYYMMDD-HHMMSS>_<8 hex>`
-(`mkdir` is atomic and a clash is retried, so equal layout/method/seed never overwrite an earlier run). It holds:
+## Pilot launcher (24 partners, FT / Online EWC / Online MAS)
 
-| file | content |
+One launcher with explicit actions, dry-run by default for anything that starts work:
+
+```bash
+scripts/cpa_pilot.sh --help            # or: python -m experiments.partner_adaptation.pilot --help
+```
+
+| action | what it does |
 |---|---|
-| `config.json` / `config.pckl` | resolved `TrainConfig` (defaults such as `reg_coef` and the heuristic count filled in) |
-| `run.json` | code revision (`git` commit, counts of modified/untracked files; `available: false` outside git), devices and library versions, architecture and parameter count, planned budget, schedule/reset description, exact partner list, resume fingerprint |
-| `partner_bank.json` | partners in training order (checkpoint/planner identity and hashes; legacy heuristics included) |
-| `status.json` | `running`/`complete`/`failed`/`interrupted`, completed stages, **actual** interaction counters, one entry per attempt (start or resume) |
-| `train_metrics.csv` | one row per PPO update |
-| `eval_metrics.csv` | one row per (evaluation event, evaluated partner, episode) |
-| `stage_timings.csv` | one row per partner |
-| `latest.ckpt` | the single rolling boundary checkpoint |
-| `params_seed{seed}.pt` | final policy export, unchanged format (`{"actor_params": ...}`) |
+| `smoke` | local CPU checks without W&B: tiny BRDiv generation, bank assembly, FT / Online EWC / Online MAS ego runs, no-op resume |
+| `preflight` | short GPU preflight: real CUDA device (no silent CPU fallback), bundled policies, a tiny optimizer step and evaluation against a learned partner and a planner, checkpoint and metric writes, W&B login |
+| `profile`, `profile-brdiv` | compile vs synchronized steady-state timings, written to `<root>/profiles/*.json`; never train a full sequence |
+| `plan` | dry run: populations, banks, jobs, partner counts, interaction units, budgets, schedules, output paths, projection |
+| `generate` | missing BRDiv populations only (one job per layout and generation seed) |
+| `bank` | assemble and check the 24-partner banks |
+| `train` | the selected layouts x methods x seeds, one job after another |
+| `resume` | resume an interrupted run from its directory |
 
-Counters are joint environment steps (one step = both agents act once in each parallel env), consistent with
-`Eval/EnvSteps`: `train_env_steps`, `eval_env_steps` (evaluation partners x episodes x steps per event) and
-`importance_env_steps` (`importance_episodes x importance_steps` per importance-based stage) are kept separate;
-`env_steps` in the CSVs and as the W&B step is the cumulative **training** count.
-
-CSV columns. `train_metrics.csv`: `env_steps, stage, partner_id, partner, update, episodes, soups, ego_return,
-sparse_reward, shaped_reward, shaping_coef, actor_loss, value_loss, entropy, cl_penalty, grad_norm, attempt`.
-`soups`/`ego_return` are means over episodes completed in that update (blank if none); `sparse_reward` and
-`shaped_reward` are the ego's reward summed over one rollout of one env (`num_steps`), the shaped value being the
-raw unannealed shaping term and `shaping_coef` the weight applied to it (computed on the host from the schedule).
-Shaped returns exist for training only: the evaluation episodes do not track them. `eval_metrics.csv`:
-`event_id` (`s<stage>-u<update>`), unique `row_id`, `env_steps, stage, update, train_episodes, eval_partner_id,
-eval_partner, eval_episode, episode_key, soups, ego_return, completed, attempt`. `episode_key` names the episode's
-RNG stream: it is split from `fold_in(eval_key(seed, stage), update)`. `stage_timings.csv`: `compile_s`,
-`compile_cached` (the stage reused an earlier executable), `train_eval_s` (the training scan **including** its
-in-scan evaluation events), `eval_events`, `eval_event_s` (one evaluation event timed separately on the final
-parameters, so evaluation share is about `eval_events x eval_event_s`), `importance_s` (includes its compilation when
-`importance_compiled_here`; blank for FT), `stage_wall_s`, backend/device kind, `peak_bytes_in_use` and
-`memory_status`. Memory is only taken from the backend's own statistics (a process-lifetime peak on GPUs); on CPU it
-is blank and marked `unavailable`. Nothing is estimated.
-
-### W&B
-
-`--mode online|offline|disabled` is respected; the default stays `online`, and `wandb.login` is only called for
-`online` (the key is read from `WANDB_API_KEY` or the stored login and is never printed). `disabled` needs no login.
-The W&B step is the cumulative environment-step count, and each update is logged **once**: training and evaluation
-metrics of the same update are merged into one call, and updates are committed in order even though the training
-scan delivers its host callbacks unordered, so no point is logged behind a later step. Existing metric names are
-kept (`Train/*`, `Eval/*`, `train_step`) and `Train/CLPenalty`, `Train/EgoSparseReward`, `Train/EgoShapedReward`,
-`Train/EnvSteps` and `env_steps` are added. The CSVs are written first; if W&B raises, the run continues, the
-failure is stored in `status.json`, and no local record is lost. Videos, when enabled, are still uploaded by the
-visualizer and use the cumulative step.
-
-### Checkpoint and resume
-
-A checkpoint is written only after a partner has finished training, its importance/CL update is applied and its CSV
-rows are on disk. It replaces `latest.ckpt` atomically (temporary file, `fsync`, rename) and is a `flax` msgpack
-payload behind a magic header and a SHA-256, so a truncated or modified file is rejected before use. It stores the
-ego parameters, the CL state (FT, EWC, MAS, L2, A-GEM/ER-ACE memory), the number of completed stages, counters and
-the fingerprint. `--no-save-checkpoints` turns it off.
-
-What is *not* saved is deliberate: the optimizer (Adam moments and step count), the learning-rate and reward-shaping
-anneal counters are re-created at the start of every partner (see `schedule` in `run.json`), and train, evaluation
-and importance keys are derived from `(seed, stage)`. A boundary resume therefore reproduces the algorithm of an
-uninterrupted run, which the tests check for FT and EWC.
+`generate`, `train` and `resume` print their plan and the exact command unless `--run` (or `RUN=1`) is given. Defaults
+are the pilot: layouts `coord_ring cramped_room`, methods `ft online_ewc`, ego seed `0`, identity input and multi-head
+routing both on, W&B online, evaluation of all 24 partners with 5 episodes at initialization and after every stage plus
+the current partner every 5 updates and at stage end. Nothing is a Cartesian sweep by default: further ego seeds
+(`--seeds 0 1`), the other layouts and `--methods online_mas` must be listed. `--gen-seeds` (default 1001 1002 1003)
+selects generation populations, not ego replications. `--identity hidden` removes both the identity input and the
+oracle head routing; `--use-task-id` / `--use-multihead` override each alone (a warning is printed for the mixed case).
+`online_mas` maps to `cl_method=mas, importance_mode=online`.
 
 ```bash
-python -m experiments.partner_adaptation.run_br <the original arguments> --resume <run directory>
+export MEAL_CPA_ROOT=/workspace/cpa            # a persistent volume: see below
+scripts/cpa_pilot.sh smoke                     # CPU, no W&B
+scripts/cpa_pilot.sh preflight                 # GPU pod; add --wandb-mode ... to skip the login check
+scripts/cpa_pilot.sh profile --layout coord_ring            # needs the banks for an expanded-bank (non-provisional) profile
+scripts/cpa_pilot.sh profile-brdiv --layout coord_ring
+scripts/cpa_pilot.sh generate --run            # skips valid populations, refuses conflicting/incomplete ones
+scripts/cpa_pilot.sh bank
+scripts/cpa_pilot.sh plan --profile $MEAL_CPA_ROOT/profiles/ego_*.json --brdiv-profile .../brdiv_*.json --suggest-budget
+scripts/cpa_pilot.sh train --steps-per-partner <chosen> --run
+scripts/cpa_pilot.sh resume <run directory> --run
+scripts/cpa_pilot.sh train --methods online_mas --steps-per-partner <same> --run   # MAS only; FT/EWC/generation untouched
 ```
 
-`--resume` accepts the run directory (or its `latest.ckpt`) and continues in it. The original arguments must be
-given again; the resume is rejected, before anything is touched, when anything that affects results differs: the
-partner list, order or payload hashes, layout, architecture, CL method and coefficients, seed, or the per-partner
-schedule (`total_timesteps`, `num_envs`, `num_steps`, evaluation settings, ...). The budget is **per partner**; a larger
-`total_timesteps` does not extend finished partners, it is refused. Logging settings (`--mode`, project, tags) may
-change.
+`scripts/run_br.sh` remains the single raw `run_br` invocation (repaired: it pointed to a module that no longer
+exists); the pilot and `scripts/partner_adaptation.sh` use the same `run_br` entry point.
 
-A crash in the middle of a partner restarts that partner from the last completed boundary (no mid-update resume).
-Records of the interrupted partner are cut from the CSVs on resume (the count is stored in `status.json`), so each
-local evaluation event appears once. The interrupted attempt's W&B run keeps whatever it had already logged for that
-partner; the resumed attempt is a **new W&B run** (`<run>_resume<n>`), because W&B cannot rewind steps. The local CSVs
-are the authoritative record.
+### Persistent output root
 
-### Not available here
+Everything the pilot writes is under `--root` / `$MEAL_CPA_ROOT` (`populations/`, `banks/`, `runs/`, `profiles/`,
+`logs/`); there is no default because a default inside the container would be lost with the pod. Put the root on
+storage that survives pod replacement (a network volume or a mounted bucket), and keep the code checkout elsewhere.
+Existing populations, banks and run directories are never modified by `plan`, `generate` or `train`; completed
+populations are read-only inputs.
 
-The launcher referred to as "RunPod" is not part of this checkout; `scripts/partner_adaptation.sh` submits
-`run_br` with the default (online) mode. Not verified on GPU or with a real online W&B session.
+### Reuse and completion
+
+A population is reused only if `generation.json` says `complete`, its member files exist and the settings that define
+it equal the request; otherwise the command stops and touches nothing. A training job is skipped only if a run
+directory under its output path has the **same resume fingerprint** (configuration and partner identities, as computed
+by `run_br`) and `status.json` says `complete` with every partner done and the export present. A matching incomplete
+run blocks the job (use `resume <dir>`, or `--restart` for a new run); a directory that merely exists counts for
+nothing. Jobs run sequentially on one device; a failing command makes the launcher exit nonzero and stops the queue
+unless `--keep-going`.
+
+### Budgets, schedules and units
+
+There is no default training budget. `--steps-per-partner` is in joint environment steps per partner (agent
+transitions are twice that) and must be a whole number of updates (`num_envs x num_steps`, 819,200 at the defaults);
+zero updates, budgets that are not a whole number of updates, minibatch counts that do not divide the batch,
+`num_steps != 400` (unless `--allow-protocol-change`) and mismatching dimensions are rejected before launch.
+Every method gets the same per-partner budget. A shorter budget changes what the fixed schedules mean: reward
+shaping goes 1 -> 0 over `--reward-shaping-horizon` joint steps (default 2.5e7) and restarts at every partner, and the
+learning rate is constant unless `--anneal-lr`; `plan` prints both as resolved, never changes them, and labels
+fewer evaluation episodes, a different current-partner interval or a different horizon as `PROTOCOL CHANGE`.
+`run_br` keeps its earlier evaluation schedule (`--eval-schedule all`, every `--eval-every` updates) unless
+`--eval-schedule pilot` is passed, which the launcher always does. Evaluation uses its own RNG stream, so raising `--eval-episodes` adds episodes without changing training.
+
+The plan lists, per job: partners, joint and agent interaction units per partner and in total, evaluation and
+importance-rollout steps (not training), and the output directory.
+
+### Runtime projection
+
+`profile` times, at the real batch settings and `block_until_ready`-synchronized, the compilation and steady-state
+update of the learned path and the planner path separately, the full-bank evaluation (the first one including its
+compilation), the current-partner evaluation, and the importance overhead of EWC/MAS. `profile-brdiv` times BRDiv from
+two short runs. `plan --profile ... --brdiv-profile ...` multiplies those measurements out for the six generation jobs
+plus every ego sequence and prints the components, the device, the batch settings and the interaction units; a profile
+that did not use the expanded 24-partner bank is labelled **PROVISIONAL**. Start-up, bank loading and W&B upload
+time are not measured. `--suggest-budget` prints the largest per-partner budget projected within 8-13 GPU-hours; it is
+a suggestion only and nothing is promised. If `train --run` projects above 13 hours it refuses (unless
+`--accept-over-budget`), names the bottlenecks and prints one `train` command per layout, so the second layout is
+never dropped silently. Without profile files no runtime or speedup is stated at all.
+
+### Checked on CPU and not yet checked on GPU
+
+Checked on CPU (tests/test_pilot.py and a real `smoke` run): argument parsing and dry-run plans for all four layouts,
+default/MAS-only/one-seed/multi-seed selection, identity controls, budget and configuration rejection, command
+failures and exit codes, completed-job reuse and incomplete-run blocking by fingerprint, generation reuse and
+conflict handling, resume dry run and command, projection arithmetic on synthetic profiles, the evaluation schedule,
+the refusal to run preflight/profile on CPU, and a CPU rehearsal of preflight, profile and profile-brdiv with tiny
+settings. Pending on a GPU: the CUDA device check passing, real compile and steady-state timings and therefore any
+projection or budget suggestion, memory fit of the default 2048-environment batch, online W&B authentication, BRDiv
+generation speed, and whether the six generation jobs plus four ego sequences fit the 8-13 GPU-hour target (no
+measurement exists). If the pilot trains but acquisition is negligible, that shows in the per-stage learning curves and
+soups of `train_metrics.csv`/`eval_metrics.csv`; it must not be called forgetting.

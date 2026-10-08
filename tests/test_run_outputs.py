@@ -429,7 +429,7 @@ def make_events(stage, update, num_updates=4, partners=2, episodes=2):
 def test_recorder_commits_in_update_order_whatever_the_arrival_order(tmp_path):
     logged = []
     recorder = RunRecorder(tmp_path, ["a", "b"], seed=0, wandb_log=lambda d, step: logged.append(step))
-    recorder.begin_stage(0, 4, eval_every=2)  # evaluation after updates 1, 3 (every 2nd) and 4 (last)
+    recorder.begin_stage(0, 4, {1: "full", 3: "full", 4: "full"})
     events = []
     for u in (1, 2, 3, 4):
         train, train_log, ev, ev_log = make_events(0, u)
@@ -449,13 +449,13 @@ def test_recorder_commits_in_update_order_whatever_the_arrival_order(tmp_path):
 
 def test_recorder_refuses_incomplete_or_duplicate_stages(tmp_path):
     recorder = RunRecorder(tmp_path, ["a", "b"], seed=0)
-    recorder.begin_stage(0, 2, eval_every=1)
+    recorder.begin_stage(0, 2, {1: "full", 2: "full"})
     train, train_log, ev, ev_log = make_events(0, 1, num_updates=2)
     recorder.handle("train", train, train_log)  # evaluation of update 1 never arrives
     with pytest.raises(RunOutputError, match="incomplete"):
         recorder.end_stage()
 
-    recorder.begin_stage(0, 2, eval_every=1)
+    recorder.begin_stage(0, 2, {1: "full", 2: "full"})
     recorder.handle("train", train, train_log)
     recorder.handle("train", train, train_log)
     with pytest.raises(RunOutputError, match="duplicate"):
@@ -467,7 +467,7 @@ def test_wandb_failure_keeps_local_records_and_is_reported(tmp_path):
     def broken(data, step):
         raise ConnectionError("offline")
     recorder = RunRecorder(tmp_path, ["a", "b"], seed=0, wandb_log=broken)
-    recorder.begin_stage(0, 1, eval_every=1)
+    recorder.begin_stage(0, 1, {1: "full"})
     train, train_log, ev, ev_log = make_events(0, 1, num_updates=1)
     recorder.handle("train", train, train_log)
     recorder.handle("eval", ev, ev_log)
