@@ -22,6 +22,12 @@ Compare across all four layouts:
 Compare multihead vs singlehead:
   python cumulative_eval_partners.py --compare_by arch --method Online_EWC \
     --layout_names cramped_room
+
+CSV mode (local run directories written by experiments/partner_adaptation/run_br.py):
+  python -m experiments.results.plotting.cumulative_eval_partners --run_root cpa_results/runs \
+    --layout_names cramped_room --methods Online_EWC --identity available --arch multihead \
+    --output_dir /tmp/cpa_figs --no_show
+  Mean team soups over all 24 partners at the measured full-bank evaluations, raw (see experiments/results/README.MD).
 """
 from __future__ import annotations
 
@@ -43,6 +49,7 @@ from experiments.results.plotting.utils import (
     METHOD_COLORS,
     method_display_name,
 )
+from experiments.results.plotting.utils import cpa_csv
 
 # ────────────────────────────────────────────────────────────────────────────
 # DEFAULTS
@@ -72,27 +79,41 @@ def _parse_args() -> argparse.Namespace:
         description="Plot cumulative partner-adaptation performance.",
     )
     p.add_argument("--data_root",     default="data",           help="Root folder for downloaded data")
-    p.add_argument("--layout_names",  nargs="+", default=DEFAULT_LAYOUTS,
-                   help="Overcooked layout name(s); results averaged across layouts if multiple")
+    p.add_argument("--layout_names",  nargs="+", default=None,
+                   help=f"Overcooked layout name(s); results averaged across layouts if multiple "
+                        f"(legacy default: {' '.join(DEFAULT_LAYOUTS)}; CSV mode: exactly one, required)")
     p.add_argument("--arch",          default=DEFAULT_ARCH,     choices=["multihead", "singlehead"],
                    help="Network architecture (used when compare_by=method)")
-    p.add_argument("--num_partners",  type=int, default=DEFAULT_PARTNERS, help="Number of eval partners")
+    p.add_argument("--num_partners",  type=int, default=None,
+                   help=f"Number of eval partners (legacy default {DEFAULT_PARTNERS}; "
+                        f"CSV mode {cpa_csv.DEFAULT_CSV_PARTNERS})")
     p.add_argument("--steps_per_task", type=float, default=1e7,
                    help="Training steps per partner task (x-axis scaling)")
 
     p.add_argument("--compare_by",   choices=["method", "arch"], default="method",
                    help="What the curves represent")
-    p.add_argument("--methods",      nargs="+", default=DEFAULT_METHODS,
-                   help="CL methods to compare (used when --compare_by method)")
+    p.add_argument("--methods",      nargs="+", default=None,
+                   help=f"CL methods to compare (used when --compare_by method; legacy default: "
+                        f"{' '.join(DEFAULT_METHODS)}; CSV mode: {' '.join(cpa_csv.CSV_METHODS)})")
     p.add_argument("--method",       default="Online_EWC",
                    help="Single method when --compare_by arch")
 
-    p.add_argument("--seeds",        type=int, nargs="+", default=[1, 2, 3, 4, 5])
-    p.add_argument("--sigma",        type=float, default=1.5)
+    p.add_argument("--seeds",        type=int, nargs="+", default=None,
+                   help="Seeds (legacy default 1 2 3 4 5; CSV mode: one seed, default 0)")
+    p.add_argument("--sigma",        type=float, default=None,
+                   help="Smoothing (legacy default 1.5; CSV mode 0 = none)")
     p.add_argument("--confidence",   type=float, default=0.95, choices=[0.9, 0.95, 0.99])
     p.add_argument("--legend_anchor", type=float, default=0.79)
     p.add_argument("--plot_name",    default=None)
-    return p.parse_args()
+    cpa_csv.add_csv_args(p)
+    args = p.parse_args()
+    if args.run_root is None:  # legacy mode keeps its original defaults
+        args.layout_names = args.layout_names or DEFAULT_LAYOUTS
+        args.num_partners = args.num_partners or DEFAULT_PARTNERS
+        args.methods = args.methods or DEFAULT_METHODS
+        args.seeds = args.seeds or [1, 2, 3, 4, 5]
+        args.sigma = 1.5 if args.sigma is None else args.sigma
+    return args
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -178,8 +199,39 @@ def _apply_decorations(ax, args, n_legend_items):
     )
 
 
+def _plot_csv(args):
+    """Average over all partners of the measured full-bank evaluations of local run directories."""
+    layout, seed, sigma, selected = cpa_csv.load_csv_selection(args, args.layout_names)
+    methods = [m for m, _, _ in selected]
+    runs = [r for _, r, _ in selected]
+    out_dir, formats = cpa_csv.prepare_output(args, Path(__file__).resolve().parent.parent / "plots",
+                                              cpa_csv.DEFAULT_CSV_FORMATS)
+    boundaries = cpa_csv.common_boundaries(runs)
+
+    fig, ax = setup_figure(width=11, height=5.2)
+    for method, run, events in selected:
+        color = METHOD_COLORS.get(method)
+        ax.plot(events.env_steps, cpa_csv.smooth_line(events.mean, sigma), color=color, lw=1.6,
+                label=method_display_name(method))
+        ax.plot(events.env_steps, events.mean, "o", color=color, ms=4)
+    cpa_csv.decorate_partner_axis(ax, runs[0])
+    finalize_plot(ax, xlabel=cpa_csv.X_LABEL, ylabel=f"Mean team soups per {runs[0].episode_steps}-step episode\n"
+                  f"(mean over all {runs[0].num_partners} partners)", xlim=(0, boundaries[-1]), ylim=(0, None))
+    title = (f"{layout} · {', '.join(method_display_name(m) for m in methods)} · {cpa_csv.condition_text(runs[0])} · "
+             f"seed {seed} · {runs[0].num_partners} partners")
+    cpa_csv.finish_figure(fig, title, cpa_csv.caption(runs[0], "average", sigma))
+
+    stem = args.plot_name or cpa_csv.csv_stem("cpa_avg", layout, methods, runs[0])
+    save_plot(fig, out_dir, stem, formats)
+    if not args.no_show:
+        plt.show()
+
+
 def plot():
     args = _parse_args()
+    if args.run_root:
+        return _plot_csv(args)
+    out_dir, formats = cpa_csv.prepare_output(args, Path(__file__).resolve().parent.parent / "plots", ["png", "pdf"])
     data_root = Path(__file__).resolve().parent.parent / args.data_root
 
     if args.compare_by == "method":
@@ -220,7 +272,6 @@ def plot():
         _plot_curve(ax, x, mu, ci, label, color)
     _apply_decorations(ax, args, len(curves))
 
-    out_dir = Path(__file__).resolve().parent.parent / "plots"
     if args.plot_name:
         stem = args.plot_name
     else:
@@ -228,8 +279,9 @@ def plot():
         layout_str = "_".join(args.layout_names) if len(args.layout_names) == 1 else "all_layouts"
         stem = f"ppo_cumulative_{by}_{layout_str}_{args.arch}_partners{args.num_partners}"
 
-    save_plot(fig, out_dir, stem)
-    plt.show()
+    save_plot(fig, out_dir, stem, formats)
+    if not args.no_show:
+        plt.show()
 
 
 if __name__ == "__main__":

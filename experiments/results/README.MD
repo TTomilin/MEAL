@@ -130,6 +130,54 @@ python -m experiments.results.plotting.compare_agents_histogram \
 For JaxNav, pass `--env jaxnav` where a script takes one — it switches to success/return
 metrics instead of soup.
 
+### CPA run directories (CSV mode)
+
+`cumulative_eval_partners` and `eval_per_task_partners` also read the local run directories written by
+`experiments/partner_adaptation/run_br.py` (no download, JAX or W&B needed; nothing under a run directory is
+written to). `--run_root` selects this mode; without it both scripts keep their JSON/NPZ behaviour and defaults.
+
+```bash
+RUNS=cpa_results/runs        # run directories are found anywhere below it
+OUT=/tmp/cpa_figs            # keep figures out of tracked source
+
+# Average performance, one figure per layout and method
+python -m experiments.results.plotting.cumulative_eval_partners --run_root $RUNS \
+  --layout_names cramped_room --methods Online_EWC --identity available --arch multihead \
+  --output_dir $OUT --no_show --formats png
+
+# One curve per partner, same evaluations
+python -m experiments.results.plotting.eval_per_task_partners --run_root $RUNS \
+  --layout_name cramped_room --methods Online_EWC --identity available --arch multihead \
+  --output_dir $OUT --no_show --formats png pdf
+```
+
+- Additive flags: `--run_root`, `--run_dirs`, `--identity available|hidden`, `--output_dir`, `--no_show`,
+  `--formats png [pdf]`. `--arch`, `--layout_names`/`--layout_name`, `--methods`, `--seeds`, `--num_partners`,
+  `--sigma` and `--plot_name` keep their meaning. CSV-mode defaults: all of `FT Online_EWC Online_MAS`, seed 0,
+  24 partners, no smoothing, PNG only, identity `available`. Exactly one layout and one seed, and the soup metric,
+  are required; `--compare_by arch` is not available (choose the head structure with `--arch`).
+- Runs are selected from the saved `config.json` / `run.json` / `status.json` / `partner_bank.json`, not from
+  folder names: layout, `use_task_id` (identity), `use_multihead` (head structure; `num_heads` is not used),
+  partner count, seed, and `FT` = `cl_method ft`, `Online_EWC` = `ewc` + `importance_mode online`, `Online_MAS` =
+  `mas` + `online`. Only completed runs count. If several completed runs match, the script lists them and asks for
+  `--run_dirs DIR ...`; a missing method or condition is an error, never a silently omitted curve.
+- Data are the `scope=full` rows of `eval_metrics.csv` with completed episodes. Duplicate rows (same `row_id`) are
+  accepted when identical and an error when they disagree; every full event must contain every partner ID and
+  every evaluation episode, otherwise the script stops (no partial event is averaged).
+- **Average figure**: per event, the mean team soups per episode (raw soups, 400-step episodes) over the
+  evaluation episodes of each partner, then the equal-weight mean of all 24 partner means. It is the average
+  performance over *all* partners, including those not yet trained with: not an average over seen partners, not a
+  cumulative sum and not forward transfer.
+- **Per-partner figure** (one figure per method): one curve per partner from the same events. Colours and labels
+  follow the partner manifest (`13 · planner P01` is partner position 13, planner ID P01). The shaded band and the
+  thick curve segment mark each partner's training interval; the heavy dashed line is the BRDiv-to-planner
+  transition.
+- The x axis is the recorded cumulative training `env_steps`, exactly as measured (joint steps; stage boundaries
+  are `k * env_steps_per_stage` from `run.json`). Markers are the measurements and the line only connects them;
+  nothing is interpolated, padded or smoothed (unless `--sigma > 0`, which smooths the drawn line only). There is
+  no confidence band: this is one seed, and its evaluation episodes are not independent training seeds.
+- These are adapted CPA figures, not a numerical reproduction of the paper's layout-sequence experiment.
+
 ## 3. Numerical tables
 
 `experiments/results/numerical/` — same idea as plotting but producing LaTeX tables / printed
