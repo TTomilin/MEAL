@@ -199,10 +199,14 @@ def get_run_string(config: TrainConfig):
     cl_method = config.cl_method if config.cl_method is not None else "none"
     layout = config.layout_name if config.layout_name else f"layout{config.layout_idx}"
     network = "cnn" if config.use_cnn else "mlp"
+    # Runs with the default identity access (identity input and head routing) keep their historical names; any other
+    # condition says so, which also names its W&B run.
+    identity = "" if config.use_task_id and config.use_multihead else (
+        f"_{'id' if config.use_task_id else 'noid'}-{'mh' if config.use_multihead else '1h'}")
     return (
         f"br_{cl_method}_{config.layout_difficulty}_{layout}"
         f"_{network}_pop{config.num_population_partners}"
-        f"_heur{config.num_heuristic_partners}_seed{config.seed}"
+        f"_heur{config.num_heuristic_partners}_seed{config.seed}{identity}"
     )
 
 
@@ -455,7 +459,9 @@ def execute(config: TrainConfig) -> RunResult:
                     "num_layers": config.num_layers, "activation": config.activation,
                     "use_layer_norm": config.use_layer_norm, "use_cnn": config.use_cnn,
                     "use_task_id": config.use_task_id, "use_multihead": config.use_multihead,
-                    "shared_backbone": config.shared_backbone, "num_heads": seq_length,
+                    "shared_backbone": config.shared_backbone,
+                    # output heads the actor and critic really have: one unless the stage index routes to a head
+                    "num_heads": seq_length if config.use_multihead else 1,
                     "observation_dim": int(np.prod(env.observation_space().shape)),
                     "parameter_count": int(sum(np.size(x) for x in jax.tree.leaves(ego_params)))},
                 "budget": {

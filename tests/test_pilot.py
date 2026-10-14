@@ -6,14 +6,22 @@ generation or training job; subprocess launching is replaced by a recorder. One 
 checked on synthetic profiles: they test the arithmetic, not any real device. Nothing here says anything about GPU
 behaviour.
 """
+import csv
 import json
 import re
+import shlex
+import shutil
+import sys
 from pathlib import Path
 
 import jax
+import jax.numpy as jnp
+import numpy as np
 import pytest
 
-from experiments.partner_adaptation import pilot, pilot_gpu
+from experiments.model.mlp import ActorCritic
+from experiments.partner_adaptation import pilot, pilot_gpu, run_br, run_outputs
+from experiments.partner_adaptation.partner_agents.agent_interface import MLPActorCriticPolicyCL
 from experiments.partner_adaptation.partner_bank import assemble_bank
 from experiments.partner_adaptation.partner_generation.run import (
     MEMBER_FILE_FMT, write_generation_record)
@@ -516,3 +524,326 @@ def test_cpu_is_refused_without_the_explicit_rehearsal_flag(tmp_path, capsys):
     code, out = run_main(["preflight", "--root", str(tmp_path)], capsys)
     assert code == 1 and "[FAIL] device" in out.out and "[stop]" in out.out
     assert run_main(["profile", "--root", str(tmp_path)], capsys)[0] == 2
+
+
+# ---------------------------------------------------------------------------------------------------------
+# identity hidden, single head (CPU; nothing here says anything about GPU behaviour)
+# ---------------------------------------------------------------------------------------------------------
+
+REPO = Path(__file__).resolve().parent.parent
+README = REPO / "experiments/partner_adaptation/README.md"
+HIDDEN_METHODS = ("ft", "online_ewc", "online_mas")
+
+
+def readme_commands(root, section="## Identity-hidden, single-head experiments"):
+    """The commands of a README section, as argv lists with `$MEAL_CPA_ROOT` replaced by `root` (checked by the tests
+    below, so a documented command cannot drift from the parsers). Returns [(program, argv)]."""
+    text = README.read_text()
+    body = text[text.index(section) + len(section):]
+    body = body.split("\n## ")[0]
+    commands = []
+    for block in re.findall(r"```bash\n(.*?)```", body, re.S):
+        for line in block.replace("\\\n", " ").splitlines():
+            parts = [t.replace("$MEAL_CPA_ROOT", str(root)) for t in shlex.split(line.strip())]
+            parts = [str(root) if t == "<run directory from the line above>" else t for t in parts]
+            if parts[:1] == ["scripts/cpa_pilot.sh"]:
+                commands.append(("pilot", parts[1:]))
+            elif parts[:2] == ["python", "-m"] and parts[2].startswith("experiments.results.plotting."):
+                commands.append((parts[2].rsplit(".", 1)[-1], parts[3:]))
+    return commands
+
+
+def hidden_config(tiny, root, method, **overrides):
+    """A tiny hidden / single-head run over the 4-partner fixture bank: three learned partners, then planner P01."""
+    settings = dict(TINY, partner_bank=str(tiny["bank"]), checkpoint_path=str(root), total_timesteps=2 * 4 * 16,
+                    use_task_id=False, use_multihead=False, **pilot.METHODS[method])
+    settings.update(overrides)
+    with pilot.quiet():
+        return TrainConfig(**settings)
+
+
+def trees_close(a, b):
+    la, lb = jax.tree.leaves(a), jax.tree.leaves(b)
+    assert len(la) == len(lb)
+    for x, y in zip(la, lb):
+        np.testing.assert_allclose(np.asarray(x), np.asarray(y), rtol=1e-5, atol=1e-6)
+
+
+@pytest.fixture(scope="module")
+def hidden(tiny, tmp_path_factory):
+    """method -> (config, result): one tiny hidden run per method, each followed by a no-op resume."""
+    runs = {}
+    for method in HIDDEN_METHODS:
+        root = tmp_path_factory.mktemp(f"hidden_{method}")
+        config = hidden_config(tiny, root, method)
+        result = execute(config)
+        again = execute(hidden_config(tiny, root, method, resume=str(result.run_dir)))
+        assert again.run_dir == result.run_dir and again.counters == result.counters
+        runs[method] = (config, result)
+    return runs
+
+
+# --- the model -------------------------------------------------------------------------------------------
+
+OBS, HIDDEN_SIZE, STAGES = 40, 16, 24
+
+
+def policy_for(task_id, multihead):
+    net = ActorCritic(6, "relu", STAGES, multihead, False, HIDDEN_SIZE, 2, task_id, True)       # as in run_br
+    policy = MLPActorCriticPolicyCL(net, OBS)
+    return policy, policy.init_params(jax.random.PRNGKey(0))
+
+
+def outputs(policy, params, env_idx):
+    obs = jax.random.normal(jax.random.PRNGKey(7), (5, OBS))
+    _, value, pi, _ = policy.get_action_value_policy(
+        params, obs, jnp.zeros(5, bool), jnp.ones((5, 6)), None, jax.random.PRNGKey(1), env_id_idx=env_idx)
+    return np.asarray(pi.probs), np.asarray(value)
+
+
+def kernels(params):
+    layers = params["params"]
+    return {name: tuple(layers[name]["kernel"].shape) for name in
+            ("actor_Dense_1", "critic_Dense_1", "actor_Dense_head", "critic_Dense_head")}
+
+
+def test_hidden_model_receives_no_partner_id_and_has_one_head():
+    policy, params = policy_for(task_id=False, multihead=False)
+    assert kernels(params) == {"actor_Dense_1": (OBS, HIDDEN_SIZE), "critic_Dense_1": (OBS, HIDDEN_SIZE),
+                               "actor_Dense_head": (HIDDEN_SIZE, 6), "critic_Dense_head": (HIDDEN_SIZE, 1)}
+    probs0, value0 = outputs(policy, params, 0)
+    for idx in range(1, STAGES):                       # only env_idx changes: same observation, same parameters
+        probs, value = outputs(policy, params, idx)
+        np.testing.assert_array_equal(probs, probs0)
+        np.testing.assert_array_equal(value, value0)
+
+
+def test_the_invariance_check_has_power_against_each_identity_channel():
+    for task_id, multihead, shapes in [
+            (True, False, {"actor_Dense_1": (OBS + STAGES, HIDDEN_SIZE), "actor_Dense_head": (HIDDEN_SIZE, 6)}),
+            (False, True, {"actor_Dense_1": (OBS, HIDDEN_SIZE), "actor_Dense_head": (HIDDEN_SIZE, 6 * STAGES),
+                           "critic_Dense_head": (HIDDEN_SIZE, STAGES)})]:
+        policy, params = policy_for(task_id, multihead)
+        assert shapes.items() <= kernels(params).items()
+        (p0, v0), (p5, v5) = outputs(policy, params, 0), outputs(policy, params, 5)
+        assert not np.allclose(p0, p5) or not np.allclose(v0, v5), "env_idx had no effect on an identity channel"
+
+
+# --- the launcher ----------------------------------------------------------------------------------------
+
+def test_every_documented_command_parses_and_selects_the_hidden_experiment(tmp_path, monkeypatch):
+    commands = readme_commands(tmp_path)
+    kinds = [k for k, _ in commands]
+    assert kinds.count("pilot") == 4 and kinds.count("cumulative_eval_partners") == 2 \
+        and kinds.count("eval_per_task_partners") == 2
+    for kind, argv in commands:
+        if kind == "pilot":
+            command = pilot.tyro.cli(pilot.Command, args=argv)
+            if isinstance(command, pilot.TrainSelection):
+                assert (command.identity, command.layouts, command.methods, command.seeds) == (
+                    "hidden", ("coord_ring", "cramped_room"), HIDDEN_METHODS, (0,))
+                assert (command.steps_per_partner, command.wandb_mode, command.wandb_project,
+                        command.wandb_group) == (99942400, "online", "MEAL", "cpa-identity-hidden")
+            elif isinstance(command, pilot.Preflight):
+                assert (command.identity, command.layout) == ("hidden", "coord_ring")
+        else:
+            module = {"cumulative_eval_partners": "cumulative", "eval_per_task_partners": "per_partner"}[kind]
+            from experiments.results.plotting import cumulative_eval_partners, eval_per_task_partners
+            monkeypatch.setattr(sys, "argv", ["prog"] + argv)
+            args = (cumulative_eval_partners._parse_args() if module == "cumulative"
+                    else eval_per_task_partners.parse_args())
+            assert (args.identity, args.arch, args.methods, args.run_root) == (
+                "hidden", "singlehead", ["FT", "Online_EWC", "Online_MAS"], f"{tmp_path}/runs")
+
+
+def test_hidden_dry_run_selects_exactly_six_jobs_with_the_documented_flags(tmp_path, capsys, monkeypatch, launched):
+    monkeypatch.setattr(pilot, "require_banks", lambda jobs: None)
+    dry_run, = [argv for kind, argv in readme_commands(tmp_path)
+                if kind == "pilot" and argv[0] == "train" and "--run" not in argv]
+    code, out = run_main([*dry_run, "--root", str(tmp_path)], capsys)
+    assert code == 0, out.err
+    text = out.out
+    assert launched.calls == [] and text.count("[dry-run]") == 6
+    expected = [f"{layout}/{method}__noid-1h/seed0" for layout in ("coord_ring", "cramped_room")
+                for method in HIDDEN_METHODS]
+    assert [line.split()[1] for line in text.splitlines() if line.startswith("- ")
+            and "__noid-1h" in line] == expected
+    assert "__id-mh" not in text and "ego training jobs (6)" in text
+    commands = [shlex.split(block.split("\n", 1)[1]) for block in text.split("[dry-run] ")[1:]]
+    assert len(commands) == 6
+    for (layout, method), command in zip([(l, m) for l in ("coord_ring", "cramped_room") for m in HIDDEN_METHODS],
+                                         commands):
+        flag = lambda name: command[command.index(name) + 1]
+        assert "--no-use-task-id" in command and "--no-use-multihead" in command
+        assert "--use-task-id" not in command and "--use-multihead" not in command
+        assert flag("--partner-bank") == str(tmp_path / "banks" / f"{layout}_bank24.json")
+        assert flag("--num-population-partners") == "24" and flag("--seed") == "0"
+        assert flag("--checkpoint-path") == str(tmp_path / "runs" / layout / f"{method}__noid-1h" / "seed0")
+        assert (flag("--project"), flag("--group"), flag("--mode")) == ("MEAL", "cpa-identity-hidden", "online")
+        assert "noid-1h" in command[command.index("--tags") + 1:command.index("--tags") + 7]
+        assert [flag(f) for f in ("--total-timesteps", "--num-envs", "--num-steps", "--update-epochs",
+                                  "--num-minibatches")] == ["99942400.0", "2048", "400", "8", "16"]
+        assert flag("--eval-schedule") == "pilot" and "--log-agent-stats" in command
+    assert text.count("122 updates of 819,200") == 6
+    assert text.count("identity input=False, multi-head routing=False") == 6
+    assert text.count("changes identity access and head structure TOGETHER") == 6
+
+
+def test_group_defaults_follow_the_identity_without_touching_the_old_default(tmp_path):
+    def group(**kw):
+        sel = pilot.Plan(root=str(tmp_path), layouts=("coord_ring",), methods=("ft",), **kw)
+        return pilot.make_jobs(sel, tmp_path)[0].overrides["group"]
+    assert group() == "cpa-pilot"
+    assert group(identity="hidden") == "cpa-identity-hidden"
+    assert group(identity="hidden", wandb_group="other") == "other"
+    assert group(use_task_id=False) == "cpa-pilot"                      # partly hidden is not the hidden condition
+
+
+# --- tiny hidden runs ------------------------------------------------------------------------------------
+
+def test_hidden_runs_report_one_head_and_agree_with_the_exported_network(hidden, tiny):
+    multi_config = pilot.build_config(tiny["job"], 192)
+    multi_heads, multi_width = pilot_gpu.verify_identity(tiny["run_dir"], multi_config)
+    multi = json.loads((tiny["run_dir"] / "run.json").read_text())["architecture"]
+    assert (multi_heads, multi["num_heads"], multi["use_task_id"], multi["use_multihead"]) == (4, 4, True, True)
+    for method, (config, result) in hidden.items():
+        pilot_gpu.verify_run(result, 4, config)
+        heads, width = pilot_gpu.verify_identity(result.run_dir, config)
+        arch = json.loads((result.run_dir / "run.json").read_text())["architecture"]
+        assert (heads, arch["num_heads"], arch["use_task_id"], arch["use_multihead"]) == (1, 1, False, False)
+        assert width == arch["observation_dim"] == multi_width - 4
+        assert arch["parameter_count"] < multi["parameter_count"]       # the true (smaller) count, not 4 heads' worth
+        assert json.loads((result.run_dir / "config.json").read_text())["use_multihead"] is False
+
+
+def test_hidden_runs_fill_the_diagnostics_for_learned_and_planner_partners(hidden):
+    for method, (config, result) in hidden.items():
+        assert pilot_gpu.verify_agent_stats(result.run_dir, config) > 0
+        rows = [r for r in pilot_gpu.read_csv(result.run_dir / "eval_metrics.csv") if r["completed"] == "1"]
+        planner = [r for r in rows if r["eval_partner_id"] == "3"]
+        learned = [r for r in rows if r["eval_partner_id"] == "0"]
+        assert planner and learned and "P01" in planner[0]["eval_partner"]
+
+
+def test_a_broken_condition_or_diagnostic_is_caught(hidden, tmp_path):
+    config, result = hidden["ft"]
+    bad = tmp_path / "copy"
+    shutil.copytree(result.run_dir, bad)
+    run_json = json.loads((bad / "run.json").read_text())
+    run_json["architecture"]["num_heads"] = 4                              # the old, wrong metadata
+    (bad / "run.json").write_text(json.dumps(run_json))
+    with pytest.raises(AssertionError, match="reports 4 heads"):
+        pilot_gpu.verify_identity(bad, config)
+    config_multi = pilot.build_config(pilot.Job("cramped_room", "ft", 0, "id-mh", tmp_path, dict(
+        TINY, partner_bank="", checkpoint_path=str(tmp_path))), 192)
+    with pytest.raises(AssertionError, match="does not say use_task_id=True"):
+        pilot_gpu.verify_identity(result.run_dir, config_multi)
+    path = bad / "eval_metrics.csv"
+    rows = pilot_gpu.read_csv(path)
+    next(r for r in rows if r["completed"] == "1")["ego_soups"] = "99"
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    with pytest.raises(AssertionError, match="ego . partner soups differ"):
+        pilot_gpu.verify_agent_stats(bad, config)
+
+
+def test_importance_methods_are_still_told_about_every_stage_boundary(hidden):
+    for method in ("online_ewc", "online_mas"):
+        _, result = hidden[method]
+        trees_close(result.cl_state.old_params, result.ego_params)         # re-anchored after the last stage
+        assert sum(float(np.sum(x)) for x in jax.tree.leaves(result.cl_state.importance)) > 0
+    assert hidden["online_ewc"][0].importance_mode == "online" and hidden["online_mas"][0].cl_method == "mas"
+
+
+def test_hidden_checkpoint_resume_after_a_crash_matches_the_uninterrupted_run(hidden, tiny, tmp_path, monkeypatch):
+    config, reference = hidden["online_ewc"]
+    real = run_br.run_br_training
+
+    def crash(*args, **kwargs):
+        if kwargs["env_id_idx"] == 2:
+            raise RuntimeError("simulated crash")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(run_br, "run_br_training", crash)
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        execute(hidden_config(tiny, tmp_path, "online_ewc"))
+    monkeypatch.undo()
+    run_dir, = [p for p in tmp_path.iterdir() if p.is_dir()]
+    assert json.loads((run_dir / "status.json").read_text())["stages_completed"] == 2
+    resumed = execute(hidden_config(tiny, tmp_path, "online_ewc", resume=str(run_dir)))
+    assert resumed.run_dir == run_dir and resumed.counters == reference.counters
+    trees_close(resumed.ego_params, reference.ego_params)
+    trees_close(resumed.cl_state, reference.cl_state)
+    pilot_gpu.verify_run(resumed, 4, config)
+    pilot_gpu.verify_identity(run_dir, config)
+    pilot_gpu.verify_agent_stats(run_dir, config)
+
+
+def test_a_run_of_the_other_identity_condition_is_never_resumed_or_reused(hidden, tiny):
+    _, result = hidden["online_ewc"]
+    with pytest.raises(run_outputs.ResumeError, match="use_multihead|use_task_id"):
+        execute(hidden_config(tiny, result.run_dir.parent, "online_ewc", use_multihead=True,
+                              resume=str(result.run_dir)))
+    with pytest.raises(run_outputs.ResumeError, match="use_multihead|use_task_id"):
+        execute(hidden_config(tiny, tiny["run_dir"].parent, "ft", resume=str(tiny["run_dir"])))
+    job = pilot.Job("cramped_room", "ft", 0, "noid-1h", tiny["job"].root, dict(tiny["job"].overrides, **{
+        "use_task_id": False, "use_multihead": False}))
+    assert describe(tiny, job)[job.name]["status"] == "new"             # the id-mh run is not a completed noid-1h run
+
+
+def test_instrumentation_does_not_change_the_hidden_objective(hidden, tiny, tmp_path):
+    _, on = hidden["online_ewc"]
+    off = execute(hidden_config(tiny, tmp_path, "online_ewc", log_agent_stats=False))
+    trees_close(off.ego_params, on.ego_params)
+    trees_close(off.cl_state, on.cl_state)
+    assert off.counters == on.counters
+    for name in ("train_metrics.csv", "eval_metrics.csv"):
+        rows_on, rows_off = (pilot_gpu.read_csv(r.run_dir / name) for r in (on, off))
+        legacy = [c for c in run_outputs.TRAIN_COLUMNS + run_outputs.EVAL_COLUMNS
+                  if c in rows_off[0] and c not in ("attempt", "episode_key")]
+        assert len(rows_on) == len(rows_off) and set(rows_off[0]) < set(rows_on[0])
+        for a, b in zip(rows_on, rows_off):
+            assert [a[c] for c in legacy] == [b[c] for c in legacy]
+
+
+# --- preflight -------------------------------------------------------------------------------------------
+
+def test_preflight_tiny_config_follows_the_identity_and_uses_its_own_group(tmp_path):
+    def config(**kw):
+        return pilot_gpu._preflight_config(tmp_path, pilot.Preflight(root=str(tmp_path), **kw), tmp_path / "bank.json")
+    available, hidden_ = config(), config(identity="hidden", wandb_mode="disabled")
+    assert (available.use_task_id, available.use_multihead, available.mode) == (True, True, "online")
+    assert (hidden_.use_task_id, hidden_.use_multihead, hidden_.mode) == (False, False, "disabled")
+    assert available.group == hidden_.group == "cpa-preflight" and "noid-1h" in hidden_.tags
+    assert pilot.tyro.cli(pilot.Command, args=["preflight"]).identity == "available"       # default unchanged
+
+
+def test_hidden_preflight_exercises_online_logging_and_checks_the_new_fields(tmp_path, capsys, monkeypatch):
+    runs, logins = [], []
+
+    class FakeRun:
+        def __init__(self, **kwargs):
+            self.kwargs, self.name, self.logged = kwargs, kwargs.get("name"), []
+
+        def log(self, data, step=None):
+            self.logged.append(data)
+
+        def finish(self):
+            pass
+
+    monkeypatch.setattr(run_br.wandb, "init", lambda **kw: runs.append(FakeRun(**kw)) or runs[-1])
+    monkeypatch.setattr(run_br.wandb, "login", lambda *a, **kw: logins.append(kw) or True)
+    code, out = run_main(["preflight", "--root", str(tmp_path), "--allow-cpu", "--identity", "hidden",
+                          "--num-envs", "4", "--wandb-mode", "online"], capsys)
+    assert code == 0, out.out + out.err
+    assert "[PASS] W&B authentication" in out.out and "[PASS] tiny training + evaluation" in out.out
+    assert "identity hidden (noid-1h): 1 head(s)" in out.out and "group cpa-preflight" in out.out
+    assert {"verify": True}.items() <= logins[0].items()                    # the authentication check
+    run, = runs
+    assert (run.kwargs["group"], run.kwargs["project"], run.kwargs["mode"]) == ("cpa-preflight", "MEAL", "online")
+    assert "noid-1h" in run.kwargs["tags"] and run.kwargs["config"]["use_multihead"] is False
+    keys = {k for data in run.logged for k in data}
+    assert {"Train/EgoSoupsDelivered", "Train/PartnerStayFraction", "EvalFull/TeamSoups_Partner0",
+            "EvalFull/EgoSoupsDelivered_Partner3", "EvalFull/MeanTeamSoups"} <= keys

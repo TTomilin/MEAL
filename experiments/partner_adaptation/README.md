@@ -623,3 +623,96 @@ resolution, rejection of a bank that does not hold 24 partners, and CPU rehearsa
 CUDA install above, the CUDA device check, memory fit of 2048 environments, real compile and steady-state timings,
 any projection or budget suggestion, online W&B authentication, BRDiv generation speed and whether the 8-13 GPU-hour
 target is reachable. No training quality, partner diversity or speed has been measured.
+
+## Identity-hidden, single-head experiments
+
+The identity-hidden condition reuses `pilot.py` and `run_br.py` unchanged in structure: the same two banks
+(`coord_ring_bank24.json`, `cramped_room_bank24.json`) in the same partner order, 99,942,400 joint environment steps per
+partner (2,048 envs x 400 steps = 819,200 per update, 122 updates, 8 epochs, 16 minibatches), the same learning
+hyperparameters, shaping, per-partner optimizer reset, importance settings and `pilot` evaluation schedule, ego seed 0, and
+the per-agent diagnostics on. `--identity hidden` sets `use_task_id=False` **and** `use_multihead=False` (printed as
+`--no-use-task-id --no-use-multihead`) for training and evaluation alike.
+
+**What changes, and what that means.** Against the identity-available runs (`id-mh`) the ego loses the partner-ID input
+*and* the per-partner head routing at once: it has one set of 6 actor outputs and 1 critic output instead of one per
+partner. Any difference is therefore a difference in identity access **and** head structure together; this comparison
+cannot say which of the two causes it (the launcher prints this as a `NOTE`; `--use-task-id` / `--use-multihead` change
+one at a time if that is wanted).
+
+**Where the partner index still exists.** The stage index is still used to pick the real frozen partner, to name and
+index evaluation partners and records, and to tell EWC/MAS where a stage ends (importance estimate and `old_params` are
+updated after every partner). It is passed to the ego network as `env_idx`, which the network ignores unless
+`use_task_id` (appended one-hot) or `use_multihead` (head selection) is on; the tests feed one fixed observation and one
+fixed set of parameters through the hidden model with every `env_idx` and require identical action probabilities and
+values, and check that actor and critic first layers are exactly observation-wide and the heads have 6 and 1 outputs. The
+partners are untouched: their policies and their own required inputs do not depend on this setting.
+
+**Metadata.** `run.json` -> `architecture.num_heads` is the number of heads the actor and critic really have: `1` when
+`use_multihead` is false, otherwise the number of partners (24 in the pilot). `parameter_count` has always been the true
+count and is unchanged. Runs written before this correction are not edited; for a run with `use_multihead: false` from an
+earlier version, read `num_heads` as 1.
+
+**Outputs and separation.** `runs/<layout>/<method>__noid-1h/seed0/br_<...>_noid-1h_<time>_<id>/` next to, never inside,
+the `__id-mh` directories. A new run always initializes its ego from seed 0; the only way a run reads parameters is
+`--resume` of its own directory, and the resume fingerprint contains both flags, so an `id-mh` run cannot be resumed (or
+reused as a completed job) as `noid-1h` or the reverse. Existing `id-mh` results are neither rerun nor overwritten. W&B:
+project `MEAL`, group `cpa-identity-hidden` (the default group of `--identity hidden`; earlier runs used `cpa-pilot`),
+tags `PARTNER_ADAPTATION CPA_PILOT <layout> <method> noid-1h`, and a run name containing `noid-1h`; the logged config
+holds `use_task_id=False`, `use_multihead=False`.
+
+**Commands** (paths as in the saved pod logs: code in `/workspace/MEAL`, environment in `/workspace/venv-meal`, outputs in
+`/workspace/cpa`; any other roots work through `--root`/`MEAL_CPA_ROOT` and a different checkout directory). The
+GPU-side commands have not been run here.
+
+```bash
+cd /workspace/MEAL && source /workspace/venv-meal/bin/activate && unset LD_LIBRARY_PATH
+export MEAL_CPA_ROOT=/workspace/cpa
+read -rsp "WANDB_API_KEY: " WANDB_API_KEY; echo; export WANDB_API_KEY
+```
+
+Preflight (tiny run of the chosen condition; with `--wandb-mode online` it checks the login **and** logs that tiny run to
+W&B group `cpa-preflight`; it also checks the identity/head metadata against the exported network and that the per-agent CSV
+fields are filled and add up). Default is `--identity available`:
+
+```bash
+scripts/cpa_pilot.sh preflight --layout coord_ring --identity hidden
+```
+
+Dry run (prints the six jobs, their output directories and the exact `run_br` commands with both bank paths; starts nothing):
+
+```bash
+scripts/cpa_pilot.sh train --identity hidden --layouts coord_ring cramped_room --methods ft online_ewc online_mas --seeds 0 --steps-per-partner 99942400 --wandb-mode online --wandb-project MEAL --wandb-group cpa-identity-hidden
+```
+
+Train (the same command with `--run`; six sequential jobs, completed jobs are skipped, an incomplete one is reported
+instead of duplicated):
+
+```bash
+scripts/cpa_pilot.sh train --identity hidden --layouts coord_ring cramped_room --methods ft online_ewc online_mas --seeds 0 --steps-per-partner 99942400 --wandb-mode online --wandb-project MEAL --wandb-group cpa-identity-hidden --run
+```
+
+Resume after an interruption (the configuration, including both identity flags, is read from the run directory):
+
+```bash
+ls -d "$MEAL_CPA_ROOT"/runs/*/*__noid-1h/seed0/br_*
+scripts/cpa_pilot.sh resume "<run directory from the line above>" --run
+```
+
+Figures (CSV mode of the plotting scripts, see `experiments/results/README.MD`; repeat with `cramped_room`):
+
+```bash
+python -m experiments.results.plotting.cumulative_eval_partners --run_root "$MEAL_CPA_ROOT/runs" --layout_names coord_ring --methods FT Online_EWC Online_MAS --identity hidden --arch singlehead --output_dir "$MEAL_CPA_ROOT/figures" --no_show --formats png
+python -m experiments.results.plotting.eval_per_task_partners --run_root "$MEAL_CPA_ROOT/runs" --layout_name coord_ring --methods FT Online_EWC Online_MAS --identity hidden --arch singlehead --output_dir "$MEAL_CPA_ROOT/figures" --no_show --formats png
+python -m experiments.results.plotting.cumulative_eval_partners --run_root "$MEAL_CPA_ROOT/runs" --layout_names cramped_room --methods FT Online_EWC Online_MAS --identity hidden --arch singlehead --output_dir "$MEAL_CPA_ROOT/figures" --no_show --formats png
+python -m experiments.results.plotting.eval_per_task_partners --run_root "$MEAL_CPA_ROOT/runs" --layout_name cramped_room --methods FT Online_EWC Online_MAS --identity hidden --arch singlehead --output_dir "$MEAL_CPA_ROOT/figures" --no_show --formats png
+```
+
+`asymm_advantages` and `counter_circuit` use the same flags through `--layouts` once their populations and banks exist
+(section 9); nothing else changes. No new partners or seeds are needed for the two pilot layouts.
+
+**Verified on CPU only** (`tests/test_pilot.py`, `JAX_PLATFORMS=cpu`): the flag mapping, the six jobs and their paths and
+commands (every command above is parsed by the tests), `env_idx` invariance of the hidden model, tiny hidden FT / Online
+EWC / Online MAS runs with a learned and a planner partner including checkpoint resume, metadata against the exported
+network, instrumentation not changing the objective, and a CPU rehearsal of `preflight --allow-cpu --identity hidden`.
+**Still to verify on the GPU pod:** `preflight` on CUDA with real W&B, memory fit and speed of 2,048 environments in the
+single-head model, and the runs themselves.

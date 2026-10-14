@@ -263,6 +263,10 @@ def resolve_identity(identity: str, use_task_id: Optional[bool], use_multihead: 
                      "identity is NOT hidden from the network")
     if task_id and not multihead:
         notes.append("use_task_id=True with a single head: identity is an input only (no oracle head routing)")
+    if not task_id and not multihead:
+        notes.append("identity hidden: no partner ID input and a single head. Against the identity-available runs "
+                     "(id-mh) this changes identity access and head structure TOGETHER, so a difference cannot be "
+                     "attributed to either one alone")
     return task_id, multihead, notes
 
 
@@ -389,7 +393,7 @@ class TrainSelection(Selection):
     importance_steps: int = 500
     wandb_mode: str = "online"
     wandb_project: str = "MEAL"
-    wandb_group: str = "cpa-pilot"
+    wandb_group: Optional[str] = None                       # default: cpa-pilot; cpa-identity-hidden with --identity hidden
     log_agent_stats: bool = True                            # per-agent diagnostics (recording only); --no-log-agent-stats
     allow_protocol_change: bool = False                     # accept a horizon other than 400 (labelled in the plan)
     profile: Optional[str] = None                           # ego profile json (from `profile`) for a projection
@@ -407,6 +411,7 @@ def make_jobs(sel: TrainSelection, root: Path) -> List[Job]:
         raise PilotError(f"the experiment uses episode horizon {HORIZON}; num_steps={sel.num_steps} is a protocol "
                          f"change (pass --allow-protocol-change to accept it)")
     total, _, _ = expected_partners(sel.pop_size, sel.gen_seeds)
+    group = sel.wandb_group or ("cpa-identity-hidden" if not task_id and not multihead else "cpa-pilot")
     jobs = []
     for layout in sel.layouts:
         for method in sel.methods:
@@ -416,8 +421,8 @@ def make_jobs(sel: TrainSelection, root: Path) -> List[Job]:
                     layout_name=layout, partner_bank=str(bank_path(root, layout, total)), num_population_partners=total,
                     num_heuristic_partners=0,
                     seed=seed, checkpoint_path=str(root / "runs" / layout / f"{method}__{tag}" / f"seed{seed}"),
-                    mode=sel.wandb_mode, project=sel.wandb_project, group=sel.wandb_group,
-                    tags=["PARTNER_ADAPTATION", "CPA_PILOT", layout, method],
+                    mode=sel.wandb_mode, project=sel.wandb_project, group=group,
+                    tags=["PARTNER_ADAPTATION", "CPA_PILOT", layout, method, tag],
                     total_timesteps=sel.steps_per_partner, num_envs=sel.num_envs, num_steps=sel.num_steps,
                     update_epochs=sel.update_epochs, num_minibatches=sel.num_minibatches,
                     reward_shaping_horizon=sel.reward_shaping_horizon, anneal_lr=sel.anneal_lr,
@@ -551,11 +556,13 @@ class Smoke:
 @dataclass
 class Preflight:
     """GPU preflight (short, a few partners): verifies a real CUDA device, loads the bundled policies, runs a tiny
-    optimizer step and evaluation against a learned partner and a planner, checks checkpoint/metric writes and
-    W&B authentication. It never starts a full job."""
+    optimizer step and evaluation against a learned partner and a planner, checks checkpoint/metric writes, the
+    identity/head metadata, the per-agent CSV diagnostics and W&B authentication. It never starts a full job."""
     root: str = ""
     layout: str = "coord_ring"
-    wandb_mode: str = "online"          # online verifies the login; offline/disabled skip it (and say so)
+    identity: Literal["available", "hidden"] = "available"  # condition of the tiny run (hidden = no ID, one head)
+    wandb_mode: str = "online"          # online: login check AND a tiny run logged to W&B group cpa-preflight
+    wandb_project: str = "MEAL"
     allow_cpu: bool = False             # run the checks on CPU for a dry rehearsal; NOT a GPU verification
     num_envs: int = 16
 

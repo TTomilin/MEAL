@@ -16,7 +16,8 @@ from typing import Any, Dict, List, Optional
 
 from experiments.partner_adaptation.pilot import (
     HORIZON, METHODS, TARGET_GPU_HOURS, PilotError, check_layouts, check_methods, expected_partners,
-    generation_config, hours, human, population_dir, population_state, quiet, resolve_root, shaping_note)
+    generation_config, hours, human, identity_tag, population_dir, population_state, quiet, resolve_identity,
+    resolve_root, shaping_note)
 from experiments.partner_adaptation.run_outputs import atomic_write, write_json
 
 
@@ -102,6 +103,74 @@ def verify_run(result, partners: int, config):
     assert meta["stages_completed"] == partners
     assert (d / "params_seed0.pt").is_file()
     return evals
+
+
+def verify_identity(run_dir, config):
+    """The saved metadata, the saved configuration and the exported network agree on the identity condition.
+
+    Identity input on: the first layer of actor and critic is `partners` wider than the observation. Multi-head on:
+    the actor has `actions x partners` and the critic `partners` outputs, otherwise one head (6 and 1 outputs).
+    `parameter_count` must be the real count of the exported parameters. Returns (heads, input width).
+    """
+    import pickle
+    import jax
+    import numpy as np
+    d = Path(run_dir)
+    run = json.loads((d / "run.json").read_text())
+    arch, saved = run["architecture"], json.loads((d / "config.json").read_text())
+    partners = len(run["partners"])
+    for what, source in (("run.json", arch), ("config.json", saved)):
+        assert (source["use_task_id"], source["use_multihead"]) == (config.use_task_id, config.use_multihead), \
+            f"{what} does not say use_task_id={config.use_task_id}, use_multihead={config.use_multihead}"
+    heads = partners if config.use_multihead else 1
+    assert arch["num_heads"] == heads, f"run.json reports {arch['num_heads']} heads, expected {heads}"
+    exported = pickle.loads((d / f"params_seed{config.seed}.pt").read_bytes())["actor_params"]
+    layers = exported["params"]
+    width = arch["observation_dim"] + (partners if config.use_task_id else 0)
+    expected = {"actor head": ("actor_Dense_head", (config.hidden_size, 6 * heads)),
+                "critic head": ("critic_Dense_head", (config.hidden_size, heads)),
+                "actor input": ("actor_Dense_1", (width, config.hidden_size)),
+                "critic input": ("critic_Dense_1", (width, config.hidden_size))}
+    got = {k: tuple(layers[layer]["kernel"].shape) for k, (layer, _) in expected.items()}
+    want = {k: shape for k, (_, shape) in expected.items()}
+    assert got == want, f"network shapes {got} differ from what the metadata implies {want}"
+    count = int(sum(np.size(x) for x in jax.tree.leaves(exported)))
+    assert arch["parameter_count"] == count, f"parameter_count {arch['parameter_count']} vs exported {count}"
+    return heads, width
+
+
+def verify_agent_stats(run_dir, config):
+    """The per-agent CSV fields are populated and consistent with the team columns they refine.
+
+    Per row (evaluation episodes, and training updates, which hold per-episode means): ego + partner soups equal the
+    team `soups`, each agent's six action counts add up to the episode length, and the stay fraction is stay / that
+    total. Rows without a completed episode must have blank fields. Returns the number of rows checked.
+    """
+    import math
+    from experiments.partner_adaptation.train_ego import ACTION_NAMES, AGENT_STAT_COLUMNS
+    d = Path(run_dir)
+    checked = 0
+    for name, has_data in (("eval_metrics.csv", lambda r: r["completed"] == "1"),
+                           ("train_metrics.csv", lambda r: r["episodes"] not in ("", "0"))):
+        for row in read_csv(d / name):
+            missing = [c for c in AGENT_STAT_COLUMNS if c not in row]
+            assert not missing, f"{name} lacks the diagnostic columns {missing}"
+            if not has_data(row):
+                assert all(row[c] == "" for c in AGENT_STAT_COLUMNS), f"{name}: diagnostics of an unfinished row"
+                continue
+            v = {c: float(row[c]) for c in AGENT_STAT_COLUMNS}
+            assert all(math.isfinite(x) for x in v.values()), f"{name}: non-finite diagnostic"
+            assert math.isclose(v["ego_soups"] + v["partner_soups"], float(row["soups"]), abs_tol=1e-4), \
+                f"{name}: ego + partner soups differ from team soups"
+            for role in ("ego", "partner"):
+                counts = [v[f"{role}_act_{a}"] for a in ACTION_NAMES]
+                assert all(c >= 0 for c in counts) and math.isclose(sum(counts), config.num_steps, abs_tol=1e-3), \
+                    f"{name}: {role} action counts {counts} do not add up to {config.num_steps} steps"
+                assert math.isclose(v[f"{role}_stay_fraction"], v[f"{role}_act_stay"] / config.num_steps,
+                                    abs_tol=1e-5), f"{name}: {role} stay fraction"
+            checked += 1
+    assert checked, "no row with completed episodes: the diagnostics were never populated"
+    return checked
 
 
 def smoke(opts) -> int:
@@ -210,9 +279,18 @@ def preflight(opts) -> int:
         bank_file = work / "bank.json"
         bank = assemble_bank(opts.layout, str(bank_file), [], bundled=True, planners=("P01",))
         n = len(bank)
+        if opts.wandb_mode == "online" and "W&B authentication" in failed_checks():
+            raise Skipped("not run: W&B authentication failed and this run logs online")
         config = _preflight_config(work, opts, bank_file)
         result = execute(config)
         evals = verify_run(result, n, config)
+        heads, width = verify_identity(result.run_dir, config)
+        rows = verify_agent_stats(result.run_dir, config)
+        status = json.loads((result.run_dir / "status.json").read_text())
+        wandb_info = status["attempts"][0]["wandb"]
+        assert wandb_info["mode"] == opts.wandb_mode, wandb_info
+        if opts.wandb_mode != "disabled":
+            assert status["wandb_failures"] == 0, f"W&B logging failed: {status['wandb_error']}"
         timings = read_csv(result.run_dir / "stage_timings.csv")
         backend = timings[0]["backend"]
         if not opts.allow_cpu and backend not in ("gpu", "cuda"):
@@ -220,7 +298,12 @@ def preflight(opts) -> int:
         kinds = {r["eval_partner"] for r in evals}
         return (f"{n} stages ({n - 1} learned + planner P01), EWC step and evaluation on {backend}, "
                 f"{len(evals)} evaluation rows over {len(kinds)} partners, checkpoint/CSV/export written and read "
-                f"back, compile {sum(float(r['compile_s'] or 0) for r in timings):.1f} s")
+                f"back, compile {sum(float(r['compile_s'] or 0) for r in timings):.1f} s; identity {opts.identity} "
+                f"({identity_tag(config.use_task_id, config.use_multihead)}): {heads} head(s), network input "
+                f"{width}, metadata matches the exported parameters; {rows} CSV rows with consistent per-agent "
+                f"diagnostics; W&B {opts.wandb_mode}, group {config.group}"
+                + (f", {status['counters']['stages_completed']} stages logged without failure"
+                   if opts.wandb_mode != "disabled" else " (not logged)"))
 
     def wandb_auth():
         if opts.wandb_mode != "online":
@@ -230,8 +313,11 @@ def preflight(opts) -> int:
             raise PilotError("wandb.login returned False; set WANDB_API_KEY or run `wandb login`")
         return "authenticated (credential taken from the environment / stored login, not printed)"
 
+    def failed_checks():
+        return [name for status, name in results if status == "FAIL"]
+
     for name, fn in (("device", device), ("output root", writes), ("bundled policies", bundled),
-                     ("tiny training + evaluation", training), ("W&B authentication", wandb_auth)):
+                     ("W&B authentication", wandb_auth), ("tiny training + evaluation", training)):
         check(name, fn)
         if name == "device" and results[-1][0] == "FAIL":
             print("[stop] the remaining checks are meaningless without the target device")
@@ -243,13 +329,19 @@ def preflight(opts) -> int:
 
 
 def _preflight_config(work: Path, opts, bank_file: Path):
+    """The tiny run of the preflight: the pilot's condition (`--identity`) and, unless disabled, real W&B logging
+    into its own group `cpa-preflight`."""
     from experiments.partner_adaptation.run_br import TrainConfig
+    task_id, multihead, _ = resolve_identity(opts.identity, None, None)
     with quiet():
         return TrainConfig(
-            mode="disabled", checkpoint_path=str(work / "runs"), layout_name=opts.layout, partner_bank=str(bank_file),
+            mode=opts.wandb_mode, project=opts.wandb_project, group="cpa-preflight",
+            tags=["PARTNER_ADAPTATION", "CPA_PREFLIGHT", opts.layout, identity_tag(task_id, multihead)],
+            checkpoint_path=str(work / "runs"), layout_name=opts.layout, partner_bank=str(bank_file),
             num_heuristic_partners=0, num_envs=opts.num_envs, num_steps=HORIZON, total_timesteps=opts.num_envs * HORIZON,
             update_epochs=1, num_minibatches=16, num_eval_episodes=2, eval_schedule="pilot", eval_current_every=1,
-            importance_episodes=1, importance_steps=50, seed=0, **METHODS["online_ewc"])
+            importance_episodes=1, importance_steps=50, seed=0, use_task_id=task_id, use_multihead=multihead,
+            **METHODS["online_ewc"])
 
 
 # ---------------------------------------------------------------------------------------------------------
