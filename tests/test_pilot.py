@@ -135,6 +135,21 @@ def test_run_command_carries_the_resolved_flags(tmp_path):
                                                                            "--no-anneal-lr"}
 
 
+def test_agent_stats_are_on_by_default_and_switchable_without_changing_the_job_identity(tmp_path):
+    def job(*extra):
+        sel = pilot.tyro.cli(pilot.Plan, args=["--root", str(tmp_path), "--steps-per-partner", "4915200", *extra])
+        return pilot.make_jobs(sel, tmp_path)[0]
+
+    on, off = job(), job("--no-log-agent-stats")
+    assert on.overrides["log_agent_stats"] is True and off.overrides["log_agent_stats"] is False
+    assert "--log-agent-stats" in pilot.cli_args(TrainConfig, on.overrides)
+    assert "--no-log-agent-stats" in pilot.cli_args(TrainConfig, off.overrides)
+    # recording only: the resume fingerprint (and so job reuse) is the same either way
+    from experiments.partner_adaptation.run_outputs import build_fingerprint
+    assert (build_fingerprint(pilot.asdict(pilot.build_config(on, 1e7)), [])
+            == build_fingerprint(pilot.asdict(pilot.build_config(off, 1e7)), []))
+
+
 # ---------------------------------------------------------------------------------------------------------
 # budgets and failures
 # ---------------------------------------------------------------------------------------------------------
@@ -337,6 +352,20 @@ def test_resume_reads_the_run_configuration_and_uses_the_resume_flag(tiny, capsy
     assert command[command.index("--mode") + 1] == "disabled"
     launched.code = 4
     assert run_main(["resume", str(tiny["run_dir"]), "--run"], capsys)[0] == 1
+
+
+def test_resume_of_a_run_saved_before_the_diagnostics_does_not_request_them(tiny, tmp_path, capsys, launched):
+    import shutil
+    legacy = tmp_path / "legacy_run"
+    shutil.copytree(tiny["run_dir"], legacy)
+    saved = json.loads((legacy / "config.json").read_text())
+    assert saved["log_agent_stats"] is True                              # a new run records its choice
+    saved.pop("log_agent_stats")                                         # ... an old one has no such key
+    (legacy / "config.json").write_text(json.dumps(saved))
+    code, out = run_main(["resume", str(legacy), "--run", "--wandb-mode", "disabled"], capsys)
+    assert code == 0 and "--no-log-agent-stats" in launched.calls[-1]
+    code, out = run_main(["resume", str(tiny["run_dir"]), "--run", "--wandb-mode", "disabled"], capsys)
+    assert code == 0 and "--log-agent-stats" in launched.calls[-1]       # a new run resumes with what it saved
 
 
 def test_resume_of_a_missing_run_fails(tmp_path, capsys):

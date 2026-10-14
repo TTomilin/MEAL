@@ -17,7 +17,7 @@ from experiments.continual.ewc import EWC
 from experiments.continual.ft import FT
 from experiments.continual.mas import MAS
 from experiments.model.mlp import ActorCritic
-from experiments.partner_adaptation import train_br
+from experiments.partner_adaptation import train_br, train_ego
 from experiments.partner_adaptation.partner_agents.agent_interface import (
     ActorWithConditionalCriticPolicy, MLPActorCriticPolicyCL,
 )
@@ -28,7 +28,10 @@ from experiments.partner_adaptation.run_br import TrainConfig
 from experiments.partner_adaptation.train_br import (
     DummyPolicyPopulation, HeuristicPolicyPopulation, make_partner_switches, run_br_training,
 )
-from experiments.partner_adaptation.train_ego import make_stage_keys, train_ppo_ego_agent
+from experiments.partner_adaptation.partner_generation.run_episodes import run_episodes
+from experiments.partner_adaptation.train_ego import (
+    AGENT_STAT_COLUMNS, STAY_INDEX, make_stage_keys, train_ppo_ego_agent,
+)
 from experiments.utils import init_cl_state
 from meal import make_env
 from meal.env.overcooked.common import OBJECT_TO_INDEX
@@ -45,10 +48,11 @@ def cpa():
     layout = {"layout": overcooked_layouts["cramped_room"]}
     envs = {}
 
-    def make_logged_env(episode_steps):
-        if episode_steps not in envs:
-            envs[episode_steps] = LogWrapper(make_env("overcooked", **layout, max_steps=episode_steps))
-        return envs[episode_steps]
+    def make_logged_env(episode_steps, agent_stats=False):
+        if (episode_steps, agent_stats) not in envs:
+            envs[(episode_steps, agent_stats)] = LogWrapper(
+                make_env("overcooked", **layout, max_steps=episode_steps), agent_stats=agent_stats)
+        return envs[(episode_steps, agent_stats)]
 
     env = make_logged_env(16)
     obs_dim = int(np.prod(env.observation_space().shape))
@@ -270,3 +274,138 @@ def test_incomplete_episodes_are_not_reported_as_returns(cpa):
     (event,) = _events(logs)
     assert all(event[f"Eval/Episodes_Partner{i}"] == 0 for i in range(3))
     assert not any("Eval/EgoSoup_Partner" in k or "Eval/EgoReturn_Partner" in k for k in event)
+
+
+# ----------------------------------------------------------------------------------------------------------
+# per-agent diagnostics (ego = agent_0, partner = agent_1)
+# ----------------------------------------------------------------------------------------------------------
+
+def _train_with_stats(cpa, cfg, env, partner="learned", eval_partner=None):
+    """One stage; returns (out, W&B-style logs, (kind, record) pairs). Single seed, fixed keys."""
+    keys = make_stage_keys(cfg.seed, 0)
+    logs, records = [], []
+    if partner == "learned":
+        population, params = DummyPolicyPopulation(cpa.partner_policy), jax.tree.map(lambda x: x[None], cpa.pop_params[0])
+    else:
+        population, params = HeuristicPolicyPopulation(cpa.planner), jax.tree.map(lambda x: x[None], cpa.ego_params)
+    out = train_ppo_ego_agent(
+        cfg, env, keys.train, cpa.ego, cpa.ego_params, 1, population, params, env_id_idx=0,
+        eval_partner=cpa.eval_entries() if eval_partner is None else eval_partner, eval_rng=keys.eval,
+        log_fn=logs.append, record_fn=lambda kind, record, log: records.append((kind, record)))
+    return out, logs, records
+
+
+def _stat(vector, name):
+    return float(np.asarray(vector)[AGENT_STAT_COLUMNS.index(name)])
+
+
+def test_agent_stats_do_not_change_the_experiment(cpa, monkeypatch):
+    cfg = cpa.make_cfg(updates=2, eval_every=1)
+    batches = []
+    real = train_ego._create_minibatches_no_time
+    monkeypatch.setattr(train_ego, "_create_minibatches_no_time",
+                        lambda traj_batch, *a, **k: batches.append(sorted(traj_batch.info)) or real(traj_batch, *a, **k))
+    off, off_logs, off_records = _train_with_stats(cpa, cfg, cpa.make_env(16, False))
+    on, on_logs, on_records = _train_with_stats(cpa, cfg, cpa.make_env(16, True))
+
+    # Same policy, same learning: instrumentation reads values the env already computes and draws no random numbers,
+    # so parameters agree to float round-off (XLA may fuse the two programs differently).
+    for a, b in zip(jax.tree.leaves(off["final_params"]), jax.tree.leaves(on["final_params"])):
+        np.testing.assert_allclose(np.asarray(a), np.asarray(b), rtol=1e-6, atol=1e-7)
+    for name in off["metrics"]:
+        np.testing.assert_allclose(np.asarray(off["metrics"][name]), np.asarray(on["metrics"][name]),
+                                   rtol=1e-6, atol=1e-7, err_msg=name)
+    assert set(on["metrics"]) == set(off["metrics"])  # no diagnostic array is added to the scan output
+    # the diagnostics never enter the PPO batch (and so neither minibatches nor replay memory)
+    assert len(batches) == 2 and batches[0] == batches[1]
+    assert not any("episode_actions" in k or "episode_shaped" in k for k in batches[1])
+    # team scores and evaluation results agree; legacy keys keep their team semantics in both
+    for name in ("Train/EgoSoup", "Train/EgoReturn"):
+        assert [l[name] for l in off_logs if name in l] == [l[name] for l in on_logs if name in l]
+    for a, b in zip(_events(off_logs), _events(on_logs)):
+        for pid in range(3):
+            assert a[f"Eval/EgoSoup_Partner{pid}"] == b[f"Eval/EgoSoup_Partner{pid}"]
+            assert a[f"Eval/EgoReturn_Partner{pid}"] == b[f"Eval/EgoReturn_Partner{pid}"]
+    assert all(r["agent_stats"] is None for k, r in off_records if k == "eval")
+    assert not any("EgoSoupsDelivered" in k for l in off_logs for k in l)
+
+    # identical evaluation episodes (same key) with and without the extra counters: same actions, same outcome
+    results = []
+    for flag in (False, True):
+        results.append(run_episodes(
+            jax.random.PRNGKey(7), cpa.make_env(16, flag), cpa.ego_params, cpa.ego, cpa.pop_params[0],
+            cpa.partner_policy, max_episode_steps=16, num_eps=3))
+    for key in ("returned_episode_returns", "returned_episode_soups", "returned_episode_lengths"):
+        np.testing.assert_array_equal(np.asarray(results[0][key]), np.asarray(results[1][key]))
+
+
+@pytest.mark.parametrize("partner", ["learned", "planner"])
+def test_training_and_evaluation_agent_stats_are_consistent(cpa, partner):
+    cfg = cpa.make_cfg(updates=2, eval_every=1)
+    _, logs, records = _train_with_stats(cpa, cfg, cpa.make_env(16, True), partner)
+    steps = 16
+
+    trains = [r for k, r in records if k == "train"]
+    assert len(trains) == 2 and all(r["episodes"] == 4 for r in trains)  # every env finishes its 16-step episode
+    for r in trains:
+        for agent in ("ego", "partner"):
+            executed = sum(r[f"{agent}_act_{n}"] for n in train_ego.ACTION_NAMES)
+            assert executed == pytest.approx(steps)  # each executed action counted once, none after termination
+            assert r[f"{agent}_stay_fraction"] == pytest.approx(r[f"{agent}_act_stay"] / steps)
+        assert r["ego_soups"] + r["partner_soups"] == pytest.approx(r["soups"])
+    for log, r in zip([l for l in logs if "Train/EgoGradNorm" in l], trains):  # W&B agrees with the record
+        assert log["Train/TeamSoups"] == log["Train/EgoSoup"] == r["soups"]
+        assert log["Train/EgoSoupsDelivered"] == r["ego_soups"]
+        assert log["Train/PartnerRawShapedReturn"] == r["partner_raw_shaped_return"]
+        assert log["Train/EgoStayFraction"] == r["ego_stay_fraction"]
+    if partner == "planner":  # a planning partner is not idle
+        assert any(r["partner_stay_fraction"] < 1.0 for r in trains)
+
+    evals = [r for k, r in records if k == "eval"]
+    assert len(evals) == 2
+    for ev, log in zip(evals, _events(logs)):
+        stats = ev["agent_stats"]
+        assert stats.shape == (3, cfg.num_eval_episodes, len(AGENT_STAT_COLUMNS)) and ev["completed"].all()
+        counts = stats[..., [AGENT_STAT_COLUMNS.index(f"{a}_act_{n}") for a in ("ego", "partner")
+                                for n in train_ego.ACTION_NAMES]].reshape(3, cfg.num_eval_episodes, 2, 6)
+        np.testing.assert_array_equal(counts.sum(-1), steps)  # includes the first and the terminal action
+        np.testing.assert_allclose(stats[..., 4:6], counts[..., STAY_INDEX] / steps)
+        np.testing.assert_allclose(stats[..., 0] + stats[..., 1], ev["team_soups"])  # per episode
+        assert (log["EvalFull/MeanTeamSoups"]
+                == pytest.approx(np.mean([log[f"EvalFull/TeamSoups_Partner{i}"] for i in range(3)])))
+        for i in range(3):
+            assert log[f"EvalFull/EgoSoupsDelivered_Partner{i}"] == pytest.approx(stats[i, :, 0].mean())
+            assert log[f"EvalFull/PartnerStayFraction_Partner{i}"] == pytest.approx(stats[i, :, 5].mean())
+            assert log[f"EvalFull/TeamSoups_Partner{i}"] == log[f"Eval/EgoSoup_Partner{i}"]  # legacy = team
+
+
+def test_agent_stats_with_no_completed_episode_are_absent_not_zero(cpa):
+    """A 16-step rollout inside a 400-step episode completes nothing: no episode mean, no synthetic zero."""
+    cfg = cpa.make_cfg(num_steps=16, updates=1, eval_every=1)
+    _, logs, records = _train_with_stats(cpa, cfg, cpa.make_env(400, True))
+    (train_log,) = [l for l in logs if "Train/EgoGradNorm" in l]
+    assert not any(k in train_log for k in (
+        "Train/TeamSoups", "Train/EgoSoupsDelivered", "Train/PartnerSoupsDelivered", "Train/EgoRawShapedReturn",
+        "Train/PartnerRawShapedReturn", "Train/EgoStayFraction", "Train/PartnerStayFraction"))
+    (train_record,) = [r for k, r in records if k == "train"]
+    assert all(train_record.get(c) is None for c in AGENT_STAT_COLUMNS)
+    (event,) = _events(logs)
+    assert not any(k.startswith("EvalFull/") and k != "EvalFull/EnvSteps" for k in event)
+    (eval_record,) = [r for k, r in records if k == "eval"]
+    assert not eval_record["completed"].any()
+
+
+def test_full_and_current_events_are_separate_and_use_their_own_names(cpa):
+    cfg = cpa.make_cfg(updates=3, eval_every=1, eval_schedule="pilot", eval_current_every=1)
+    _, logs, _ = _train_with_stats(cpa, cfg, cpa.make_env(16, True))
+    events = _events(logs)
+    assert [e["train_step"] for e in events] == [0, 1, 2]  # one event per update, never both kinds at one update
+    scopes = ["current" if "EvalCurrent/EnvSteps" in e else "full" for e in events]
+    assert scopes == ["current", "current", "full"]
+    for event, scope in zip(events, scopes):
+        other = "EvalFull" if scope == "current" else "EvalCurrent"
+        assert not any(k.startswith(other) for k in event)
+        assert event[f"Eval{scope.capitalize()}/EnvSteps"] == event["Eval/EnvSteps"]
+    assert "EvalCurrent/TeamSoups" in events[0] and "EvalCurrent/EgoStayFraction" in events[0]
+    assert "EvalCurrent/TeamSoups_Partner0" not in events[0]
+    assert "EvalFull/MeanTeamSoups" in events[2] and "EvalFull/EgoStayFraction_Partner2" in events[2]

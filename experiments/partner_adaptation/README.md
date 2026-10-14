@@ -34,6 +34,8 @@ and do not pool them. The pilot writes under its own root with W&B group `cpa-pi
   sums each delivery once.
 - `Eval/EgoSoup*` headline keys describe the partner of the current stage. Per-partner keys
   (`Eval/EgoSoup_Partner{i}`, `..._scaled_Partner{i}`) are unchanged.
+- Despite their name, `Train/EgoSoup`, `Eval/EgoSoup*` are **legacy aliases of team deliveries** (ego + partner),
+  kept for compatibility. Use the explicit names of "Per-agent diagnostics" below for anything new.
 
 ## Efficiency changes (no change to what is computed)
 
@@ -250,7 +252,8 @@ sparse_reward, shaped_reward, shaping_coef, actor_loss, value_loss, entropy, cl_
 `soups`/`ego_return` are means over episodes completed in that update (blank if none); `sparse_reward` and
 `shaped_reward` are the ego's reward summed over one rollout of one env (`num_steps`), the shaped value being the
 raw unannealed shaping term and `shaping_coef` the weight applied to it (computed on the host from the schedule).
-Shaped returns exist for training only: the evaluation episodes do not track them. `eval_metrics.csv`:
+The rollout-level `sparse_reward`/`shaped_reward` above are unchanged; per-episode, per-agent shaped returns are
+the optional diagnostics below. `eval_metrics.csv`:
 `event_id` (`s<stage>-u<update>`), unique `row_id`, `scope` (`full` or `current`), `env_steps, stage, update, train_episodes, eval_partner_id,
 eval_partner, eval_episode, episode_key, soups, ego_return, completed, attempt`. `episode_key` names the episode's
 RNG stream: it is split from `fold_in(eval_key(seed, stage), update)`. `stage_timings.csv`: `compile_s`,
@@ -274,6 +277,66 @@ kept (`Train/*`, `Eval/*`, `train_step`) and `Train/CLPenalty`, `Train/EgoSparse
 `Train/EnvSteps` and `env_steps` are added. The CSVs are written first; if W&B raises, the run continues, the
 failure is stored in `status.json`, and no local record is lost. Videos, when enabled, are still uploaded by the
 visualizer and use the cumulative step.
+
+### Per-agent diagnostics (`log_agent_stats`)
+
+Team deliveries (`soups`) say nothing about *who* delivered. With `log_agent_stats` (default **on** for new runs;
+`--no-log-agent-stats` turns it off, also in `scripts/cpa_pilot.sh train/plan`) the run additionally records, per
+agent (`agent_0` = the learning **ego**, `agent_1` = the frozen **partner**, learned or planner):
+
+- **soups delivered** by each agent; ego + partner = team `soups`, checked per episode (a mismatch raises). The env
+  credits a delivery to the agent that performs the delivering interaction, which is not necessarily the one that
+  cooked or carried the soup: this is delivery credit, not a contribution score.
+- **raw shaped return**: the sum over an episode of the env's `shaped_reward` for that agent, *never* annealed or
+  scaled. It is a diagnostic only: PPO still trains on the ego's sparse reward plus the annealed ego shaping
+  (the partner's shaping is not used for learning at all).
+- **action counts** over the six environment actions `up, down, right, left, stay, interact`, indexed by the
+  environment's executed action (`env.action_set` mapping), counting every real action once, including an
+  episode's first and last step and nothing after termination. **Stay fraction** = `stay` actions / actions actually
+  executed in the episode (not inferred from unchanged position, so a blocked move is not a Stay).
+
+Recording only: no extra rollout, RNG draw, host callback per environment step or saved trajectory. The counters live
+in the `LogWrapper` episode state (`LogWrapper(env, agent_stats=True)`, opt-in; other environments and BRDiv
+generation are untouched) and leave the training scan only as a per-update sum over the episodes that ended in it;
+they are kept out of the PPO batch and replay memory.
+
+**CSV** (same file, extra trailing columns, in this order): `ego_soups, partner_soups, ego_raw_shaped_return,
+partner_raw_shaped_return, ego_stay_fraction, partner_stay_fraction` and `ego_act_<a>`, `partner_act_<a>` for
+`<a>` in `up, down, right, left, stay, interact`. In `eval_metrics.csv` they are **per episode** (blank when the
+episode is not `completed`). In `train_metrics.csv` they are **means over the `episodes` completed in that update**
+(the same completion mask and denominator as `soups`: action counts are counts per episode, the stay fraction is the
+mean of per-episode fractions); blank when `episodes == 0`, never 0. `soups` keeps meaning team deliveries and
+`ego_return` its legacy meaning.
+
+**W&B** (new runs; six action-count curves are CSV only):
+
+| scope | keys |
+|---|---|
+| training | `Train/TeamSoups`, `Train/EgoSoupsDelivered`, `Train/PartnerSoupsDelivered`, `Train/EgoRawShapedReturn`, `Train/PartnerRawShapedReturn`, `Train/EgoStayFraction`, `Train/PartnerStayFraction` (omitted when no episode completed) |
+| full-bank event | `EvalFull/<Metric>_Partner{i}` for the same seven `<Metric>` names, `EvalFull/EnvSteps`, and `EvalFull/MeanTeamSoups` = equal-weight mean of the partner means (only when **every** evaluated partner has a completed episode) |
+| current-partner event | `EvalCurrent/<Metric>` (seven names, no partner suffix), `EvalCurrent/EnvSteps` |
+
+A full event is never also a current-only event (their keys never share a log). `Partner{i}` is zero-based and is the
+`partner_id` of `partner_bank.json`, whose `label` is the manifest label; in the pilot banks `0-2` are the bundled
+BRDiv members, `3-11` the three generated populations, `12-23` the planners `P01-P12`. Episode counts behind each
+mean are the existing `Train/EpisodesCompleted` and `Eval/Episodes_Partner{i}`. Everything is merged into the
+single log of that cumulative-`env_steps` step, with the local-first behaviour above. `Train/TeamSoups` and the
+`TeamSoups`/`MeanTeamSoups` keys are plain team deliveries, so they are logged even with `--no-log-agent-stats`.
+`Train/EgoSoup`, `Eval/EgoSoup`, `Eval/EgoSoup_Partner{i}` stay as legacy aliases with team semantics.
+
+Units and limits. Soups are deliveries per episode (one 400-step episode in the pilot), shaped returns are in the
+env's shaping units per episode, and training means are over the episodes that *ended* in an update (each env is reset
+at the start of every update, so with `num_steps == episode horizon` that is every env). One seed and 5 evaluation
+episodes per cell are descriptive evidence of behaviour, not a role classification: a high Stay fraction can mean an
+idle partner, a planner waiting for a pot, or a blocked agent, and the counts cannot tell these apart.
+
+**Legacy runs.** The setting is outside the resume fingerprint. `train_metrics.csv`/`eval_metrics.csv` written by
+earlier versions keep their original header and are never rewritten or padded; a resume appends to them with the
+**same legacy columns** and therefore has **no** per-agent diagnostics (CSV or W&B), whatever `log_agent_stats` says
+(a warning and `status.json` -> `attempts[n].agent_stats` record this). `scripts/cpa_pilot.sh resume` treats a saved
+`config.json` without `log_agent_stats` as off. Such runs still read normally (columns are looked up by name, e.g.
+`pandas.read_csv`). A resumed run that did record diagnostics keeps recording them (`--no-log-agent-stats` on the
+resume leaves its extra columns blank). Diagnostics cannot be reconstructed for already finished stages.
 
 ### Checkpoint and resume
 
@@ -307,7 +370,9 @@ are the authoritative record.
 
 ### Not available here
 
-Not verified on GPU or with a real online W&B session.
+Not verified on GPU or with a real online W&B session. The per-agent diagnostics were only run on CPU with W&B
+replaced by a recorder; their cost on GPU (a few extra scalars per step in the scan, an `(num_agents, 6)` counter per
+env) and the W&B dashboard rendering of the new keys are unmeasured.
 
 ## Running the 24-partner pilot
 
@@ -512,8 +577,9 @@ that justify the chosen budget.
 
 ### 12. Reading the results
 
-`eval_metrics.csv` holds raw per-episode `soups` and `ego_return` (the sparse delivery return; shaping is never
-included). `scope == "full"` rows are the evaluation of all 24 partners at initialization (`stage 0, update 0`) and
+`eval_metrics.csv` holds raw per-episode `soups` (team deliveries) and `ego_return` (the sparse delivery return;
+shaping is never included); with `log_agent_stats` it also has `ego_soups`/`partner_soups`, raw shaped returns and
+action counts per episode (see "Per-agent diagnostics"; absent in legacy runs). `scope == "full"` rows are the evaluation of all 24 partners at initialization (`stage 0, update 0`) and
 after each stage; `scope == "current"` rows are the partner being trained. W&B additionally logs `*_scaled` metrics =
 soups / the layout's maximum soup count (stored as `normalization.max_soup` in `run.json`); the CSVs are not
 normalized. The stage-by-partner matrix and a learning curve:

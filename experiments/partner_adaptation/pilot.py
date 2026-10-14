@@ -390,6 +390,7 @@ class TrainSelection(Selection):
     wandb_mode: str = "online"
     wandb_project: str = "MEAL"
     wandb_group: str = "cpa-pilot"
+    log_agent_stats: bool = True                            # per-agent diagnostics (recording only); --no-log-agent-stats
     allow_protocol_change: bool = False                     # accept a horizon other than 400 (labelled in the plan)
     profile: Optional[str] = None                           # ego profile json (from `profile`) for a projection
     brdiv_profile: Optional[str] = None                     # BRDiv profile json (from `profile-brdiv`)
@@ -423,7 +424,7 @@ def make_jobs(sel: TrainSelection, root: Path) -> List[Job]:
                     num_eval_episodes=sel.eval_episodes, eval_schedule="pilot",
                     eval_current_every=sel.eval_current_every, use_task_id=task_id, use_multihead=multihead,
                     importance_episodes=sel.importance_episodes, importance_steps=sel.importance_steps,
-                    **METHODS[method])
+                    log_agent_stats=sel.log_agent_stats, **METHODS[method])
                 jobs.append(Job(layout, method, seed, tag, Path(overrides["checkpoint_path"]), overrides, notes))
     return jobs
 
@@ -809,6 +810,7 @@ def resume(sel: Resume) -> int:
     fields = {f.name for f in dataclasses.fields(TrainConfig)}
     overrides = {k: v for k, v in saved.items() if k in fields and k not in ("layouts_path", "save_dir", "resume")}
     overrides["mode"] = sel.wandb_mode or overrides["mode"]
+    overrides.setdefault("log_agent_stats", False)  # configs saved before the diagnostics existed keep that default
     overrides["resume"] = str(run_dir)
     with quiet():
         config = TrainConfig(**{k: v for k, v in overrides.items()})

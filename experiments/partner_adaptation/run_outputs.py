@@ -7,6 +7,7 @@ Run directory (unique per invocation; see ``allocate_run_dir``)::
     partner_bank.json exact partner order with checkpoint/planner identities
     status.json       state, completed stages, counters, one entry per attempt (start / resume)
     train_metrics.csv one row per PPO update              eval_metrics.csv  one row per evaluation episode
+                      (both gain the optional per-agent columns AGENT_STAT_COLUMNS when `log_agent_stats` is on)
     stage_timings.csv one row per stage                   latest.ckpt       rolling boundary checkpoint
     params_seed{S}.pt final policy export (unchanged format)
 
@@ -33,7 +34,7 @@ import jax.numpy as jnp
 import numpy as np
 from flax import serialization
 
-from experiments.partner_adaptation.train_ego import peak_device_memory
+from experiments.partner_adaptation.train_ego import AGENT_STAT_COLUMNS, peak_device_memory
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +48,10 @@ TRAIN_COLUMNS = [
 EVAL_COLUMNS = [
     "event_id", "row_id", "scope", "env_steps", "stage", "update", "train_episodes", "eval_partner_id",
     "eval_partner", "eval_episode", "episode_key", "soups", "ego_return", "completed", "attempt"]
+# Runs that record per-agent diagnostics append AGENT_STAT_COLUMNS to both files. Files written before that existed
+# keep their original header (they are never rewritten): such a run resumes without the diagnostics.
+TRAIN_COLUMNS_AGENT = TRAIN_COLUMNS + list(AGENT_STAT_COLUMNS)
+EVAL_COLUMNS_AGENT = EVAL_COLUMNS + list(AGENT_STAT_COLUMNS)
 TIMING_COLUMNS = [
     "stage", "partner_id", "partner", "attempt", "updates", "env_steps_end", "compile_s", "compile_cached",
     "train_eval_s", "eval_events", "eval_event_s", "eval_current_events", "eval_current_event_s", "init_eval_s",
@@ -56,7 +61,8 @@ TIMING_COLUMNS = [
 # Settings that do not change what is trained or evaluated: logging, output location, resume mechanics.
 NON_SEMANTIC_CONFIG = frozenset({
     "project", "mode", "group", "entity", "tags", "checkpoint_path", "checkpoint_freq", "save_dir", "resume",
-    "save_checkpoints", "record_video", "gif_len", "log_train_out", "partner_bank", "layouts_path"})
+    "save_checkpoints", "record_video", "gif_len", "log_train_out", "partner_bank", "layouts_path",
+    "log_agent_stats"})
 
 
 class RunOutputError(RuntimeError):
@@ -220,6 +226,16 @@ class CsvLog:
             self._file.close()
 
 
+def csv_has_agent_stats(path) -> Optional[bool]:
+    """Whether the CSV at `path` carries the per-agent diagnostic columns; None if there is no header yet."""
+    path = Path(path)
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+    with open(path, newline="") as f:
+        header = next(csv.reader(f), None)
+    return None if header is None else header[-len(AGENT_STAT_COLUMNS):] == list(AGENT_STAT_COLUMNS)
+
+
 def truncate_csv(path, max_stage: int) -> int:
     """Drop rows whose `stage` exceeds `max_stage` (an interrupted stage); returns how many were dropped."""
     path = Path(path)
@@ -257,11 +273,17 @@ class RunRecorder:
     """
 
     def __init__(self, run_dir, labels: List[str], seed: int, attempt: int = 0,
-                 wandb_log: Optional[Callable[[Dict[str, Any], int], None]] = None):
+                 wandb_log: Optional[Callable[[Dict[str, Any], int], None]] = None,
+                 agent_stats: Optional[bool] = None):
+        """`agent_stats` selects the CSV schema with (True) or without (False) the per-agent columns; None keeps
+        the schema of existing files and is False for new ones. Events without diagnostics leave them blank."""
         run_dir = Path(run_dir)
         self.labels, self.seed, self.attempt = list(labels), int(seed), int(attempt)
-        self.train_log = CsvLog(run_dir / "train_metrics.csv", TRAIN_COLUMNS)
-        self.eval_log = CsvLog(run_dir / "eval_metrics.csv", EVAL_COLUMNS)
+        if agent_stats is None:
+            agent_stats = bool(csv_has_agent_stats(run_dir / "train_metrics.csv"))
+        self.agent_stats = bool(agent_stats)
+        self.train_log = CsvLog(run_dir / "train_metrics.csv", TRAIN_COLUMNS_AGENT if agent_stats else TRAIN_COLUMNS)
+        self.eval_log = CsvLog(run_dir / "eval_metrics.csv", EVAL_COLUMNS_AGENT if agent_stats else EVAL_COLUMNS)
         self.timing_log = CsvLog(run_dir / "stage_timings.csv", TIMING_COLUMNS)
         self.wandb_log = wandb_log
         self.wandb_failures, self.wandb_error = 0, None
@@ -323,10 +345,13 @@ class RunRecorder:
             scope = ev.get("scope", "full")
             event_id = f"s{stage:03d}-u{update:05d}"
             rows = []
+            stats = ev.get("agent_stats")
             for row, pid in enumerate(ev["partner_ids"]):
                 for ep in ev["episode_ids"]:
                     done = bool(ev["completed"][row][ep])
                     rows.append({
+                        **(dict(zip(AGENT_STAT_COLUMNS, map(float, stats[row][ep]))) if done and stats is not None
+                           else {}),
                         "event_id": event_id, "row_id": f"{event_id}-p{pid:03d}-e{ep:03d}", "scope": scope,
                         "env_steps": ev["env_steps"], "stage": stage, "update": update,
                         "train_episodes": ev["train_episodes"], "eval_partner_id": pid,

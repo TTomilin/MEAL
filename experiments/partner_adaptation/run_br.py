@@ -34,10 +34,11 @@ from experiments.partner_adaptation.partner_agents.overcooked.agent_policy_wrapp
 from experiments.partner_adaptation.partner_bank import load_partners, partner_identity, select_partner_bank
 from experiments.partner_adaptation.run_outputs import (
     RunRecorder, RunStatus, allocate_run_dir, atomic_write, build_fingerprint, check_resume, code_revision,
-    device_info, read_checkpoint, resolve_resume, restore_state, save_checkpoint, truncate_csv, write_json)
+    csv_has_agent_stats, device_info, read_checkpoint, resolve_resume, restore_state, save_checkpoint, truncate_csv,
+    write_json)
 from experiments.partner_adaptation.partner_generation.utils import frozendict_from_layout_repr
 from experiments.partner_adaptation.train_br import DummyPolicyPopulation, HeuristicPolicyPopulation, run_br_training
-from experiments.partner_adaptation.train_ego import EVAL_SCHEDULES, eval_plan
+from experiments.partner_adaptation.train_ego import ACTION_NAMES, EVAL_SCHEDULES, eval_plan
 
 log = logging.getLogger(__name__)
 
@@ -146,6 +147,11 @@ class TrainConfig:
     gif_len: int = 100          # Maximum steps for gif recording
 
     log_train_out: bool = True
+
+    # Record per-agent diagnostics (ego vs partner soups, raw shaped return, action counts) in the CSVs and W&B.
+    # Recording only: it changes neither the policy, the learning objective nor any random draw, and is not part of
+    # the resume fingerprint. A run whose CSVs predate the diagnostics resumes without them (see README).
+    log_agent_stats: bool = True
 
     # Partner/Task Configuration
     # Population partners come from the bundled BRDiv population of `layout_name` (first N members, default 3;
@@ -359,8 +365,21 @@ def execute(config: TrainConfig) -> RunResult:
                 layouts[config.layout_idx]["layout"])}
 
         config.layout = layout_dict.copy()  # These are env kwargs
+        # CSV schema of this run: a resumed run keeps the one on disk (old files are never rewritten) and can
+        # record the diagnostics only if that schema has them.
+        csv_schema = config.log_agent_stats
+        if config.resume:
+            on_disk = csv_has_agent_stats(run_dir / "train_metrics.csv")
+            csv_schema = config.log_agent_stats if on_disk is None else on_disk
+        record_agent_stats = bool(config.log_agent_stats and csv_schema)
+        if config.log_agent_stats and not record_agent_stats:
+            log.warning("resuming a run whose CSV files have no per-agent diagnostic columns: they stay unavailable "
+                        "for this run (existing logs are not rewritten)")
+        status.update_attempt(attempt, agent_stats={"requested": config.log_agent_stats,
+                                                    "recorded": record_agent_stats, "csv_columns": csv_schema})
+
         env = make_env(config.env_name, **config.layout, max_steps=config.num_steps)
-        env = LogWrapper(env)
+        env = LogWrapper(env, agent_stats=record_agent_stats)
 
         # Calculate max soup for the layout
         layout_name = config.layout_name if config.layout_name != "" else f"layout_{config.layout_idx}"
@@ -461,6 +480,10 @@ def execute(config: TrainConfig) -> RunResult:
                     "max_soup": float(max_soup_dict[layout_name]),
                     "definition": "W&B *_scaled metrics = soups / max_soup; the CSVs hold raw soups"},
                 "partners": identities, "bank": {"name": bank.name, "source": str(bank.source)},
+                "diagnostics": {
+                    "per_agent_stats": record_agent_stats, "ego": "agent_0", "partner": "agent_1",
+                    "action_order": list(ACTION_NAMES),
+                    "definition": "see the CPA README: per-agent soups, raw unannealed shaped return and action counts"},
             })
         else:
             dropped = sum(truncate_csv(run_dir / f, start_stage - 1)
@@ -490,7 +513,7 @@ def execute(config: TrainConfig) -> RunResult:
         print("-------------")
 
         recorder = RunRecorder(run_dir, labels, config.seed, attempt=attempt,
-                               wandb_log=lambda d, step: run.log(d, step=step))
+                               wandb_log=lambda d, step: run.log(d, step=step), agent_stats=csv_schema)
 
         # Compiled functions shared by all stages of this run (see train_ppo_ego_agent)
         compiled_cache = {}

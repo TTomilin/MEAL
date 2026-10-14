@@ -1,6 +1,8 @@
 """Metric aggregation, evaluation-event and RNG-stream tests for the continual partner-adaptation (CPA) path."""
 from types import SimpleNamespace
 
+from collections import Counter
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -8,8 +10,8 @@ import pytest
 from flax.core import FrozenDict
 
 from experiments.partner_adaptation.train_ego import (
-    build_eval_event, build_train_log, group_eval_partners, make_stage_keys, should_evaluate,
-    team_episode_summary,
+    AGENT_STAT_COLUMNS, build_eval_event, build_train_log, build_train_record, group_eval_partners, make_stage_keys,
+    should_evaluate, team_episode_summary,
 )
 from meal import make_env
 from meal.env.overcooked import DELIVERY_REWARD
@@ -151,3 +153,162 @@ def test_stage_keys_are_reproducible_and_independent():
     assert len(set(flat)) == 6  # three streams per stage, none shared across stages
     assert all(np.array_equal(jax.random.key_data(x), jax.random.key_data(y)) for x, y in zip(a, again))
     assert not np.array_equal(jax.random.key_data(make_stage_keys(1, 0).train), jax.random.key_data(a.train))
+
+
+# ----------------------------------------------------------------------------------------------------------
+# per-agent diagnostics: ego (agent_0) vs partner (agent_1) deliveries, raw shaped reward, action counts
+# ----------------------------------------------------------------------------------------------------------
+
+def scripted_agent_stats(actions_0, actions_1, max_steps, n_steps=None, env=None):
+    """Like `run_logged_episode` but through LogWrapper(agent_stats=True); also returns per-step raw shaped reward."""
+    env = env or LogWrapper(make_env("overcooked", layout=FrozenDict(cramped_room), max_steps=max_steps,
+                                     cook_time=5), agent_stats=True)
+    actions_0 = list(actions_0) + [A['S']] * (max_steps - len(actions_0))
+    actions_1 = list(actions_1) + [A['S']] * (max_steps - len(actions_1))
+    key = jax.random.PRNGKey(0)
+    _, state = env.reset(key)
+    shaped, infos = [], []
+    for t in range(n_steps or max_steps):
+        key, step_key = jax.random.split(key)
+        act = {"agent_0": jnp.uint32(actions_0[t]), "agent_1": jnp.uint32(actions_1[t])}
+        _, state, _, _, info = env.step(step_key, state, act)
+        shaped.append([float(info["shaped_reward"]["agent_0"]), float(info["shaped_reward"]["agent_1"])])
+        infos.append(info)
+    return infos, np.array(shaped), actions_0, actions_1
+
+
+def counts(actions):
+    c = Counter(actions)
+    return [c[i] for i in range(6)]
+
+
+def test_wrapper_agent_stats_split_roles_and_first_and_terminal_actions():
+    wait = len(ONION_CYCLE) * 3 + 5 + 10
+    actions_1 = [A['S']] * wait + [A['L'], A['D'], A['I'], A['R'], A['D'], A['I']]
+    infos, shaped, a0, a1 = scripted_agent_stats(PLATE_THEN_DELIVER_0, actions_1, max_steps=len(actions_1))
+    info = infos[-1]
+    assert bool(info["returned_episode"].all())
+    # the partner (agent_1) delivered; the ego (agent_0) did not; the team count is their sum
+    np.testing.assert_array_equal(info["returned_episode_soups"], [0.0, 1.0])
+    # every executed action is counted exactly once, including the first and the terminal step
+    np.testing.assert_array_equal(info["returned_episode_actions"], [counts(a0), counts(a1)])
+    assert info["returned_episode_actions"].sum(axis=-1).tolist() == [len(a1)] * 2
+    # raw shaped reward is the unannealed per-step sum, per agent: here only the ego earns shaping
+    np.testing.assert_allclose(info["returned_episode_shaped"], shaped.sum(axis=0))
+    assert shaped[:, 0].sum() > 0 and shaped[:, 1].sum() == 0
+    # the legacy team score is untouched by the extra bookkeeping
+    legacy, _, _ = run_logged_episode(PLATE_THEN_DELIVER_0, actions_1, max_steps=len(actions_1))
+    np.testing.assert_array_equal(legacy["returned_episode_returns"], info["returned_episode_returns"])
+    np.testing.assert_array_equal(legacy["returned_episode_soups"], info["returned_episode_soups"])
+
+
+def test_wrapper_agent_stats_reset_between_episodes_and_incomplete_episodes():
+    env = LogWrapper(make_env("overcooked", layout=FrozenDict(cramped_room), max_steps=8, cook_time=5),
+                     agent_stats=True)
+    first = [A['U'], A['I'], A['L'], A['L'], A['S'], A['S'], A['R'], A['D']]
+    second = [A['S']] * 3 + [A['I']] * 5
+    infos, shaped, _, _ = scripted_agent_stats(first + second, second + first, max_steps=8, n_steps=16, env=env)
+    done = [bool(i["returned_episode"].all()) for i in infos]
+    assert done == [False] * 7 + [True] + [False] * 7 + [True]
+    # a mid-episode info is not an episode result, and the counters restart cleanly after the auto-reset
+    np.testing.assert_array_equal(infos[7]["returned_episode_actions"], [counts(first), counts(second)])
+    np.testing.assert_array_equal(infos[15]["returned_episode_actions"], [counts(second), counts(first)])
+    np.testing.assert_allclose(infos[7]["returned_episode_shaped"], shaped[:8].sum(axis=0))
+    np.testing.assert_allclose(infos[15]["returned_episode_shaped"], shaped[8:].sum(axis=0))
+
+
+def test_action_counts_follow_the_environment_action_mapping():
+    env = LogWrapper(make_env("overcooked", layout=FrozenDict(cramped_room), max_steps=4, cook_time=5),
+                     agent_stats=True)
+    env._env.action_set = jnp.array([5, 4, 3, 2, 1, 0])  # reversed: index 0 executes interact, index 1 stay
+    infos, _, _, _ = scripted_agent_stats([0, 0, 1, 2], [1, 1, 1, 1], max_steps=4, env=env)
+    np.testing.assert_array_equal(infos[-1]["returned_episode_actions"][0], [0, 0, 0, 1, 1, 2])  # indexed by executed action
+    np.testing.assert_array_equal(infos[-1]["returned_episode_actions"][1], [0, 0, 0, 0, 4, 0])
+
+
+def test_agent_stats_are_opt_in():
+    env = LogWrapper(make_env("overcooked", layout=FrozenDict(cramped_room), max_steps=4, cook_time=5))
+    _, state = env.reset(jax.random.PRNGKey(0))
+    assert state.episode_actions is None
+    _, state, _, _, info = env.step(jax.random.PRNGKey(1), state, {"agent_0": jnp.uint32(4), "agent_1": jnp.uint32(4)})
+    assert "returned_episode_actions" not in info and "returned_episode_shaped" not in info
+    with pytest.raises(ValueError):
+        LogWrapper(object(), agent_stats=True)
+
+
+def agent_vectors(partners=2, episodes=3):
+    """(partners, episodes, 18) in AGENT_STAT_COLUMNS order; ego delivers 1, partner 2 per episode."""
+    stats = np.zeros((partners, episodes, len(AGENT_STAT_COLUMNS)))
+    stats[..., 0], stats[..., 1] = 1.0, 2.0
+    stats[..., 2], stats[..., 3] = 5.0, 7.0
+    stats[..., 4], stats[..., 5] = 0.25, 0.5
+    return stats
+
+
+def test_eval_event_agent_stats_use_the_completion_mask_and_scope_names():
+    soups = np.full((2, 3), 3.0)
+    completed = np.array([[True, True, False], [True, True, True]])
+    stats = agent_vectors()
+    stats[0, 2] = 99.0  # an unfinished episode must not leak into any mean
+    record, log = build_eval_event(0, 2, 5, [0, 1], soups, soups * 20, completed, 4, 64, scope="full",
+                                   agent_stats=stats)
+    assert record["agent_stats"].shape == (2, 3, 18)
+    for pid in (0, 1):
+        assert log[f"EvalFull/TeamSoups_Partner{pid}"] == 3.0
+        assert log[f"EvalFull/EgoSoupsDelivered_Partner{pid}"] == 1.0
+        assert log[f"EvalFull/PartnerSoupsDelivered_Partner{pid}"] == 2.0
+        assert log[f"EvalFull/EgoRawShapedReturn_Partner{pid}"] == 5.0
+        assert log[f"EvalFull/PartnerRawShapedReturn_Partner{pid}"] == 7.0
+        assert log[f"EvalFull/EgoStayFraction_Partner{pid}"] == 0.25
+        assert log[f"EvalFull/PartnerStayFraction_Partner{pid}"] == 0.5
+    assert log["EvalFull/MeanTeamSoups"] == 3.0 and log["EvalFull/EnvSteps"] == 2 * 64
+    assert log["Eval/EgoSoup_Partner0"] == 3.0  # legacy alias keeps its team meaning
+    assert not any(k.startswith("EvalCurrent") for k in log)
+
+    _, current = build_eval_event(0, 2, 5, [0], soups[:1], soups[:1] * 20, completed[:1], 4, 64, scope="current",
+                                  agent_stats=stats[:1])
+    assert current["EvalCurrent/TeamSoups"] == 3.0 and current["EvalCurrent/EgoStayFraction"] == 0.25
+    assert current["EvalCurrent/EnvSteps"] == 2 * 64
+    assert not any(k.startswith("EvalFull") for k in current) and "EvalCurrent/MeanTeamSoups" not in current
+
+
+def test_eval_event_without_completed_episodes_omits_means_instead_of_zeros():
+    soups = np.full((2, 3), 3.0)
+    completed = np.array([[True, True, True], [False, False, False]])
+    _, log = build_eval_event(0, 1, 0, [0, 1], soups, soups, completed, 4, 64, agent_stats=agent_vectors())
+    assert "EvalFull/TeamSoups_Partner0" in log and not any(k.endswith("_Partner1") and k.startswith("EvalFull")
+                                                           for k in log)
+    assert "EvalFull/MeanTeamSoups" not in log  # incomplete event: no mean of a subset
+    assert log["EvalFull/EnvSteps"] == 64
+
+
+def test_delivery_split_is_checked_per_episode():
+    soups = np.full((1, 2), 3.0)
+    done = np.ones((1, 2), bool)
+    build_eval_event(0, 1, 0, [0], soups, soups, done, 4, 64, agent_stats=agent_vectors(1, 2))  # 1 + 2 == 3
+    stats = agent_vectors(1, 2)
+    stats[0, 1, 1] = 5.0  # one episode's split no longer adds up to the team count
+    with pytest.raises(ValueError, match="differ from team"):
+        build_eval_event(0, 1, 0, [0], soups, soups, done, 4, 64, agent_stats=stats)
+    with pytest.raises(ValueError, match="differ from team"):
+        build_train_record(0, 1, 2, 64, 3, 2.0, 5.0, 0.5, 2.0, 1.0, 0.1, 0.2, 0.3, 0.0, 0.4,
+                           agent_stats=agent_vectors()[0, 0])
+
+
+def test_train_agent_stats_are_omitted_without_completed_episodes():
+    stats = agent_vectors()[0, 0]
+    kwargs = dict(stage_id=0, update_steps=1, num_updates=5, value_loss=1.0, actor_loss=2.0, entropy_loss=3.0,
+                  grad_norm=4.0, agent_stats=stats)
+    empty = build_train_log(n_episodes=0, team_soup=0.0, ego_return=0.0, **kwargs)
+    assert not any(k in empty for k in ("Train/TeamSoups", "Train/EgoSoupsDelivered", "Train/EgoStayFraction"))
+    log = build_train_log(n_episodes=4, team_soup=3.0, ego_return=60.0, **kwargs)
+    assert log["Train/TeamSoups"] == log["Train/EgoSoup"] == 3.0  # EgoSoup stays the legacy team alias
+    assert (log["Train/EgoSoupsDelivered"], log["Train/PartnerSoupsDelivered"]) == (1.0, 2.0)
+    assert (log["Train/EgoRawShapedReturn"], log["Train/PartnerRawShapedReturn"]) == (5.0, 7.0)
+    assert (log["Train/EgoStayFraction"], log["Train/PartnerStayFraction"]) == (0.25, 0.5)
+
+    args = (0, 1, 5, 64, 0, 0.0, 0.0, 0.0, 0.0, 1.0, 0, 0, 0, 0, 0)
+    blank = build_train_record(*args, agent_stats=stats)
+    assert all(blank.get(c) is None for c in AGENT_STAT_COLUMNS) and blank["soups"] is None  # blank, not zero
+    record = build_train_record(0, 1, 5, 64, 4, 3.0, 60.0, 0.0, 0.0, 1.0, 0, 0, 0, 0, 0, agent_stats=stats)
+    assert [record[c] for c in AGENT_STAT_COLUMNS] == list(stats)

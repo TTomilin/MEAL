@@ -26,11 +26,12 @@ from experiments.partner_adaptation.partner_agents.agent_interface import MLPAct
 from experiments.partner_adaptation.partner_bank import PartnerBankError
 from experiments.partner_adaptation.run_br import TrainConfig, execute
 from experiments.partner_adaptation.run_outputs import (
-    CheckpointError, ResumeError, RunOutputError, RunRecorder, allocate_run_dir, read_checkpoint, restore_state,
+    EVAL_COLUMNS, EVAL_COLUMNS_AGENT, TRAIN_COLUMNS, TRAIN_COLUMNS_AGENT, CheckpointError, ResumeError,
+    RunOutputError, RunRecorder, allocate_run_dir, csv_has_agent_stats, read_checkpoint, restore_state,
     save_checkpoint, truncate_csv,
 )
 from experiments.partner_adaptation.train_ego import (
-    build_eval_event, build_train_log, build_train_record, shaping_coefficient,
+    ACTION_NAMES, AGENT_STAT_COLUMNS, build_eval_event, build_train_log, build_train_record, shaping_coefficient,
 )
 from experiments.utils import init_cl_state
 
@@ -491,3 +492,156 @@ def test_metric_helpers():
     assert shaping_coefficient(0, 1, 64) == 0.0
     record = build_train_record(0, 1, 2, 64, 0, 0.0, 0.0, 0.0, 0.0, 1.0, 0, 0, 0, 0, 0)
     assert record["soups"] is None and record["ego_return"] is None  # no completed episode: blank, not zero
+
+
+# ----------------------------------------------------------------------------------------------------------
+# per-agent diagnostics in the run records
+# ----------------------------------------------------------------------------------------------------------
+
+def _f(row, name):
+    return float(row[name])
+
+
+def test_csv_and_wandb_agree_and_scopes_do_not_overlap(bank, tmp_path, fake_wandb):
+    run = execute(tiny_config(tmp_path, bank, "ft", eval_schedule="pilot", eval_current_every=1))
+    train, evals = read_rows(run.run_dir / "train_metrics.csv"), read_rows(run.run_dir / "eval_metrics.csv")
+    assert list(train[0]) == TRAIN_COLUMNS_AGENT and list(evals[0]) == EVAL_COLUMNS_AGENT
+    assert TRAIN_COLUMNS_AGENT[:len(TRAIN_COLUMNS)] == TRAIN_COLUMNS  # legacy columns keep position and meaning
+
+    logged = dict(fake_wandb[0].logged)
+    steps = [s for s, _ in fake_wandb[0].logged]
+    assert steps == sorted(set(steps)) == [0, 64, 128, 192, 256]  # one merged log per step, strictly increasing
+    full = [s for s, d in logged.items() if any(k.startswith("EvalFull/") for k in d)]
+    current = [s for s, d in logged.items() if any(k.startswith("EvalCurrent/") for k in d)]
+    assert full == [0, 128, 256] and current == [64, 192]  # initialization + stage ends; a full event is not current
+    assert logged[0]["EvalFull/EnvSteps"] == 0 and logged[64]["EvalCurrent/EnvSteps"] == 64
+    assert all(not k.startswith("EvalCurrent/") for s in full for k in logged[s])
+    assert all(not k.startswith("EvalFull/") for s in current for k in logged[s])
+
+    # training rows: W&B equals CSV; ego + partner = team; action counts add up to the executed steps
+    for row in train:
+        data = logged[int(row["env_steps"])]
+        for metric, column in (("TeamSoups", "soups"), ("EgoSoupsDelivered", "ego_soups"),
+                               ("PartnerSoupsDelivered", "partner_soups"),
+                               ("EgoRawShapedReturn", "ego_raw_shaped_return"),
+                               ("PartnerRawShapedReturn", "partner_raw_shaped_return"),
+                               ("EgoStayFraction", "ego_stay_fraction"),
+                               ("PartnerStayFraction", "partner_stay_fraction")):
+            assert data[f"Train/{metric}"] == pytest.approx(_f(row, column), rel=1e-5, abs=1e-6), metric
+        assert data["Train/EgoSoup"] == data["Train/TeamSoups"]  # legacy alias is the team count
+        assert _f(row, "ego_soups") + _f(row, "partner_soups") == pytest.approx(_f(row, "soups"), abs=1e-5)
+        for agent in ("ego", "partner"):
+            executed = sum(_f(row, f"{agent}_act_{a}") for a in ACTION_NAMES)
+            assert executed == pytest.approx(16, abs=1e-4)
+            assert _f(row, f"{agent}_stay_fraction") == pytest.approx(_f(row, f"{agent}_act_stay") / 16, abs=1e-5)
+
+    # evaluation rows (one per episode): W&B means equal the CSV means; per-episode split adds up
+    for row in evals:
+        assert _f(row, "ego_soups") + _f(row, "partner_soups") == _f(row, "soups")
+        for agent in ("ego", "partner"):
+            assert sum(_f(row, f"{agent}_act_{a}") for a in ACTION_NAMES) == 16  # first and last action included
+    for scope, prefix in (("full", "EvalFull"), ("current", "EvalCurrent")):
+        for step in (full if scope == "full" else current):
+            rows = [r for r in evals if r["scope"] == scope and int(r["env_steps"]) == step]
+            assert rows, (scope, step)
+            means = {}
+            for pid in sorted({int(r["eval_partner_id"]) for r in rows}):
+                mine = [r for r in rows if int(r["eval_partner_id"]) == pid]
+                suffix = f"_Partner{pid}" if scope == "full" else ""
+                for metric, column in (("TeamSoups", "soups"), ("EgoSoupsDelivered", "ego_soups"),
+                                       ("PartnerRawShapedReturn", "partner_raw_shaped_return"),
+                                       ("EgoStayFraction", "ego_stay_fraction")):
+                    assert logged[step][f"{prefix}/{metric}{suffix}"] == pytest.approx(
+                        np.mean([_f(r, column) for r in mine]), rel=1e-5, abs=1e-6)
+                means[pid] = logged[step][f"{prefix}/TeamSoups{suffix}"]
+            if scope == "full":
+                assert logged[step]["EvalFull/MeanTeamSoups"] == pytest.approx(np.mean(list(means.values())))
+                assert sorted(means) == [0, 1]
+            else:
+                assert len(means) == 1 and "EvalCurrent/MeanTeamSoups" not in logged[step]
+
+
+def test_disabling_agent_stats_changes_only_what_is_recorded(bank, references, tmp_path, fake_wandb):
+    reference = references("ft")  # diagnostics on (the default)
+    off = execute(tiny_config(tmp_path, bank, "ft", log_agent_stats=False))
+    assert csv_has_agent_stats(reference.run_dir / "train_metrics.csv") is True
+    assert csv_has_agent_stats(off.run_dir / "train_metrics.csv") is False
+    for name, legacy in (("train_metrics.csv", TRAIN_COLUMNS), ("eval_metrics.csv", EVAL_COLUMNS)):
+        assert list(read_rows(off.run_dir / name)[0]) == legacy
+        assert_rows_match(read_rows(off.run_dir / name), [{k: r[k] for k in legacy} for r in
+                                                          read_rows(reference.run_dir / name)])
+    assert_trees_close(off.ego_params, reference.ego_params)
+    assert off.counters == reference.counters
+    assert json.loads((off.run_dir / "config.json").read_text())["log_agent_stats"] is False
+    logs = [d for _, d in fake_wandb[-1].logged]
+    assert not any("EgoSoupsDelivered" in k or "StayFraction" in k for d in logs for k in d)
+    assert any("Train/TeamSoups" in d for d in logs)  # team scores keep their explicit names
+
+
+def test_a_run_started_without_diagnostics_resumes_without_rewriting_its_logs(bank, references, tmp_path, fake_wandb):
+    config = tiny_config(tmp_path, bank, "ft", log_agent_stats=False)  # what every pre-diagnostics run looked like
+    real = run_br.run_br_training
+
+    def failing_training(*args, **kwargs):
+        if kwargs["env_id_idx"] == 1:
+            raise RuntimeError("simulated crash")
+        return real(*args, **kwargs)
+    crash = pytest.MonkeyPatch()
+    crash.setattr(run_br, "run_br_training", failing_training)
+    try:
+        with pytest.raises(RuntimeError, match="simulated crash"):
+            execute(config)
+    finally:
+        crash.undo()
+    run_dir, = [p for p in tmp_path.iterdir() if p.is_dir()]
+    before = {n: (run_dir / n).read_bytes() for n in ("train_metrics.csv", "eval_metrics.csv")}
+
+    # the default (diagnostics requested) cannot add columns to a legacy log: they stay unavailable
+    resumed = execute(tiny_config(tmp_path, bank, "ft", resume=str(run_dir)))
+    for name, old in before.items():
+        assert (run_dir / name).read_bytes().startswith(old)  # appended to, never rewritten
+    train, evals = read_rows(run_dir / "train_metrics.csv"), read_rows(run_dir / "eval_metrics.csv")
+    assert list(train[0]) == TRAIN_COLUMNS and list(evals[0]) == EVAL_COLUMNS
+    reference = references("ft")
+    assert_rows_match(train, [{k: r[k] for k in TRAIN_COLUMNS} for r in read_rows(reference.run_dir / "train_metrics.csv")])
+    assert_trees_close(resumed.ego_params, reference.ego_params)
+    assert len({r["row_id"] for r in evals}) == len(evals)  # no duplicated records
+    attempt = json.loads((run_dir / "status.json").read_text())["attempts"][1]
+    assert attempt["agent_stats"] == {"requested": True, "recorded": False, "csv_columns": False}
+    logged = [d for _, d in fake_wandb[-1].logged]
+    assert logged and not any("EgoSoupsDelivered" in k for d in logged for k in d)
+
+
+def test_recorder_keeps_the_schema_of_existing_logs(tmp_path):
+    assert csv_has_agent_stats(tmp_path / "missing.csv") is None
+    recorder = RunRecorder(tmp_path, ["a", "b"], seed=0)  # new files, no choice made: the legacy schema
+    assert not recorder.agent_stats
+    recorder.begin_stage(0, 1, {1: "full"})
+    train, train_log, ev, ev_log = make_events(0, 1, num_updates=1)
+    recorder.handle("train", train, train_log)
+    recorder.handle("eval", ev, ev_log)
+    recorder.end_stage()
+    recorder.close()
+    before = {n: (tmp_path / n).read_bytes() for n in ("train_metrics.csv", "eval_metrics.csv")}
+
+    # old logs stay readable, and reopening them follows their header; asking for new columns is refused
+    assert read_rows(tmp_path / "train_metrics.csv")[0]["soups"] == "1"
+    again = RunRecorder(tmp_path, ["a", "b"], seed=0, attempt=1)
+    assert not again.agent_stats
+    again.close()
+    with pytest.raises(ResumeError, match="columns"):
+        RunRecorder(tmp_path, ["a", "b"], seed=0, agent_stats=True)
+    assert before == {n: (tmp_path / n).read_bytes() for n in before}
+
+    # a new run that records the diagnostics: events without them leave the fields blank
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    recorder = RunRecorder(fresh, ["a", "b"], seed=0, agent_stats=True)
+    recorder.begin_stage(0, 1, {1: "full"})
+    recorder.handle("train", train, train_log)
+    recorder.handle("eval", ev, ev_log)
+    recorder.end_stage()
+    recorder.close()
+    assert csv_has_agent_stats(fresh / "train_metrics.csv") is True
+    assert all(read_rows(fresh / "train_metrics.csv")[0][c] == "" for c in AGENT_STAT_COLUMNS)
+    assert all(r["ego_soups"] == "" for r in read_rows(fresh / "eval_metrics.csv"))

@@ -31,6 +31,7 @@ from experiments.partner_adaptation.partner_agents.population_interface import A
 from experiments.partner_adaptation.partner_generation.run_episodes import run_episodes
 from experiments.partner_adaptation.partner_generation.utils import _create_minibatches_no_time, Transition, unbatchify
 from experiments.partner_adaptation.partner_generation.utils import get_stats
+from meal.env.overcooked import Actions
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -63,6 +64,37 @@ def team_episode_summary(returned_episode_soups, returned_episode_returns, retur
     """
     completed = jnp.all(returned_episode, axis=-1)
     return returned_episode_soups.sum(axis=-1), returned_episode_returns.sum(axis=-1), completed
+
+
+# Per-agent diagnostics (agent_0 = ego, agent_1 = frozen partner), one vector per episode in this fixed order. Action
+# counts are indexed by the environment's own action value (`Actions`: up, down, right, left, stay, interact).
+ACTION_NAMES = tuple(a.name for a in Actions)
+STAY_INDEX = int(Actions.stay)
+AGENT_STAT_COLUMNS = (
+    ("ego_soups", "partner_soups", "ego_raw_shaped_return", "partner_raw_shaped_return",
+     "ego_stay_fraction", "partner_stay_fraction")
+    + tuple(f"{role}_act_{name}" for role in ("ego", "partner") for name in ACTION_NAMES))
+# W&B metric name -> position in the vector (the seventh metric, TeamSoups, is the team soup count itself)
+AGENT_STAT_METRICS = {"EgoSoupsDelivered": 0, "PartnerSoupsDelivered": 1, "EgoRawShapedReturn": 2,
+                      "PartnerRawShapedReturn": 3, "EgoStayFraction": 4, "PartnerStayFraction": 5}
+
+
+def agent_stat_vector(returned_soups, returned_shaped, returned_actions):
+    """(..., 2), (..., 2), (..., 2, 6) LogWrapper episode outputs -> (..., 18) vector in AGENT_STAT_COLUMNS order.
+
+    Stay fraction is Stay actions / actions actually executed (the sum of the six counts), per agent.
+    """
+    executed = jnp.maximum(returned_actions.sum(axis=-1), 1.0)
+    stay_fraction = returned_actions[..., STAY_INDEX] / executed
+    flat_actions = returned_actions.reshape(returned_actions.shape[:-2] + (-1,))
+    return jnp.concatenate([returned_soups, returned_shaped, stay_fraction, flat_actions], axis=-1)
+
+
+def check_delivery_split(ego_soups, partner_soups, team_soups, what):
+    """Per-agent deliveries must add up to the team count the legacy metrics report."""
+    ego, partner, team = (np.asarray(x, dtype=float) for x in (ego_soups, partner_soups, team_soups))
+    if not np.allclose(ego + partner, team, rtol=1e-5, atol=1e-4):
+        raise ValueError(f"{what}: ego + partner soups differ from team soups")
 
 
 def should_evaluate(update_steps, eval_every: int, num_updates: int):
@@ -153,7 +185,7 @@ def group_eval_partners(eval_partner, current=None):
 
 
 def build_eval_event(stage_id, update_steps, train_episodes, partner_ids, team_soups, team_returns, completed,
-                     num_updates, steps_per_update, max_soup=None, scope="full"):
+                     num_updates, steps_per_update, max_soup=None, scope="full", agent_stats=None):
     """Turn one evaluation event into (record, log_dict).
 
     team_soups/team_returns/completed have shape (num_partners, num_eval_episodes). Means are taken
@@ -161,12 +193,23 @@ def build_eval_event(stage_id, update_steps, train_episodes, partner_ids, team_s
     The record carries the identities needed to place the event: stage, update, cumulative environment
     steps (training interactions across all stages so far), training episodes completed in this stage,
     partner ids, and the index of each evaluation episode.
+
+    `agent_stats` (optional, (num_partners, num_eval_episodes, 18) in AGENT_STAT_COLUMNS order) adds the per-agent
+    diagnostics. W&B names: `EvalFull/<Metric>_Partner{id}` for scope "full" (plus `EvalFull/MeanTeamSoups`, the
+    equal-weight mean of the partner means, only if every partner has a completed episode) and
+    `EvalCurrent/<Metric>` for scope "current" (one partner). The legacy `Eval/*` keys are unchanged.
     """
     stage_id, update_steps, train_episodes = int(stage_id), int(update_steps), int(train_episodes)
     partner_ids = [int(p) for p in np.asarray(partner_ids)]
     team_soups, team_returns = np.asarray(team_soups), np.asarray(team_returns)
     completed = np.asarray(completed, dtype=bool)
     env_steps = (stage_id * int(num_updates) + update_steps) * int(steps_per_update)
+    if agent_stats is not None:
+        agent_stats = np.asarray(agent_stats)
+        check_delivery_split(agent_stats[..., 0][completed], agent_stats[..., 1][completed], team_soups[completed],
+                             "evaluation episodes")
+    if scope == "current" and len(partner_ids) != 1:
+        raise ValueError("a current-partner evaluation event covers exactly one partner")
 
     record = {
         "stage_id": stage_id,
@@ -179,14 +222,18 @@ def build_eval_event(stage_id, update_steps, train_episodes, partner_ids, team_s
         "team_returns": team_returns,
         "completed": completed,
         "scope": scope,
+        "agent_stats": agent_stats,
     }
+    prefix = "EvalFull" if scope == "full" else "EvalCurrent"
 
     log_dict = {
         "train_step": stage_id * int(num_updates) + update_steps - 1,
         "Eval/StageID": stage_id,
         "Eval/EnvSteps": env_steps,
         "Eval/TrainEpisodes": train_episodes,
+        f"{prefix}/EnvSteps": env_steps,
     }
+    team_means = []
     for row, pid in enumerate(partner_ids):
         n = int(completed[row].sum())
         log_dict[f"Eval/Episodes_Partner{pid}"] = n
@@ -196,6 +243,12 @@ def build_eval_event(stage_id, update_steps, train_episodes, partner_ids, team_s
         ret = float(team_returns[row][completed[row]].mean())
         log_dict[f"Eval/EgoSoup_Partner{pid}"] = soup
         log_dict[f"Eval/EgoReturn_Partner{pid}"] = ret
+        suffix = f"_Partner{pid}" if scope == "full" else ""
+        log_dict[f"{prefix}/TeamSoups{suffix}"] = soup
+        team_means.append(soup)
+        if agent_stats is not None:
+            for metric, k in AGENT_STAT_METRICS.items():
+                log_dict[f"{prefix}/{metric}{suffix}"] = float(agent_stats[row][completed[row]][:, k].mean())
         if max_soup:
             log_dict[f"Eval/EgoSoup_scaled_Partner{pid}"] = soup / max_soup
         if pid == stage_id:
@@ -203,6 +256,8 @@ def build_eval_event(stage_id, update_steps, train_episodes, partner_ids, team_s
             log_dict["Eval/EgoReturn"] = ret
             if max_soup:
                 log_dict["Eval/EgoSoup_scaled"] = soup / max_soup
+    if scope == "full" and team_means and len(team_means) == len(partner_ids):
+        log_dict["EvalFull/MeanTeamSoups"] = float(np.mean(team_means))
     return record, log_dict
 
 
@@ -218,10 +273,19 @@ def shaping_coefficient(horizon, update_steps, steps_per_update):
 
 def build_train_record(stage_id, update_steps, num_updates, steps_per_update, n_episodes, team_soup, ego_return,
                        sparse_reward, shaped_reward, shaping_coef, actor_loss, value_loss, entropy, cl_penalty,
-                       grad_norm):
-    """One compact per-update training record (episode statistics are blank when no episode completed)."""
+                       grad_norm, agent_stats=None):
+    """One compact per-update training record (episode statistics are blank when no episode completed).
+
+    `agent_stats`: optional (18,) means over the episodes completed in this update, in AGENT_STAT_COLUMNS order.
+    """
     n_episodes = int(n_episodes)
+    stats = {}
+    if agent_stats is not None and n_episodes:
+        values = [float(v) for v in np.asarray(agent_stats)]
+        check_delivery_split(values[0], values[1], team_soup, "training update")
+        stats = dict(zip(AGENT_STAT_COLUMNS, values))
     return {
+        **stats,
         "stage_id": int(stage_id), "update": int(update_steps),
         "env_steps": (int(stage_id) * int(num_updates) + int(update_steps)) * int(steps_per_update),
         "episodes": n_episodes,
@@ -236,7 +300,9 @@ def build_train_record(stage_id, update_steps, num_updates, steps_per_update, n_
 
 def build_train_log(stage_id, update_steps, num_updates, n_episodes, team_soup, ego_return, value_loss, actor_loss,
                     entropy_loss, grad_norm, max_soup=None, *, cl_penalty=None, sparse_reward=None,
-                    shaped_reward=None, env_steps=None):
+                    shaped_reward=None, env_steps=None, agent_stats=None):
+    """W&B dict of one update. `agent_stats` as in `build_train_record`; episode means are omitted (not zero)
+    when no episode completed."""
     log_dict = {
         "Train/EgoValueLoss": float(value_loss),
         "Train/EgoActorLoss": float(actor_loss),
@@ -251,7 +317,11 @@ def build_train_log(stage_id, update_steps, num_updates, n_episodes, team_soup, 
             log_dict[name] = float(value)
     if int(n_episodes) > 0:
         log_dict["Train/EgoReturn"] = float(ego_return)
-        log_dict["Train/EgoSoup"] = float(team_soup)
+        log_dict["Train/EgoSoup"] = float(team_soup)  # legacy alias: TEAM deliveries, not the ego's own
+        log_dict["Train/TeamSoups"] = float(team_soup)
+        if agent_stats is not None:
+            for metric, k in AGENT_STAT_METRICS.items():
+                log_dict[f"Train/{metric}"] = float(np.asarray(agent_stats)[k])
         if max_soup:
             log_dict["Train/EgoSoup_scaled"] = float(team_soup) / max_soup
     return log_dict
@@ -338,10 +408,12 @@ def train_ppo_ego_agent(
             return config.lr * frac
 
         max_episode_steps = config.num_steps
+        # Per-agent diagnostics are recorded only when the env was built to accumulate them (LogWrapper agent_stats)
+        collect_agent_stats = bool(getattr(env, "agent_stats", False))
 
         def evaluate(ego_params, event_key, policies, eval_params, eval_ids):
             """Evaluate the ego on the given partner groups; returns compact (P, E) arrays."""
-            soups, rets, done, ids = [], [], [], []
+            soups, rets, done, ids, stats = [], [], [], [], []
             for policy, params, group_ids in zip(policies, eval_params, eval_ids):
                 last_infos = jax.vmap(lambda p, i: run_episodes(
                     event_key, env,
@@ -355,8 +427,12 @@ def train_ppo_ego_agent(
                     last_infos["returned_episode_soups"], last_infos["returned_episode_returns"],
                     last_infos["returned_episode"])
                 soups.append(s), rets.append(r), done.append(c), ids.append(group_ids)
+                if collect_agent_stats:
+                    stats.append(agent_stat_vector(
+                        last_infos["returned_episode_soups"], last_infos["returned_episode_shaped"],
+                        last_infos["returned_episode_actions"]))
             return (jnp.concatenate(ids), jnp.concatenate(soups), jnp.concatenate(rets),
-                    jnp.concatenate(done))
+                    jnp.concatenate(done), jnp.concatenate(stats) if collect_agent_stats else None)
 
         def run_eval(ego_params, event_key, eval_params, eval_ids):
             return evaluate(ego_params, event_key, eval_policies, eval_params, eval_ids)
@@ -490,11 +566,19 @@ def train_ppo_ego_agent(
 
                 # Team episode soups (raw deliveries by either agent, summed once) as reported by LogWrapper.
                 # Only meaningful where the episode has completed.
-                team_ep_soups, _, _ = team_episode_summary(
+                team_ep_soups, _, completed = team_episode_summary(
                     info["returned_episode_soups"], info["returned_episode_returns"], info["returned_episode"])
 
-                # note that num_actors = num_envs * num_agents
-                keys_to_drop = {"shaped_reward", "soups"}
+                # Per-agent diagnostics: only the sum over the episodes that end at this step leaves the scan.
+                agent_stats_step = None
+                if collect_agent_stats:
+                    episode_stats = agent_stat_vector(
+                        info["returned_episode_soups"], info["returned_episode_shaped"],
+                        info["returned_episode_actions"])
+                    agent_stats_step = jnp.where(completed[:, None], episode_stats, 0.0).sum(axis=0)
+
+                # note that num_actors = num_envs * num_agents; diagnostics must not enter the PPO batch
+                keys_to_drop = {"shaped_reward", "soups", "returned_episode_shaped", "returned_episode_actions"}
                 info = {k: v for k, v in info.items() if k not in keys_to_drop}
                 info_0 = jax.tree.map(lambda x: x[:, 0], info)
 
@@ -514,7 +598,7 @@ def train_ppo_ego_agent(
                                     new_ego_hstate, new_partner_hstate, updated_partner_indices, rng,
                                     update_steps_inner)
                 return new_runner_state, (transition, team_ep_soups,
-                                          jnp.stack([reward["agent_0"], shaped_reward_0]))
+                                          jnp.stack([reward["agent_0"], shaped_reward_0]), agent_stats_step)
 
             def _calculate_gae(traj_batch, last_val):
                 def _get_advantages(gae_and_next_value, transition):
@@ -676,7 +760,7 @@ def train_ppo_ego_agent(
                                 init_ego_hstate, init_partner_hstate, new_partner_indices, rng,
                                 update_steps)
 
-                runner_state, (traj_batch, team_ep_soups, step_rewards) = jax.lax.scan(
+                runner_state, (traj_batch, team_ep_soups, step_rewards, agent_stats_steps) = jax.lax.scan(
                     _env_step, runner_state, None, config.num_steps)
                 (train_state, env_state, obs, done, ego_hstate, partner_hstate, partner_indices, rng, _) = runner_state
 
@@ -743,6 +827,9 @@ def train_ppo_ego_agent(
                     "team_soup": jnp.where(ep_mask, team_ep_soups, 0.0).sum() / denom,
                     "ego_return": jnp.where(ep_mask, traj_batch.info["returned_episode_returns"], 0.0).sum() / denom,
                 }
+                if collect_agent_stats:
+                    # means over the episodes completed in this update (same mask and denominator as team_soup)
+                    metric["agent_stats"] = agent_stats_steps.sum(axis=0) / denom
                 if is_memory_method:
                     new_runner_state = (train_state, rng, update_steps + 1, cl_carry)
                 else:
@@ -765,10 +852,10 @@ def train_ppo_ego_agent(
 
             def _make_eval_callback(scope):
                 def _on_eval_event(args):
-                    stage_id, update_steps, train_episodes, partner_ids, soups, rets, completed = args
+                    stage_id, update_steps, train_episodes, partner_ids, soups, rets, completed, agent_stats = args
                     record, log_dict = build_eval_event(
                         stage_id, update_steps, train_episodes, partner_ids, soups, rets, completed,
-                        num_updates, steps_per_update, max_soup_val, scope=scope)
+                        num_updates, steps_per_update, max_soup_val, scope=scope, agent_stats=agent_stats)
                     if record_fn is not None:
                         record_fn("eval", record, log_dict)
                     emit(log_dict)
@@ -777,19 +864,21 @@ def train_ppo_ego_agent(
 
             def _on_train_step(args):
                 (stage_id, update_steps, n_episodes, team_soup, ego_return,
-                 value_loss, actor_loss, entropy_loss, grad_norm, cl_penalty, sparse_reward, shaped_reward) = args
+                 value_loss, actor_loss, entropy_loss, grad_norm, cl_penalty, sparse_reward, shaped_reward,
+                 agent_stats) = args
                 log_dict = build_train_log(
                     stage_id, update_steps, num_updates, n_episodes, team_soup, ego_return,
                     value_loss, actor_loss, entropy_loss, grad_norm, max_soup_val, cl_penalty=cl_penalty,
                     sparse_reward=sparse_reward, shaped_reward=shaped_reward,
-                    env_steps=(int(stage_id) * num_updates + int(update_steps)) * steps_per_update)
+                    env_steps=(int(stage_id) * num_updates + int(update_steps)) * steps_per_update,
+                    agent_stats=agent_stats)
                 if record_fn is not None:
                     record_fn("train", build_train_record(
                         stage_id, update_steps, num_updates, steps_per_update, n_episodes, team_soup, ego_return,
                         sparse_reward, shaped_reward,
                         shaping_coefficient(getattr(config, "reward_shaping_horizon", 0.0), update_steps,
                                             steps_per_update),
-                        actor_loss, value_loss, entropy_loss, cl_penalty, grad_norm), log_dict)
+                        actor_loss, value_loss, entropy_loss, cl_penalty, grad_norm, agent_stats=agent_stats), log_dict)
                 emit(log_dict)
 
             def _update_step_with_ckpt(state_with_ckpt, unused):
@@ -800,6 +889,7 @@ def train_ppo_ego_agent(
                     update_state,
                     None
                 )
+                agent_stats = metric.pop("agent_stats", None)  # reaches the logging callback only, not the scan output
                 if is_memory_method:
                     (train_state, rng, update_steps, cl_carry) = new_update_state
                 else:
@@ -814,21 +904,21 @@ def train_ppo_ego_agent(
                 def do_eval(_):
                     # The evaluation key depends only on the update index; the training rng is untouched.
                     event_key = jax.random.fold_in(eval_key, update_steps)
-                    ids, soups, rets, completed = _run_eval(train_state.params, event_key)
+                    ids, soups, rets, completed, eval_stats = _run_eval(train_state.params, event_key)
                     jax.experimental.io_callback(
                         _on_eval_event, None,
-                        (env_id_idx, update_steps, train_episodes, ids, soups, rets, completed),
+                        (env_id_idx, update_steps, train_episodes, ids, soups, rets, completed, eval_stats),
                         ordered=False,
                     )
                     return jnp.array(True)
 
                 def do_eval_current(_):
                     event_key = jax.random.fold_in(eval_key, update_steps)
-                    ids, soups, rets, completed = run_current(train_state.params, event_key, partner_params,
-                                                              env_id_idx)
+                    ids, soups, rets, completed, eval_stats = run_current(train_state.params, event_key,
+                                                                          partner_params, env_id_idx)
                     jax.experimental.io_callback(
                         _on_current_event, None,
-                        (env_id_idx, update_steps, train_episodes, ids, soups, rets, completed),
+                        (env_id_idx, update_steps, train_episodes, ids, soups, rets, completed, eval_stats),
                         ordered=False,
                     )
                     return jnp.array(True)
@@ -858,7 +948,7 @@ def train_ppo_ego_agent(
                     _on_train_step, None,
                     (env_id_idx, update_steps, metric["n_episodes"], metric["team_soup"], metric["ego_return"],
                      metric["value_loss"], metric["actor_loss"], metric["entropy_loss"], metric["avg_grad_norm"],
-                     metric["cl_penalty"], metric["sparse_reward"], metric["shaped_reward"]),
+                     metric["cl_penalty"], metric["sparse_reward"], metric["shaped_reward"], agent_stats),
                     ordered=False,
                 )
 
@@ -916,11 +1006,12 @@ def train_ppo_ego_agent(
             stage_fn = compiled_cache[cache_key]
         if init_eval:
             start = time.perf_counter()
-            ids, soups, rets, completed = stage_fn.eval_host(
+            ids, soups, rets, completed, eval_stats = stage_fn.eval_host(
                 (init_ego_params, jax.random.fold_in(eval_rngs[0], 0), eval_params, eval_ids))
             record, log_dict = build_eval_event(
                 int(env_id_idx), 0, 0, ids, soups, rets, completed, int(config.num_updates),
-                int(config.num_envs) * int(config.num_steps), None if max_soup is None else float(max_soup))
+                int(config.num_envs) * int(config.num_steps), None if max_soup is None else float(max_soup),
+                agent_stats=eval_stats)
             if record_fn is not None:
                 record_fn("eval", record, log_dict)
             if log_fn is not None:
