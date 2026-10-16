@@ -1,5 +1,9 @@
 # MEAL: A Benchmark for Continual Multi-Agent Reinforcement Learning
 
+<p align="center">
+  <a href="https://ttomilin.github.io/MEAL/"><b>🌐 Project Page</b></a>
+</p>
+
 MEAL is the first **Continual Multi‑Agent Reinforcement Learning (CMARL)** benchmark built around cooperative 
 Overcooked‑style tasks, implemented in JAX for high‑performance training and evaluation. It focuses on learning over 
 extensive sequences of procedurally generated tasks, across different team sizes and difficulty levels.
