@@ -163,6 +163,69 @@ def make_partner_switches(env, partner_population, partner_params):
     return reset_switch, step_switch
 
 
+def make_partner_population(partner_policy, partner_params, ego_params, partner_test_mode=False):
+    """Population wrapper and parameters (with the leading population axis) for one frozen partner."""
+    if partner_params is not None and not getattr(partner_policy, "is_planner", False):  # RL agent
+        return (DummyPolicyPopulation(policy_cls=partner_policy, test_mode=partner_test_mode),
+                jax.tree.map(lambda x: x[jnp.newaxis, ...], partner_params))
+    # heuristic agent
+    if partner_params is None:
+        # Doesn't matter what we pass for params, since the heuristic agent doesn't use params.
+        # We just need to pass something to vmap over.
+        partner_params = ego_params
+    # (for a configurable planner its params are its configuration)
+    return (HeuristicPolicyPopulation(policy_cls=partner_policy),
+            jax.tree.map(lambda x: x[jnp.newaxis, ...], partner_params))
+
+
+def make_partner_video_fn(env, ego_network, partner_population, max_steps, use_cnn=False):
+    """Jitted `fn(rng, ego_params, env_idx, partner_params) -> stacked raw env states` (max_steps + 1 frames).
+
+    The ego (agent_0) samples from its policy, agent_1 is the frozen partner acting through
+    `make_partner_switches`, exactly as in the importance rollouts and in training. Partner parameters are an
+    argument, so one compiled function serves every partner of the same policy class.
+    """
+    ego = env.agents[0]
+
+    def rollout(rng, ego_params, env_idx, partner_params):
+        reset_switch, step_switch = make_partner_switches(env, partner_population, partner_params)
+        rng, reset_key = jax.random.split(rng)
+        obs, state = reset_switch(reset_key, env_idx)
+
+        def step(carry, _):
+            obs, state, rng = carry
+            rng, act_key, step_key = jax.random.split(rng, 3)
+            ego_obs = obs[ego][None] if use_cnn else obs[ego].reshape(1, -1)
+            pi, _, _ = ego_network.apply(ego_params, ego_obs, env_idx=env_idx)
+            obs, state, _, _, _ = step_switch(step_key, state, {ego: pi.sample(seed=act_key)}, env_idx)
+            return (obs, state, rng), env.unwrap_env_state(state.env_state)
+
+        _, frames = jax.lax.scan(step, (obs, state, rng), xs=None, length=max_steps)
+        first = env.unwrap_env_state(state.env_state)
+        return jax.tree.map(lambda a, b: jnp.concatenate([a[None], b]), first, frames)
+
+    return jax.jit(rollout)
+
+
+def rollout_ego_with_partner(rng, env, ego_network, ego_params, env_idx, partner_population, partner_params,
+                             max_steps, use_cnn=False, cache=None):
+    """One episode prefix of the ego with a frozen partner, as a list of raw env states for the visualizer.
+
+    Args:
+        partner_params: partner parameters with a leading population axis of size 1 (see
+            `make_partner_population`).
+        cache: optional dict reused across calls so partners of the same policy class share one compilation.
+    """
+    cache = {} if cache is None else cache
+    key = ("video", env, ego_network, type(partner_population), partner_population.policy_cls,
+           getattr(partner_population, "test_mode", None), int(max_steps), bool(use_cnn))
+    if key not in cache:
+        cache[key] = make_partner_video_fn(env, ego_network, partner_population, int(max_steps), use_cnn)
+    stacked = jax.device_get(cache[key](rng, ego_params, jnp.asarray(env_idx, jnp.int32), partner_params))
+    length = jax.tree_util.tree_leaves(stacked)[0].shape[0]
+    return [jax.tree.map(lambda x: x[i], stacked) for i in range(length)]
+
+
 def make_partner_importance_fn(cl, env, ego_network, partner_population, config):
     """Jitted `fn(ego_params, env_idx, rng, partner_params)` computing CL importance with the partner acting.
 
@@ -185,7 +248,8 @@ def run_br_training(
         config, env, partner_agent_config, ego_policy, ego_params, partner_policy, partner_params=None,
         partner_test_mode=False, env_id_idx=0, eval_partner=[], max_soup_dict=None, cl=None,
         cl_state=None, log_fn=None, compiled_cache=None, record_fn=None, stats=None,
-        init_eval=False):
+        init_eval=False, key_index=None, init_opt_state=None, update_base=0, step_base=None, shaping_base=0,
+        final_eval=False, carry=None):
     '''Run ego agent training against a single partner agent.
 
     Args:
@@ -195,29 +259,16 @@ def run_br_training(
         record_fn, stats: see `train_ppo_ego_agent`; `stats` also receives `importance_s` (wall time of the
             post-stage importance computation, including its compilation on first use) and
             `importance_compiled_here` when an importance estimate was computed
+        key_index: index the stage keys are derived from (default env_id_idx; the interleaved schedule uses the
+            micro-stage index so repeated visits of a partner draw fresh keys)
+        init_opt_state, update_base, step_base, shaping_base, final_eval: see `train_ppo_ego_agent`
+        carry: optional dict receiving `final_opt_state` and `train_episodes` of this call
     '''
-    keys = make_stage_keys(config.seed, env_id_idx)
+    keys = make_stage_keys(config.seed, env_id_idx if key_index is None else key_index)
     max_soup = list(max_soup_dict.values())[0] if max_soup_dict else None
 
-    if partner_params is not None and not getattr(partner_policy, "is_planner", False):  # RL agent
-        partner_params = jax.tree.map(
-            lambda x: x[jnp.newaxis, ...], partner_params)
-        partner_population = DummyPolicyPopulation(
-            policy_cls=partner_policy,
-            test_mode=partner_test_mode
-        )
-
-    else:  # heuristic agent
-        if partner_params is not None:  # configurable planner: its params are its configuration
-            partner_params = jax.tree.map(lambda x: x[jnp.newaxis, ...], partner_params)
-        else:
-            # Doesn't matter what we pass for params, since the heuristic agent doesn't use params.
-            # We just need to pass something to vmap over.
-            partner_params = jax.tree.map(
-                lambda x: x[jnp.newaxis, ...], ego_params)
-        partner_population = HeuristicPolicyPopulation(
-            policy_cls=partner_policy
-        )
+    partner_population, partner_params = make_partner_population(
+        partner_policy, partner_params, ego_params, partner_test_mode)
 
     log.info("Starting ego agent training...")
     start_time = time.time()
@@ -243,7 +294,15 @@ def run_br_training(
         record_fn=record_fn,
         stats=stats,
         init_eval=init_eval,
+        init_opt_state=init_opt_state,
+        update_base=update_base,
+        step_base=step_base,
+        shaping_base=shaping_base,
+        final_eval=final_eval,
     )
+    if carry is not None:
+        carry["final_opt_state"] = out["final_opt_state"]
+        carry["train_episodes"] = int(jnp.sum(out["metrics"]["n_episodes"]))
 
     log.info(f"Training completed in {time.time() - start_time:.2f} seconds")
 

@@ -236,8 +236,9 @@ def csv_has_agent_stats(path) -> Optional[bool]:
     return None if header is None else header[-len(AGENT_STAT_COLUMNS):] == list(AGENT_STAT_COLUMNS)
 
 
-def truncate_csv(path, max_stage: int) -> int:
-    """Drop rows whose `stage` exceeds `max_stage` (an interrupted stage); returns how many were dropped."""
+def truncate_csv(path, max_stage: float, column: str = "stage") -> int:
+    """Drop rows whose `column` (default `stage`) exceeds `max_stage` (an interrupted stage; the interleaved schedule
+    cuts by cumulative env steps instead); returns how many were dropped."""
     path = Path(path)
     if not path.exists():
         return 0
@@ -245,8 +246,8 @@ def truncate_csv(path, max_stage: int) -> int:
         rows = list(csv.reader(f))
     if not rows:
         return 0
-    stage_col = rows[0].index("stage")
-    keep = [rows[0]] + [r for r in rows[1:] if int(r[stage_col]) <= max_stage]
+    stage_col = rows[0].index(column)
+    keep = [rows[0]] + [r for r in rows[1:] if float(r[stage_col]) <= max_stage]
     dropped = len(rows) - len(keep)
     if dropped:
         out = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -294,13 +295,17 @@ class RunRecorder:
     def _label(self, partner_id):
         return self.labels[partner_id] if 0 <= partner_id < len(self.labels) else f"partner{partner_id}"
 
-    def begin_stage(self, stage: int, num_updates: int, eval_plan: Dict[int, str], init_eval: bool = False):
+    def begin_stage(self, stage: int, num_updates: int, eval_plan: Dict[int, str], init_eval: bool = False,
+                    update_base: int = 0):
         """`eval_plan` maps update -> "full"/"current" (see train_ego.eval_plan); `init_eval` adds the evaluation
-        before the first update (update 0), which has no training event."""
+        before the first update (update 0), which has no training event. `update_base` (interleaved schedule:
+        updates already trained with this partner) shifts the expected updates to base+1 .. base+num_updates."""
         with self._lock:
-            self._stage, self._num_updates = int(stage), int(num_updates)
-            self._eval_updates = set(eval_plan) | ({0} if init_eval else set())
-            self._pending, self._next = {}, 0 if init_eval else 1
+            base = int(update_base)
+            self._stage, self._num_updates = int(stage), base + int(num_updates)
+            self._eval_updates = {base + u for u in eval_plan} | ({base} if init_eval else set())
+            self._pending, self._next = {}, base if init_eval else base + 1
+            self._eval_only = base if init_eval else None  # the initial evaluation has no training event
             self._summary = {"updates": 0, "train_episodes": 0, "eval_events": 0, "eval_full_events": 0,
                              "eval_current_events": 0, "eval_episodes": 0, "env_steps_end": None}
 
@@ -322,7 +327,8 @@ class RunRecorder:
     def _drain(self):
         while self._next <= self._num_updates:
             slot = self._pending.get(self._next, {})
-            if (self._next > 0 and "train" not in slot) or (self._next in self._eval_updates and "eval" not in slot):
+            if ((self._next != self._eval_only and "train" not in slot)
+                    or (self._next in self._eval_updates and "eval" not in slot)):
                 return
             self._commit(self._next, slot)
             del self._pending[self._next]
@@ -454,7 +460,7 @@ def fingerprint_differences(saved: Dict[str, Any], current: Dict[str, Any]) -> L
             for k in sorted(set(a) | set(b)) if a.get(k, "<absent>") != b.get(k, "<absent>")]
 
 
-def check_resume(meta: Dict[str, Any], fingerprint: Dict[str, Any]):
+def check_resume(meta: Dict[str, Any], fingerprint: Dict[str, Any], num_stages: Optional[int] = None):
     diffs = fingerprint_differences(meta["fingerprint"], fingerprint)
     if diffs:
         hint = ""
@@ -463,7 +469,7 @@ def check_resume(meta: Dict[str, Any], fingerprint: Dict[str, Any]):
                     "were already trained.")
         shown = "\n  ".join(diffs[:12]) + (f"\n  ... and {len(diffs) - 12} more" if len(diffs) > 12 else "")
         raise ResumeError(f"cannot resume: the run differs from the checkpoint in\n  {shown}{hint}")
-    n = len(fingerprint["partners"])
+    n = len(fingerprint["partners"]) if num_stages is None else int(num_stages)
     if not 0 <= meta["stages_completed"] <= n:
         raise ResumeError(f"checkpoint reports {meta['stages_completed']} completed stages of {n}")
 

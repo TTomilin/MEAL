@@ -1,8 +1,10 @@
 '''Main entry point for running teammate generation algorithms.'''
+import copy
 import json
 import logging
 import os
 import pickle
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -16,7 +18,7 @@ import wandb
 
 from experiments.model.cnn import ActorCritic as CNNActorCritic
 from experiments.model.mlp import ActorCritic as MLPActorCritic
-from experiments.utils import rollout_for_video, init_cl_state, create_visualizer
+from experiments.utils import init_cl_state, create_visualizer
 from experiments.continual.agem import AGEM, init_agem_memory
 from experiments.continual.er_ace import ERACE
 from experiments.continual.ewc import EWC
@@ -37,13 +39,15 @@ from experiments.partner_adaptation.run_outputs import (
     csv_has_agent_stats, device_info, read_checkpoint, resolve_resume, restore_state, save_checkpoint, truncate_csv,
     write_json)
 from experiments.partner_adaptation.partner_generation.utils import frozendict_from_layout_repr
-from experiments.partner_adaptation.train_br import DummyPolicyPopulation, HeuristicPolicyPopulation, run_br_training
-from experiments.partner_adaptation.train_ego import ACTION_NAMES, EVAL_SCHEDULES, eval_plan
+from experiments.partner_adaptation.train_br import (
+    DummyPolicyPopulation, HeuristicPolicyPopulation, make_partner_population, rollout_ego_with_partner, run_br_training)
+from experiments.partner_adaptation.train_ego import ACTION_NAMES, EVAL_SCHEDULES, eval_plan, make_optimizer
 
 log = logging.getLogger(__name__)
 
 HEURISTIC_NAMES = ["Independent_Policy", "Onion_Policy", "Plate_Policy", "Random_Policy", "Static_Policy"]
 IMPORTANCE_METHODS = ("ewc", "mas", "l2")
+SCHEDULES = ("sequential", "interleaved")
 
 
 @dataclass
@@ -143,8 +147,18 @@ class TrainConfig:
     # Profiling only: train just these stage indices (heads, evaluation partners and schedules stay those of the
     # whole bank). Empty = every stage. Not resumable, not for results.
     only_stages: List[int] = field(default_factory=list)
-    record_video: bool = False  # Record and upload gifs after each partner training
-    gif_len: int = 100          # Maximum steps for gif recording
+    # "sequential": partner after partner (the CPA protocol). 
+    # "interleaved": joint-training upper bound with the same total budget: 
+    # the partners are cycled in micro-stages of `interleave_updates` updates until every partner has
+    # had num_updates updates; the optimizer state and the reward-shaping anneal (horizon counted over the whole
+    # run) carry across micro-stages, and every partner is evaluated before training and after every cycle.
+    # Plain fine-tuning only (no CL state), constant learning rate.
+    schedule: str = "sequential"
+    interleave_updates: int = 2
+    # After each stage, record one episode of the ego with the frozen partner it was just trained with and upload it
+    # to W&B as Video/stage_<k>_<partner> (files under <run dir>/videos/).
+    record_video: bool = True
+    gif_len: int = 100          # Steps recorded per video (num_steps = one full episode)
 
     log_train_out: bool = True
 
@@ -235,6 +249,23 @@ def validate_config(config: TrainConfig):
     if config.cl_method and config.cl_method.lower() in IMPORTANCE_METHODS and (
             config.importance_episodes < 1 or config.importance_steps < 1):
         problems.append("importance_episodes and importance_steps must be positive")
+    if config.schedule not in SCHEDULES:
+        problems.append(f"schedule must be one of {SCHEDULES}, got {config.schedule!r}")
+    elif config.schedule == "interleaved":
+        if config.cl_method and config.cl_method.lower() != "ft":
+            problems.append(f"schedule=interleaved is the joint-training upper bound and supports cl_method ft (or "
+                            f"none) only, got {config.cl_method!r}")
+        if config.interleave_updates < 1 or int(config.num_updates) % config.interleave_updates:
+            problems.append(f"interleave_updates={config.interleave_updates} must be positive and divide the "
+                            f"{int(config.num_updates)} updates per partner")
+        if config.anneal_lr:
+            problems.append("schedule=interleaved needs a constant learning rate (anneal_lr would restart at every "
+                            "micro-stage)")
+        if config.only_stages:
+            problems.append("only_stages (profiling) is not supported with schedule=interleaved")
+    elif config.reward_shaping_horizon > config.total_timesteps:
+        log.warning("reward_shaping_horizon=%g exceeds the %g joint steps per partner: the shaped reward never "
+                    "reaches 0 within a stage", config.reward_shaping_horizon, config.total_timesteps)
     if problems:
         raise ValueError("invalid configuration:\n  " + "\n  ".join(problems))
 
@@ -264,7 +295,14 @@ def resolve_run(config: TrainConfig) -> Resolved:
     identities = [partner_identity(r) for r in bank.records] + [
         dict(partner_id=len(bank) + i, kind="heuristic", label=HEURISTIC_NAMES[i]) for i in range(num_heuristics)]
     labels = [i["label"] for i in identities]
-    return Resolved(bank, cl, identities, labels, build_fingerprint(asdict(config), identities), num_heuristics)
+    config_dict = asdict(config)
+    if config.schedule == "sequential":  # sequential runs keep the fingerprint they had before schedules existed
+        config_dict.pop("schedule"), config_dict.pop("interleave_updates")
+    elif config.reward_shaping_horizon > len(identities) * config.total_timesteps:
+        raise ValueError(f"invalid configuration:\n  reward_shaping_horizon={config.reward_shaping_horizon:g} exceeds "
+                         f"the whole interleaved run ({len(identities)} partners x {config.total_timesteps:g} "
+                         f"joint steps); the horizon counts over the run in this schedule")
+    return Resolved(bank, cl, identities, labels, build_fingerprint(config_dict, identities), num_heuristics)
 
 
 class Stage(NamedTuple):
@@ -331,19 +369,37 @@ def schedule_description(config, labels):
                        if config.eval_schedule == "pilot" else
                        f"every {config.eval_every} updates, after update 1 and after the last, "
                        f"{config.num_eval_episodes} episodes against every evaluation partner"),
+    } if config.schedule != "interleaved" else {
+        "stage_order": labels,
+        "stage_budget": f"joint-training upper bound: the partners are cycled in micro-stages of "
+                        f"{config.interleave_updates} updates for {int(config.num_updates) // config.interleave_updates} "
+                        f"cycles, so every partner gets {int(config.num_updates)} updates "
+                        f"({int(config.num_updates) * spu} joint environment steps), as in the sequential runs",
+        "optimizer": "Adam with global-norm clipping, created once and carried across micro-stages (and checkpoints)",
+        "learning_rate": "constant",
+        "reward_shaping": f"linear 1 -> 0 over {config.reward_shaping_horizon:g} joint steps counted over the whole run",
+        "carried_across_partners": "ego parameters and optimizer state",
+        "continual_learning_update": "none (plain fine-tuning)",
+        "rng": "train and evaluation keys are derived from (seed, micro-stage index); no RNG state is carried",
+        "evaluation": (f"{config.num_eval_episodes} episodes per partner: every partner before training"
+                       f"{'' if config.eval_schedule == 'pilot' else ' (pilot schedule only)'} and after every "
+                       f"cycle; no current-partner evaluations"),
     }
 
 
 def execute(config: TrainConfig) -> RunResult:
     """Train the ego agent partner by partner and record the run (see run_outputs.py)."""
     bank, cl, identities, labels, fingerprint, num_heuristics = resolve_run(config)
-    run_string = get_run_string(config)
+    run_string = get_run_string(config) + ("_interleaved" if config.schedule == "interleaved" else "")
+    interleaved = config.schedule == "interleaved"
+    cycles = int(config.num_updates) // config.interleave_updates if interleaved else 1
+    total_stages = len(identities) * cycles  # partners, or micro-stages of the interleaved schedule
 
     checkpoint_meta = None
     if config.resume:
         run_dir, checkpoint_file = resolve_resume(config.resume)
         checkpoint_meta, checkpoint_state = read_checkpoint(checkpoint_file)
-        check_resume(checkpoint_meta, fingerprint)
+        check_resume(checkpoint_meta, fingerprint, num_stages=total_stages)
         run_uid = checkpoint_meta["run_uid"]
     else:
         run_dir, run_uid = allocate_run_dir(config.checkpoint_path, run_string)
@@ -392,8 +448,6 @@ def execute(config: TrainConfig) -> RunResult:
         # Visualization extras (pygame/imageio) are only needed when recording videos
         visualizer = None
         if config.record_video:
-            import optax
-            from flax.training.train_state import TrainState
             visualizer = create_visualizer(env.num_agents, config.env_name)
 
         rng = jax.random.PRNGKey(config.seed)
@@ -439,11 +493,25 @@ def execute(config: TrainConfig) -> RunResult:
 
             print(f"Initialized CL state for method: {config.cl_method.upper()}")
 
+        steps_per_update = int(config.num_envs) * int(config.num_steps)
+        # Interleaved schedule: every micro-stage reuses one config of `interleave_updates` updates without in-scan
+        # evaluation (the cycle-end evaluation runs on the host), and the optimizer state is carried along.
+        micro_config = opt_state = None
+        if interleaved:
+            micro_config = copy.copy(config)
+            micro_config.total_timesteps = config.interleave_updates * steps_per_update
+            micro_config.num_updates = config.interleave_updates
+            micro_config.eval_schedule, micro_config.eval_current_every = "none", 0
+            opt_state = make_optimizer(micro_config).init(ego_params)
+
         if checkpoint_meta:
             ego_params = restore_state(checkpoint_state["ego_params"], ego_params, "ego parameters")
-            cl_state = restore_state(checkpoint_state["cl_state"], cl_state, "continual-learning state")
-
-        steps_per_update = int(config.num_envs) * int(config.num_steps)
+            if interleaved:
+                saved = restore_state(checkpoint_state["cl_state"], {"cl": cl_state, "opt": opt_state},
+                                      "continual-learning and optimizer state")
+                cl_state, opt_state = saved["cl"], saved["opt"]
+            else:
+                cl_state = restore_state(checkpoint_state["cl_state"], cl_state, "continual-learning state")
         num_stages = len(identities)
         num_eval_partners = num_stages
         if not config.resume:
@@ -480,7 +548,11 @@ def execute(config: TrainConfig) -> RunResult:
                     "planned_current_evaluations": num_stages * list(eval_plan(config).values()).count("current"),
                     "importance_env_steps_per_stage": (
                         config.importance_episodes * config.importance_steps
-                        if config.cl_method and config.cl_method.lower() in IMPORTANCE_METHODS else 0)},
+                        if config.cl_method and config.cl_method.lower() in IMPORTANCE_METHODS else 0),
+                    **({"schedule": "interleaved", "interleave_updates": config.interleave_updates,
+                        "cycles": cycles, "micro_stages": total_stages,
+                        "planned_full_evaluations": cycles + (1 if config.eval_schedule == "pilot" else 0),
+                        "planned_current_evaluations": 0} if interleaved else {})},
                 "schedule": schedule_description(config, labels),
                 "normalization": {
                     "max_soup": float(max_soup_dict[layout_name]),
@@ -491,6 +563,14 @@ def execute(config: TrainConfig) -> RunResult:
                     "action_order": list(ACTION_NAMES),
                     "definition": "see the CPA README: per-agent soups, raw unannealed shaped return and action counts"},
             })
+        elif interleaved:  # rows of an uncommitted micro-stage lie beyond the checkpoint's environment steps
+            last = start_stage * config.interleave_updates * steps_per_update
+            dropped = sum(truncate_csv(run_dir / f, last, column=c) for f, c in (
+                ("train_metrics.csv", "env_steps"), ("eval_metrics.csv", "env_steps"),
+                ("stage_timings.csv", "env_steps_end")))
+            status.update_attempt(attempt, discarded_rows_of_uncommitted_stages=dropped)
+            for stale in run_dir.glob(".*.tmp"):
+                stale.unlink()
         else:
             dropped = sum(truncate_csv(run_dir / f, start_stage - 1)
                           for f in ("train_metrics.csv", "eval_metrics.csv", "stage_timings.csv"))
@@ -563,21 +643,34 @@ def execute(config: TrainConfig) -> RunResult:
             ))
             partner_idx += 1
 
-        # Train the ego against the partners in order: bank partners first, then legacy heuristics
+        # Train the ego against the partners in order: bank partners first, then legacy heuristics. The interleaved
+        # schedule cycles through them in micro-stages m instead, (cycle, partner) = divmod(m, num_stages).
         profiling = bool(config.only_stages)
         plan = eval_plan(config)
-        for k in (config.only_stages if profiling else range(start_stage, num_stages)):
-            stage, stats = stages[k], {}
+        micro = config.interleave_updates
+        for m in (config.only_stages if profiling else range(start_stage, total_stages)):
+            cycle, k = divmod(m, num_stages) if interleaved else (0, m)
+            stage, stats, carry = stages[k], {}, {}
             stage_start = time.perf_counter()
-            init_eval = config.eval_schedule == "pilot" and k == 0 and not checkpoint_meta
-            recorder.begin_stage(k, int(config.num_updates), plan, init_eval=init_eval)
+            init_eval = config.eval_schedule == "pilot" and m == 0 and not checkpoint_meta
+            if interleaved:
+                final_eval = k == num_stages - 1  # every partner is evaluated after every cycle
+                recorder.begin_stage(k, micro, {micro: "full"} if final_eval else {}, init_eval=init_eval,
+                                     update_base=cycle * micro)
+                schedule_args = dict(key_index=m, init_opt_state=opt_state, update_base=cycle * micro,
+                                     step_base=m * micro, shaping_base=m * micro, final_eval=final_eval, carry=carry)
+            else:
+                recorder.begin_stage(k, int(config.num_updates), plan, init_eval=init_eval)
+                schedule_args = {}
             ego_params, cl_state = run_br_training(
-                config, env, stage.agent_config, ego_policy,
+                micro_config if interleaved else config, env, stage.agent_config, ego_policy,
                 ego_params, stage.policy, stage.params, env_id_idx=k, eval_partner=eval_partner,
                 max_soup_dict=max_soup_dict, cl=cl, cl_state=cl_state, compiled_cache=compiled_cache,
-                record_fn=recorder.handle, stats=stats, init_eval=init_eval)
+                record_fn=recorder.handle, stats=stats, init_eval=init_eval, **schedule_args)
+            if interleaved:
+                opt_state = carry["final_opt_state"]
             summary = recorder.end_stage()
-            counters["stages_completed"] = k + 1
+            counters["stages_completed"] = m + 1
             counters["train_env_steps"] += summary["updates"] * steps_per_update
             counters["train_episodes"] += summary["train_episodes"]
             for key in ("eval_events", "eval_full_events", "eval_current_events", "eval_episodes"):
@@ -599,34 +692,27 @@ def execute(config: TrainConfig) -> RunResult:
                 device_kind=device["devices"][0]["device_kind"], peak_bytes_in_use=peak,
                 memory_status="device peak since process start" if peak is not None else "unavailable"))
             # A partner counts as done only once its records are on disk and the checkpoint has replaced the old one.
+            schedule_meta = dict(cycle=cycle, partner=k, micro_stages=total_stages) if interleaved else {}
             if config.save_checkpoints and not profiling:
-                save_checkpoint(run_dir, ego_params, cl_state, {
-                    "run_uid": run_uid, "stages_completed": k + 1, "counters": counters,
-                    "fingerprint": fingerprint, "attempt": attempt})
-            status.update(state="running", stages_completed=k + 1, counters=counters,
-                          wandb_failures=recorder.wandb_failures, wandb_error=recorder.wandb_error)
+                save_checkpoint(run_dir, ego_params, {"cl": cl_state, "opt": opt_state} if interleaved else cl_state, {
+                    "run_uid": run_uid, "stages_completed": m + 1, "counters": counters,
+                    "fingerprint": fingerprint, "attempt": attempt, **schedule_meta})
+            status.update(state="running", stages_completed=m + 1, counters=counters,
+                          wandb_failures=recorder.wandb_failures, wandb_error=recorder.wandb_error, **schedule_meta)
 
-            # Record video after training with this partner
-            if config.record_video:
-                temp_train_state = TrainState.create(
-                    apply_fn=ego_policy.network.apply,
-                    params=ego_params,
-                    tx=optax.adam(1e-4)  # dummy optimizer
-                )
-                states = rollout_for_video(rng, config, temp_train_state, env, ego_policy.network, env_idx=k,
-                                           max_steps=config.gif_len)
-                if k < len(partners):
-                    file_path = f"videos/{run.name}/task_{k}_BRDiv_Partner_{k}.mp4"
-                else:
-                    file_path = f"gifs/{run.name}/task_{k}_{HEURISTIC_NAMES[k - len(partners)]}.mp4"
-                visualizer.animate(states, out_path=file_path, task_idx=k, env=env,
-                                   wandb_step=(k + 1) * int(config.num_updates) * steps_per_update)
+            # Record the ego with the frozen partner it was just trained with (interleaved: in the last cycle)
+            if config.record_video and cycle == cycles - 1:
+                try:
+                    record_stage_video(config, env, ego_policy, ego_params, stage, k, labels[k], run_dir, visualizer,
+                                       compiled_cache, run, summary["env_steps_end"])
+                except Exception as e:  # noqa: BLE001 - videos are diagnostics; the stage itself is complete
+                    log.warning("recording the stage-%d video failed: %s: %s", k, type(e).__name__, e)
 
         if profiling:
             status.update(state="profile", counters=counters)
             return RunResult(run_dir, ego_params, cl_state, counters)
         atomic_write(run_dir / f"params_seed{config.seed}.pt", pickle.dumps({"actor_params": ego_params}))
-        status.update(state="complete", stages_completed=num_stages, counters=counters,
+        status.update(state="complete", stages_completed=total_stages, counters=counters,
                       wandb_failures=recorder.wandb_failures, wandb_error=recorder.wandb_error)
         return RunResult(run_dir, ego_params, cl_state, counters)
     except BaseException as e:
@@ -641,6 +727,28 @@ def execute(config: TrainConfig) -> RunResult:
                 run.finish()
             except Exception as e:  # noqa: BLE001 - local records are already complete
                 log.warning("closing the W&B run failed: %s", e)
+
+
+def video_name(k: int, label: str) -> str:
+    return f"stage_{k:02d}_{re.sub(r'[^A-Za-z0-9_.-]+', '_', label).strip('_')}"
+
+
+def record_stage_video(config, env, ego_policy, ego_params, stage, k, label, run_dir, visualizer, cache, run,
+                       wandb_step):
+    """Write <run dir>/videos/stage_<k>_<label>.mp4 (ego = agent_0, frozen partner = agent_1) and log it to W&B."""
+    population, partner_params = make_partner_population(stage.policy, stage.params, ego_params)
+    rng = jax.random.fold_in(jax.random.PRNGKey(config.seed), 10_000 + k)
+    states = rollout_ego_with_partner(rng, env, ego_policy.network, ego_params, k, population, partner_params,
+                                      config.gif_len, use_cnn=config.use_cnn, cache=cache)
+    name = video_name(k, label)
+    path = visualizer.animate(states, out_path=str(Path(run_dir) / "videos" / f"{name}.mp4"), task_idx=k, env=env,
+                              log_to_wandb=False)
+    if config.mode != "disabled" and run is not None:
+        try:
+            run.log({f"Video/{name}": wandb.Video(path, format="mp4")}, step=wandb_step)
+        except Exception as e:  # noqa: BLE001 - the mp4 is on disk; a W&B hiccup must not stop training
+            log.warning("uploading %s to W&B failed: %s", path, e)
+    return path
 
 
 def run_training():

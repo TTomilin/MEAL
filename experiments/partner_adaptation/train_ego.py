@@ -14,6 +14,7 @@ python ego_agent_training/run.py algorithm=ppo_ego/lbf task=lbf logger.mode=disa
 '''
 import logging
 import time
+from functools import partial
 from typing import NamedTuple
 
 import jax
@@ -115,7 +116,10 @@ def eval_flags(update_steps, eval_schedule, eval_every, current_every, num_updat
     "pilot": every partner after the last update only (initialization is evaluated before stage 0 and the end
     of the previous stage is the initialization of the next one), plus the current partner every
     `current_every` updates; the stage end is covered by the full evaluation, so the two never overlap.
+    "none": no evaluation inside the stage (internal: interleaved micro-stages evaluate on the host instead).
     """
+    if eval_schedule == "none":
+        return jnp.zeros_like(jnp.asarray(update_steps) > 0), jnp.zeros_like(jnp.asarray(update_steps) > 0)
     if eval_schedule == "pilot":
         last = jnp.equal(update_steps, num_updates)
         if int(current_every) > 0:
@@ -184,8 +188,14 @@ def group_eval_partners(eval_partner, current=None):
     return tuple(policies), stacked, ids
 
 
+def step_base_of(stage_id, num_updates, step_base=None):
+    """Updates of the whole run before this call: stage * updates per stage unless given (interleaved schedule)."""
+    return int(stage_id) * int(num_updates) if step_base is None else int(step_base)
+
+
 def build_eval_event(stage_id, update_steps, train_episodes, partner_ids, team_soups, team_returns, completed,
-                     num_updates, steps_per_update, max_soup=None, scope="full", agent_stats=None):
+                     num_updates, steps_per_update, max_soup=None, scope="full", agent_stats=None,
+                     update_base=0, step_base=None):
     """Turn one evaluation event into (record, log_dict).
 
     team_soups/team_returns/completed have shape (num_partners, num_eval_episodes). Means are taken
@@ -198,12 +208,17 @@ def build_eval_event(stage_id, update_steps, train_episodes, partner_ids, team_s
     diagnostics. W&B names: `EvalFull/<Metric>_Partner{id}` for scope "full" (plus `EvalFull/MeanTeamSoups`, the
     equal-weight mean of the partner means, only if every partner has a completed episode) and
     `EvalCurrent/<Metric>` for scope "current" (one partner). The legacy `Eval/*` keys are unchanged.
+
+    `update_base` (updates already trained with this partner) shifts the recorded update; `step_base` (updates of
+    the whole run before this call, default stage * num_updates) places the event in cumulative environment steps.
+    Both matter only for the interleaved schedule, where a partner is visited several times.
     """
     stage_id, update_steps, train_episodes = int(stage_id), int(update_steps), int(train_episodes)
     partner_ids = [int(p) for p in np.asarray(partner_ids)]
     team_soups, team_returns = np.asarray(team_soups), np.asarray(team_returns)
     completed = np.asarray(completed, dtype=bool)
-    env_steps = (stage_id * int(num_updates) + update_steps) * int(steps_per_update)
+    base = step_base_of(stage_id, num_updates, step_base)
+    env_steps = (base + update_steps) * int(steps_per_update)
     if agent_stats is not None:
         agent_stats = np.asarray(agent_stats)
         check_delivery_split(agent_stats[..., 0][completed], agent_stats[..., 1][completed], team_soups[completed],
@@ -213,7 +228,7 @@ def build_eval_event(stage_id, update_steps, train_episodes, partner_ids, team_s
 
     record = {
         "stage_id": stage_id,
-        "update": update_steps,
+        "update": int(update_base) + update_steps,
         "env_steps": env_steps,
         "train_episodes": train_episodes,
         "partner_ids": partner_ids,
@@ -227,7 +242,7 @@ def build_eval_event(stage_id, update_steps, train_episodes, partner_ids, team_s
     prefix = "EvalFull" if scope == "full" else "EvalCurrent"
 
     log_dict = {
-        "train_step": stage_id * int(num_updates) + update_steps - 1,
+        "train_step": base + update_steps - 1,
         "Eval/StageID": stage_id,
         "Eval/EnvSteps": env_steps,
         "Eval/TrainEpisodes": train_episodes,
@@ -261,19 +276,37 @@ def build_eval_event(stage_id, update_steps, train_episodes, partner_ids, team_s
     return record, log_dict
 
 
-def shaping_coefficient(horizon, update_steps, steps_per_update):
+def shaping_coefficient(horizon, update_steps, steps_per_update, shaping_base=0):
     """Weight of the shaped reward during the rollout of update `update_steps` (1-based) of a stage.
 
-    The anneal counts from the start of every stage, not from the start of the run.
+    The anneal counts from the start of every stage, not from the start of the run, unless `shaping_base` (updates
+    already annealed, used by the interleaved schedule) continues it.
     """
     if not float(horizon) > 0:
         return 0.0
-    return 1.0 - min(1.0, (int(update_steps) - 1) * int(steps_per_update) / float(int(horizon)))
+    return 1.0 - min(1.0, (int(shaping_base) + int(update_steps) - 1) * int(steps_per_update) / float(int(horizon)))
+
+
+def shaping_weight(horizon, timestep):
+    """In-graph shaped-reward weight at joint step `timestep` (float32; no int32 overflow on long runs)."""
+    return jnp.clip(1.0 - jnp.asarray(timestep, jnp.float32) / float(int(horizon)), 0.0, 1.0)
+
+
+def make_optimizer(config):
+    """The ego's optimizer: Adam after global-norm clipping, lr constant or annealed over the updates of a stage."""
+    if config.anneal_lr:
+        def linear_schedule(count):
+            frac = 1.0 - (count // (config.num_minibatches * config.update_epochs)) / config.num_updates
+            return config.lr * frac
+        lr = linear_schedule
+    else:
+        lr = config.lr
+    return optax.chain(optax.clip_by_global_norm(config.max_grad_norm), optax.adam(learning_rate=lr, eps=1e-5))
 
 
 def build_train_record(stage_id, update_steps, num_updates, steps_per_update, n_episodes, team_soup, ego_return,
                        sparse_reward, shaped_reward, shaping_coef, actor_loss, value_loss, entropy, cl_penalty,
-                       grad_norm, agent_stats=None):
+                       grad_norm, agent_stats=None, update_base=0, step_base=None):
     """One compact per-update training record (episode statistics are blank when no episode completed).
 
     `agent_stats`: optional (18,) means over the episodes completed in this update, in AGENT_STAT_COLUMNS order.
@@ -286,8 +319,8 @@ def build_train_record(stage_id, update_steps, num_updates, steps_per_update, n_
         stats = dict(zip(AGENT_STAT_COLUMNS, values))
     return {
         **stats,
-        "stage_id": int(stage_id), "update": int(update_steps),
-        "env_steps": (int(stage_id) * int(num_updates) + int(update_steps)) * int(steps_per_update),
+        "stage_id": int(stage_id), "update": int(update_base) + int(update_steps),
+        "env_steps": (step_base_of(stage_id, num_updates, step_base) + int(update_steps)) * int(steps_per_update),
         "episodes": n_episodes,
         "soups": float(team_soup) if n_episodes else None,
         "ego_return": float(ego_return) if n_episodes else None,
@@ -300,7 +333,7 @@ def build_train_record(stage_id, update_steps, num_updates, steps_per_update, n_
 
 def build_train_log(stage_id, update_steps, num_updates, n_episodes, team_soup, ego_return, value_loss, actor_loss,
                     entropy_loss, grad_norm, max_soup=None, *, cl_penalty=None, sparse_reward=None,
-                    shaped_reward=None, env_steps=None, agent_stats=None):
+                    shaped_reward=None, env_steps=None, agent_stats=None, step_base=None):
     """W&B dict of one update. `agent_stats` as in `build_train_record`; episode means are omitted (not zero)
     when no episode completed."""
     log_dict = {
@@ -309,7 +342,7 @@ def build_train_log(stage_id, update_steps, num_updates, n_episodes, team_soup, 
         "Train/EgoEntropyLoss": float(entropy_loss),
         "Train/EgoGradNorm": float(grad_norm),
         "Train/EpisodesCompleted": int(n_episodes),
-        "train_step": int(stage_id) * int(num_updates) + int(update_steps) - 1,
+        "train_step": step_base_of(stage_id, num_updates, step_base) + int(update_steps) - 1,
     }
     for name, value in (("Train/CLPenalty", cl_penalty), ("Train/EgoSparseReward", sparse_reward),
                         ("Train/EgoShapedReward", shaped_reward), ("Train/EnvSteps", env_steps)):
@@ -333,7 +366,7 @@ def train_ppo_ego_agent(
         partner_population: AgentPopulation,
         partner_params, env_id_idx=0, eval_partner=[], cl=None, cl_state=None,
         eval_rng=None, log_fn=None, max_soup=None, compiled_cache=None, record_fn=None, stats=None,
-        init_eval=False
+        init_eval=False, init_opt_state=None, update_base=0, step_base=None, shaping_base=0, final_eval=False
 ):
     '''
     Train PPO ego agent using the given partner checkpoints and initial ego parameters.
@@ -365,12 +398,34 @@ def train_ppo_ego_agent(
             evaluation event on the final parameters), eval_events (full), eval_current_events,
             eval_current_event_s, init_eval_s, peak_bytes_in_use (None if unavailable).
         init_eval: evaluate the incoming ego on every evaluation partner before training (update 0 of this stage).
+        init_opt_state: optimizer state to continue (default: a fresh optimizer); `out["final_opt_state"]` is always
+            returned.
+        update_base, step_base, shaping_base: bookkeeping of the interleaved schedule, which visits a partner several
+            times: updates already trained with this partner (shifts the recorded `update`), updates of the whole run
+            before this call (cumulative env steps; default env_id_idx * num_updates) and updates already annealed
+            (the shaping weight continues instead of restarting). Defaults reproduce the per-partner schedule.
+        final_eval: evaluate every evaluation partner on the host after the last update (scope "full"); used with
+            the internal eval_schedule "none" for full-bank evaluations at interleaving-cycle boundaries.
     '''
     if eval_rng is None:
         eval_rng = jax.random.fold_in(train_rng, 1)
 
     eval_policies, eval_params, eval_ids = group_eval_partners(
         eval_partner, current=(partner_population, partner_params, int(env_id_idx)))
+
+    def host_eval_event(update_steps, train_episodes, result):
+        """Record a full evaluation computed on the host (before the first / after the last update)."""
+        ids, soups, rets, completed, eval_stats = result
+        record, log_dict = build_eval_event(
+            int(env_id_idx), update_steps, train_episodes, ids, soups, rets, completed, int(config.num_updates),
+            int(config.num_envs) * int(config.num_steps), None if max_soup is None else float(max_soup),
+            agent_stats=eval_stats, update_base=update_base, step_base=step_base)
+        if record_fn is not None:
+            record_fn("eval", record, log_dict)
+        if log_fn is not None:
+            log_fn(log_dict)
+        elif record_fn is None:
+            wandb.log(log_dict)
 
     # ------------------------------
     # Build the PPO training function
@@ -400,12 +455,6 @@ def train_ppo_ego_agent(
             emit = lambda d: None
         else:
             emit = lambda d: wandb.log(d)
-
-        def linear_schedule(count):
-            frac = 1.0 - \
-                   (count // (config.num_minibatches *
-                              config.update_epochs)) / config.num_updates
-            return config.lr * frac
 
         max_episode_steps = config.num_steps
         # Per-agent diagnostics are recorded only when the env was built to accumulate them (LogWrapper agent_stats)
@@ -442,23 +491,17 @@ def train_ppo_ego_agent(
             return evaluate(ego_params, event_key, (partner_population.policy_cls,), [partner_params],
                             [jnp.reshape(stage_id, (1,)).astype(jnp.int32)])
 
-        def train(rng, eval_key, init_ego_params, partner_params, cl_state, env_id_idx, eval_params, eval_ids):
-            if config.anneal_lr:
-                tx = optax.chain(
-                    optax.clip_by_global_norm(config.max_grad_norm),
-                    optax.adam(learning_rate=linear_schedule, eps=1e-5),
-                )
-            else:
-                tx = optax.chain(
-                    optax.clip_by_global_norm(config.max_grad_norm),
-                    optax.adam(config.lr, eps=1e-5),
-                )
-
+        def train(rng, eval_key, init_ego_params, partner_params, cl_state, env_id_idx, eval_params, eval_ids,
+                  offsets, init_opt_state):
+            """`offsets` = int32 [update_base, step_base, shaping_base] (see `train_ppo_ego_agent`);
+            `init_opt_state` continues an optimizer state (None = fresh optimizer, the per-stage default)."""
             train_state = TrainState.create(
                 apply_fn=ego_policy.network.apply,
                 params=init_ego_params,
-                tx=tx,
+                tx=make_optimizer(config),
             )
+            if init_opt_state is not None:
+                train_state = train_state.replace(opt_state=init_opt_state)
             #  Init ego and partner hstates
             init_ego_hstate = ego_policy.init_hstate(
                 config.num_controlled_actors)
@@ -470,11 +513,7 @@ def train_ppo_ego_agent(
 
             rew_shaping_horizon = float(getattr(config, "reward_shaping_horizon", 0.0))
             if rew_shaping_horizon > 0:
-                rew_shaping_anneal = optax.linear_schedule(
-                    init_value=1.0,
-                    end_value=0.0,
-                    transition_steps=int(rew_shaping_horizon),
-                )
+                rew_shaping_anneal = partial(shaping_weight, rew_shaping_horizon)
             else:
                 rew_shaping_anneal = None
 
@@ -559,7 +598,8 @@ def train_ppo_ego_agent(
                 # Apply reward shaping annealing if configured
                 shaped_reward_0 = info["shaped_reward"]["agent_0"]
                 if rew_shaping_anneal is not None:
-                    current_timestep = update_steps_inner * config.num_envs * config.num_steps
+                    current_timestep = ((offsets[2] + update_steps_inner).astype(jnp.float32)
+                                        * float(config.num_envs * config.num_steps))
                     ego_reward = reward["agent_0"] + rew_shaping_anneal(current_timestep) * shaped_reward_0
                 else:
                     ego_reward = reward["agent_0"]
@@ -852,10 +892,12 @@ def train_ppo_ego_agent(
 
             def _make_eval_callback(scope):
                 def _on_eval_event(args):
-                    stage_id, update_steps, train_episodes, partner_ids, soups, rets, completed, agent_stats = args
+                    (stage_id, update_steps, train_episodes, partner_ids, soups, rets, completed, agent_stats,
+                     offs) = args
                     record, log_dict = build_eval_event(
                         stage_id, update_steps, train_episodes, partner_ids, soups, rets, completed,
-                        num_updates, steps_per_update, max_soup_val, scope=scope, agent_stats=agent_stats)
+                        num_updates, steps_per_update, max_soup_val, scope=scope, agent_stats=agent_stats,
+                        update_base=int(offs[0]), step_base=int(offs[1]))
                     if record_fn is not None:
                         record_fn("eval", record, log_dict)
                     emit(log_dict)
@@ -865,20 +907,22 @@ def train_ppo_ego_agent(
             def _on_train_step(args):
                 (stage_id, update_steps, n_episodes, team_soup, ego_return,
                  value_loss, actor_loss, entropy_loss, grad_norm, cl_penalty, sparse_reward, shaped_reward,
-                 agent_stats) = args
+                 agent_stats, offs) = args
+                update_base, step_base, shaping_base = (int(x) for x in np.asarray(offs))
                 log_dict = build_train_log(
                     stage_id, update_steps, num_updates, n_episodes, team_soup, ego_return,
                     value_loss, actor_loss, entropy_loss, grad_norm, max_soup_val, cl_penalty=cl_penalty,
                     sparse_reward=sparse_reward, shaped_reward=shaped_reward,
-                    env_steps=(int(stage_id) * num_updates + int(update_steps)) * steps_per_update,
-                    agent_stats=agent_stats)
+                    env_steps=(step_base + int(update_steps)) * steps_per_update,
+                    agent_stats=agent_stats, step_base=step_base)
                 if record_fn is not None:
                     record_fn("train", build_train_record(
                         stage_id, update_steps, num_updates, steps_per_update, n_episodes, team_soup, ego_return,
                         sparse_reward, shaped_reward,
                         shaping_coefficient(getattr(config, "reward_shaping_horizon", 0.0), update_steps,
-                                            steps_per_update),
-                        actor_loss, value_loss, entropy_loss, cl_penalty, grad_norm, agent_stats=agent_stats), log_dict)
+                                            steps_per_update, shaping_base),
+                        actor_loss, value_loss, entropy_loss, cl_penalty, grad_norm, agent_stats=agent_stats,
+                        update_base=update_base, step_base=step_base), log_dict)
                 emit(log_dict)
 
             def _update_step_with_ckpt(state_with_ckpt, unused):
@@ -907,7 +951,7 @@ def train_ppo_ego_agent(
                     ids, soups, rets, completed, eval_stats = _run_eval(train_state.params, event_key)
                     jax.experimental.io_callback(
                         _on_eval_event, None,
-                        (env_id_idx, update_steps, train_episodes, ids, soups, rets, completed, eval_stats),
+                        (env_id_idx, update_steps, train_episodes, ids, soups, rets, completed, eval_stats, offsets),
                         ordered=False,
                     )
                     return jnp.array(True)
@@ -918,7 +962,7 @@ def train_ppo_ego_agent(
                                                                           partner_params, env_id_idx)
                     jax.experimental.io_callback(
                         _on_current_event, None,
-                        (env_id_idx, update_steps, train_episodes, ids, soups, rets, completed, eval_stats),
+                        (env_id_idx, update_steps, train_episodes, ids, soups, rets, completed, eval_stats, offsets),
                         ordered=False,
                     )
                     return jnp.array(True)
@@ -948,7 +992,7 @@ def train_ppo_ego_agent(
                     _on_train_step, None,
                     (env_id_idx, update_steps, metric["n_episodes"], metric["team_soup"], metric["ego_return"],
                      metric["value_loss"], metric["actor_loss"], metric["entropy_loss"], metric["avg_grad_norm"],
-                     metric["cl_penalty"], metric["sparse_reward"], metric["shaped_reward"], agent_stats),
+                     metric["cl_penalty"], metric["sparse_reward"], metric["shaped_reward"], agent_stats, offsets),
                     ordered=False,
                 )
 
@@ -979,6 +1023,7 @@ def train_ppo_ego_agent(
             (final_runner_state, checkpoint_array, final_ckpt_idx, _) = state_with_ckpt
             out = {
                 "final_params": final_runner_state[0].params,
+                "final_opt_state": final_runner_state[0].opt_state,
                 "metrics": metrics,  # compact scalars, shape (NUM_UPDATES,)
                 "checkpoints": checkpoint_array,
             }
@@ -992,6 +1037,9 @@ def train_ppo_ego_agent(
     # Actually run the PPO training
     # ------------------------------
     stage_id = jnp.asarray(env_id_idx, jnp.int32)
+    num_updates_int = int(config.num_updates)
+    step_base = step_base_of(env_id_idx, num_updates_int, step_base)
+    offsets = jnp.asarray([int(update_base), step_base, int(shaping_base)], jnp.int32)
     rngs = jax.random.split(train_rng, n_ego_train_seeds)
     eval_rngs = jax.random.split(eval_rng, n_ego_train_seeds)
     if n_ego_train_seeds == 1:
@@ -1008,32 +1056,34 @@ def train_ppo_ego_agent(
             start = time.perf_counter()
             ids, soups, rets, completed, eval_stats = stage_fn.eval_host(
                 (init_ego_params, jax.random.fold_in(eval_rngs[0], 0), eval_params, eval_ids))
-            record, log_dict = build_eval_event(
-                int(env_id_idx), 0, 0, ids, soups, rets, completed, int(config.num_updates),
-                int(config.num_envs) * int(config.num_steps), None if max_soup is None else float(max_soup),
-                agent_stats=eval_stats)
-            if record_fn is not None:
-                record_fn("eval", record, log_dict)
-            if log_fn is not None:
-                log_fn(log_dict)
-            elif record_fn is None:
-                wandb.log(log_dict)
+            host_eval_event(0, 0, (ids, soups, rets, completed, eval_stats))
             if stats is not None:
                 stats["init_eval_s"] = time.perf_counter() - start
-        args = (rngs[0], eval_rngs[0], init_ego_params, partner_params, cl_state, stage_id, eval_params, eval_ids)
+        args = (rngs[0], eval_rngs[0], init_ego_params, partner_params, cl_state, stage_id, eval_params, eval_ids,
+                offsets, init_opt_state)
         out, timing = stage_fn.run(args)
         if stats is not None:
             stats.update(timing)
             kinds = list(eval_plan(config).values())
             stats["eval_events"], stats["eval_current_events"] = kinds.count("full"), kinds.count("current")
-            stats["eval_event_s"] = stage_fn.time_eval(out["final_params"], eval_rngs[0], eval_params, eval_ids)
+            if getattr(config, "eval_schedule", "all") != "none":  # micro-stages time their host evaluation below
+                stats["eval_event_s"] = stage_fn.time_eval(out["final_params"], eval_rngs[0], eval_params, eval_ids)
             if stats["eval_current_events"]:
                 stats["eval_current_event_s"] = stage_fn.time_eval_current(
                     out["final_params"], eval_rngs[0], partner_params, stage_id)
             stats["peak_bytes_in_use"] = peak_device_memory()
+        if final_eval:
+            start = time.perf_counter()
+            result = stage_fn.eval_host(
+                (out["final_params"], jax.random.fold_in(eval_rngs[0], num_updates_int), eval_params, eval_ids))
+            host_eval_event(num_updates_int, int(np.asarray(out["metrics"]["n_episodes"]).sum()), result)
+            if stats is not None:
+                stats["eval_event_s"] = time.perf_counter() - start
     else:
-        train_fn = jax.jit(jax.vmap(make_ppo_train(config)[0], in_axes=(0, 0, None, None, None, None, None, None)))
-        out = train_fn(rngs, eval_rngs, init_ego_params, partner_params, cl_state, stage_id, eval_params, eval_ids)
+        train_fn = jax.jit(jax.vmap(make_ppo_train(config)[0],
+                                    in_axes=(0, 0, None, None, None, None, None, None, None, None)))
+        out = train_fn(rngs, eval_rngs, init_ego_params, partner_params, cl_state, stage_id, eval_params, eval_ids,
+                       offsets, init_opt_state)
     jax.block_until_ready(out)
     jax.effects_barrier()  # flush unordered io_callbacks so every event is logged before returning
     return out
