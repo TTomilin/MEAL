@@ -295,6 +295,10 @@ def resolve_run(config: TrainConfig) -> Resolved:
     identities = [partner_identity(r) for r in bank.records] + [
         dict(partner_id=len(bank) + i, kind="heuristic", label=HEURISTIC_NAMES[i]) for i in range(num_heuristics)]
     labels = [i["label"] for i in identities]
+    if config.cl_method and config.cl_method.lower() in MEMORY_METHODS and len(identities) > AGEM_MAX_TASKS:
+        raise ValueError(f"invalid configuration:\n  {config.cl_method} keeps one memory slot per partner and "
+                         f"init_agem_memory has max_tasks={AGEM_MAX_TASKS}, but the run has {len(identities)} "
+                         f"partners: later partners would silently share slot {AGEM_MAX_TASKS - 1}")
     config_dict = asdict(config)
     if config.schedule == "sequential":  # sequential runs keep the fingerprint they had before schedules existed
         config_dict.pop("schedule"), config_dict.pop("interleave_updates")
@@ -303,6 +307,12 @@ def resolve_run(config: TrainConfig) -> Resolved:
                          f"the whole interleaved run ({len(identities)} partners x {config.total_timesteps:g} "
                          f"joint steps); the horizon counts over the run in this schedule")
     return Resolved(bank, cl, identities, labels, build_fingerprint(config_dict, identities), num_heuristics)
+
+
+MEMORY_METHODS = ("agem", "er_ace")
+AGEM_MAX_TASKS = 20  # default max_tasks of init_agem_memory
+# TODO: Remove or increase the ceiling in agem.py (?)
+# Probably need to recheck before doing so, we can either set a hard ceiling or make it scale dynamically
 
 
 class Stage(NamedTuple):
