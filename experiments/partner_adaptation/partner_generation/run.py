@@ -15,6 +15,7 @@ import os
 import pickle
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Literal
 
 import jax
 import tyro
@@ -22,6 +23,7 @@ import wandb
 
 from meal.env.overcooked.layouts.presets import overcooked_layouts
 from experiments.partner_adaptation.partner_generation.BRDiv import run_brdiv
+from experiments.partner_adaptation.partner_generation.LBRDiv import run_lbrdiv
 from experiments.partner_adaptation.partner_generation.utils import frozendict_from_layout_repr
 
 MEMBER_FILE_FMT = "params_seed{i}_agent{j}.pt"
@@ -51,7 +53,10 @@ class TrainConfig:
     num_agents: int = 2
 
     # teammate generation
-    alg = "brdiv"
+    alg: Literal["brdiv", "lbrdiv"] = "brdiv"
+    tolerance_factor: float = 10.0
+    lagrange_lr: float = 0.05
+    save_br: bool = True
 
     # Actor-Critic
     activation: str = "tanh"
@@ -74,12 +79,12 @@ class TrainConfig:
     # Interaction budget per seed in *agent* transitions (every environment step has `num_agents` of them).
     # See interaction_counts for what is actually trained.
     total_timesteps: int = 2.5e8
-    update_epochs: int = 8
-    num_minibatches: int = 16
+    update_epochs: int | None = None
+    num_minibatches: int | None = None
     gamma: float = 0.99
     gae_lambda: float = 0.95
-    clip_eps: float = 0.2
-    ent_coef: float = 0.01
+    clip_eps: float | None = None
+    ent_coef: float | None = None
     vf_coef: float = 0.5
     max_grad_norm: float = 1.0
 
@@ -89,6 +94,16 @@ class TrainConfig:
     log_train_out: bool = True
 
     def __post_init__(self):
+        defaults = {
+            "brdiv": {"update_epochs": 8, "num_minibatches": 16, "clip_eps": 0.2, "ent_coef": 0.01},
+            "lbrdiv": {"update_epochs": 15, "num_minibatches": 4, "clip_eps": 0.1, "ent_coef": 0.03},
+        }
+        if self.alg not in defaults:
+            raise ValueError(f"Unsupported generation algorithm: {self.alg}")
+        for name, default in defaults[self.alg].items():
+            if getattr(self, name) is None:
+                setattr(self, name, default)
+
         ### MEAL ###
 
         if self.layout_difficulty == "medium":
@@ -129,7 +144,7 @@ def read_layouts(config):
 
 def get_run_string(config: TrainConfig):
     layout = config.layout_name or f"{config.layout_difficulty}_{config.layout_idx}"
-    return f"FF_BRDIV_IPPO_Overcooked_{layout}"
+    return f"FF_{config.alg.upper()}_IPPO_Overcooked_{layout}"
 
 
 def interaction_counts(config: TrainConfig) -> dict:
@@ -169,29 +184,32 @@ def resolve_layout(config: TrainConfig):
 def resolve_save_dir(config: TrainConfig, fallback_name: str) -> str:
     """Deterministic when a layout name is given, so a run is identified by layout, size and seed."""
     if config.layout_name:
-        name = f"brdiv_{config.layout_name}_pop{config.partner_pop_size}_gseed{config.seed}"
+        name = f"{config.alg}_{config.layout_name}_pop{config.partner_pop_size}_gseed{config.seed}"
     else:
         name = fallback_name
     return os.path.join(config.checkpoint_path, name)
 
 
-def write_generation_record(save_dir, config, layout_name, layout_source, status, members=None):
+def write_generation_record(save_dir, config, layout_name, layout_source, status, members=None, br_members=None):
     record = {
         "format_version": 1,
         "status": status,
         **asdict(config),
+        "confederate_seat": "agent_1" if config.alg == "lbrdiv" else "agent_0",
         "resolved_layout_name": layout_name,
         "layout_source": layout_source,
         "interactions": interaction_counts(config),
         "members": members or [],
+        "br_members": br_members or [],
     }
     with open(os.path.join(save_dir, "generation.json"), "w") as f:
         json.dump(record, f, indent=2, default=str)
 
 
-def save_population_members(save_dir, partner_params, num_seeds, partner_pop_size):
+def save_population_members(save_dir, partner_params, num_seeds, partner_pop_size, br_params=None):
     """Write one pickle per member; returns the explicit member list recorded in generation.json."""
     members = []
+    br_members = []
     for i in range(num_seeds):
         for j in range(partner_pop_size):
             params = jax.tree.map(lambda x: x[i, j], partner_params)
@@ -199,7 +217,13 @@ def save_population_members(save_dir, partner_params, num_seeds, partner_pop_siz
             with open(os.path.join(save_dir, name), "wb") as f:
                 pickle.dump({"actor_params": params}, f)
             members.append({"seed_index": i, "member_index": j, "file": name})
-    return members
+            if br_params is not None:
+                params = jax.tree.map(lambda x: x[i, j], br_params)
+                name = f"params_seed{i}_br{j}.pt"
+                with open(os.path.join(save_dir, name), "wb") as f:
+                    pickle.dump({"actor_params": params}, f)
+                br_members.append({"seed_index": i, "member_index": j, "file": name})
+    return (members, br_members) if br_params is not None else members
 
 
 def generate_population(config: TrainConfig) -> str:
@@ -210,7 +234,7 @@ def generate_population(config: TrainConfig) -> str:
                          f"({minimum} agent transitions with these settings)")
     env_kwargs, layout_name, layout_source = resolve_layout(config)
 
-    tags = ["FF", "BRDIV", "IPPO", layout_name]
+    tags = ["FF", config.alg.upper(), "IPPO", layout_name]
     run_string = f"{get_run_string(config)}_SEED_{config.seed}"
     run = wandb.init(
         project=config.project,
@@ -246,14 +270,27 @@ def generate_population(config: TrainConfig) -> str:
     print(json.dumps(interaction_counts(config), indent=2))
 
     # train partner population
+    br_params = None
     if config.alg == "brdiv":
         partner_params, partner_population = run_brdiv(config)
+    elif config.alg == "lbrdiv":
+        partner_params, partner_population, lbrdiv_out = run_lbrdiv(config)
+        br_params = lbrdiv_out["final_params_br"]
     else:
         raise NotImplementedError("Selected method not implemented.")
 
     print("Saving partner params ...")
-    members = save_population_members(save_dir, partner_params, config.num_seeds, config.partner_pop_size)
-    write_generation_record(save_dir, config, layout_name, layout_source, status="complete", members=members)
+    if br_params is not None and config.save_br:
+        members, br_members = save_population_members(
+            save_dir, partner_params, config.num_seeds, config.partner_pop_size, br_params
+        )
+    else:
+        members = save_population_members(save_dir, partner_params, config.num_seeds, config.partner_pop_size)
+        br_members = []
+    write_generation_record(
+        save_dir, config, layout_name, layout_source, status="complete",
+        members=members, br_members=br_members,
+    )
     return save_dir
 
 
