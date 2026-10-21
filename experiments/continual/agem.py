@@ -72,8 +72,8 @@ def init_agem_memory(max_size: int, obs_shape: tuple, max_tasks: int = 20):
         values=zeros(max_tasks, max_size_per_task),
         ptrs=zeros_int(max_tasks),
         sizes=zeros_int(max_tasks),
-        max_tasks=max_tasks,
-        max_size_per_task=max_size_per_task,
+        max_tasks=jnp.asarray(max_tasks, dtype=jnp.int32),
+        max_size_per_task=jnp.asarray(max_size_per_task, dtype=jnp.int32),
     )
 
 
@@ -148,8 +148,8 @@ def init_vdn_agem_memory(max_size: int, num_agents: int, obs_dim: int, max_tasks
         dones=zeros(max_tasks, max_size_per_task),
         ptrs=zeros_int(max_tasks),
         sizes=zeros_int(max_tasks),
-        max_tasks=max_tasks,
-        max_size_per_task=max_size_per_task,
+        max_tasks=jnp.asarray(max_tasks, dtype=jnp.int32),
+        max_size_per_task=jnp.asarray(max_size_per_task, dtype=jnp.int32),
     )
 
 
