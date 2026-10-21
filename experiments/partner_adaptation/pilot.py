@@ -2,7 +2,7 @@
 
     python -m experiments.partner_adaptation.pilot <action> [options]      (or scripts/cpa_pilot.sh <action> ...)
 
-    smoke           local CPU smoke checks, no W&B (tiny generation, bank, FT / Online EWC / Online MAS)
+    smoke           local CPU smoke checks, no W&B (tiny LBRDiv generation + gate, bank, FT / EWC-multi / ER-ACE)
     preflight       GPU preflight: real CUDA device, bundled policies, tiny step + evaluation, writes, W&B login
     profile         profile the ego path (compile vs steady state, learned + planner, evaluation, importance)
     profile-brdiv   profile BRDiv generation
@@ -48,10 +48,12 @@ METHODS = {
     "ft": dict(cl_method="ft"),
     "online_ewc": dict(cl_method="ewc", importance_mode="online"),
     "online_mas": dict(cl_method="mas", importance_mode="online"),
+    "ewc_multi": dict(cl_method="ewc", importance_mode="multi"),
+    "er_ace": dict(cl_method="er_ace"),
 }
-PILOT_METHODS = ("ft", "online_ewc")
+PILOT_METHODS = ("ft", "ewc_multi", "er_ace")
 PILOT_GEN_SEEDS = (1001, 1002, 1003)
-NUM_PLANNERS = 12
+DEFAULT_PLANNERS = ("all",)
 HORIZON = 400
 REFERENCE_EVAL_EPISODES = 5
 REFERENCE_CURRENT_EVERY = 5
@@ -62,9 +64,10 @@ IMPORTANCE_METHODS = ("ewc", "mas", "l2")
 # population is compared with a request.
 GEN_SEMANTIC = (
     "env_name", "layout_name", "layout_difficulty", "layout_idx", "seed", "num_seeds", "partner_pop_size", "activation",
+    "alg", "tolerance_factor", "lagrange_lr",
     "lr", "anneal_lr", "num_envs_xp", "num_envs_sp", "num_steps", "total_timesteps", "update_epochs",
     "num_minibatches", "gamma", "gae_lambda", "clip_eps", "ent_coef", "vf_coef", "max_grad_norm", "rew_shaping_horizon",
-    "xp_loss_weights", "num_agents")
+    "xp_loss_weights", "num_agents", "save_br")
 
 
 class PilotError(RuntimeError):
@@ -98,10 +101,20 @@ def check_methods(methods):
         raise PilotError(f"methods must be distinct names from {sorted(METHODS)}, got {list(methods)}")
 
 
-def expected_partners(pop_size: int, gen_seeds) -> Tuple[int, int, int]:
-    """(total, learned, planners) of a bank: bundled population + one population per generation seed + planners."""
+def planner_ids(planners=DEFAULT_PLANNERS) -> Tuple[str, ...]:
+    from experiments.partner_adaptation.partner_agents.overcooked.planner_variants import PLANNER_SPECS
+    selected = tuple(PLANNER_SPECS) if tuple(planners) == DEFAULT_PLANNERS else tuple(planners)
+    unknown = [planner for planner in selected if planner not in PLANNER_SPECS]
+    if unknown or len(set(selected)) != len(selected):
+        raise PilotError(f"planners must be distinct known ids or ('all',), got {selected}")
+    return selected
+
+
+def expected_partners(pop_size: int, gen_seeds, planners=DEFAULT_PLANNERS) -> Tuple[int, int, int]:
+    """(total, learned, planners) for bundled + generated populations and the selected planners."""
     learned = pop_size * (1 + len(gen_seeds))
-    return learned + NUM_PLANNERS, learned, NUM_PLANNERS
+    num_planners = len(planner_ids(planners))
+    return learned + num_planners, learned, num_planners
 
 
 def cli_args(cls, overrides: Dict[str, Any]) -> List[str]:
@@ -159,9 +172,9 @@ def hours(seconds: float) -> str:
 # ---------------------------------------------------------------------------------------------------------
 
 def generation_config(layout: str, seed: int, root: Path, pop_size: int, total_timesteps: Optional[float],
-                      mode: str, **extra):
+                      mode: str, alg: str = "lbrdiv", **extra):
     from experiments.partner_adaptation.partner_generation.run import TrainConfig as GenConfig
-    kwargs = dict(layout_name=layout, seed=seed, num_seeds=1, partner_pop_size=pop_size,
+    kwargs = dict(alg=alg, layout_name=layout, seed=seed, num_seeds=1, partner_pop_size=pop_size,
                   checkpoint_path=str(root / "populations"), mode=mode, **extra)
     if total_timesteps is not None:
         kwargs["total_timesteps"] = int(total_timesteps)
@@ -203,6 +216,11 @@ def population_state(cfg) -> Tuple[str, str]:
     missing = [m["file"] for m in members if not (d / m["file"]).is_file()]
     if not members or missing or len(members) != cfg.num_seeds * cfg.partner_pop_size:
         return "invalid", f"{d}: expected {cfg.num_seeds * cfg.partner_pop_size} member files, missing {missing}"
+    if cfg.alg == "lbrdiv":
+        br_members = gen.get("br_members") or []
+        missing_br = [m["file"] for m in br_members if not (d / m["file"]).is_file()]
+        if len(br_members) != cfg.num_seeds * cfg.partner_pop_size or missing_br:
+            return "invalid", f"{d}: expected {cfg.num_seeds * cfg.partner_pop_size} BR files, missing {missing_br}"
     requested = asdict(cfg)
     diffs = [f"{k}: existing {gen.get(k)!r}, requested {requested[k]!r}" for k in GEN_SEMANTIC
              if k in requested and not _same(gen.get(k), requested[k])]
@@ -220,13 +238,16 @@ def bank_path(root: Path, layout: str, total: int) -> Path:
 
 
 def assemble_checked_bank(root: Path, layout: str, pop_size: int, gen_seeds, mode: str,
-                          total_timesteps: Optional[float]):
+                          total_timesteps: Optional[float], planners=DEFAULT_PLANNERS, alg="lbrdiv"):
     """Assemble the bank in a temporary file next to its final place; returns (final path, temp path, bank)."""
     from experiments.partner_adaptation.partner_bank import assemble_bank
-    total, learned, planners = expected_partners(pop_size, gen_seeds)
+    planner_list = planner_ids(planners)
+    total, learned, planner_count = expected_partners(pop_size, gen_seeds, planner_list)
     dirs = []
     for seed in gen_seeds:
-        state, detail = population_state(generation_config(layout, seed, root, pop_size, total_timesteps, mode))
+        state, detail = population_state(
+            generation_config(layout, seed, root, pop_size, total_timesteps, mode, alg=alg)
+        )
         if state != "valid":
             raise PilotError(f"{layout}: population for generation seed {seed} is {state} ({detail}); "
                              f"run `generate` first")
@@ -234,12 +255,13 @@ def assemble_checked_bank(root: Path, layout: str, pop_size: int, gen_seeds, mod
     final = bank_path(root, layout, total)
     final.parent.mkdir(parents=True, exist_ok=True)
     tmp = final.with_name(f".{final.name}.assembling.json")
-    bank = assemble_bank(layout, str(tmp), dirs, name=f"{layout}_bank{total}", bundled=True, planners=("all",))
+    bank = assemble_bank(layout, str(tmp), dirs, name=f"{layout}_bank{total}", bundled=True,
+                         planners=planner_list)
     kinds = [r.kind for r in bank.records]
-    if (len(bank), kinds.count("brdiv"), kinds.count("planner")) != (total, learned, planners):
+    if (len(bank), kinds.count("brdiv"), kinds.count("planner")) != (total, learned, planner_count):
         tmp.unlink(missing_ok=True)
         raise PilotError(f"{layout}: assembled {len(bank)} partners ({kinds.count('brdiv')} learned, "
-                         f"{kinds.count('planner')} planners), expected {total} ({learned}, {planners})")
+                         f"{kinds.count('planner')} planners), expected {total} ({learned}, {planner_count})")
     return final, tmp, bank
 
 
@@ -369,13 +391,15 @@ class Selection:
     layouts: Tuple[str, ...] = PILOT_LAYOUTS                # pilot layouts; all four layouts are supported
     gen_seeds: Tuple[int, ...] = PILOT_GEN_SEEDS            # generation seeds: one population each (not ego seeds)
     pop_size: int = 3                                       # members per generated population
-    gen_total_timesteps: Optional[float] = None             # agent transitions per population; unset = BRDiv default
+    alg: Literal["brdiv", "lbrdiv"] = "lbrdiv"             # population generation algorithm
+    planners: Tuple[str, ...] = DEFAULT_PLANNERS             # planner ids appended after learned populations
+    gen_total_timesteps: Optional[float] = None             # agent transitions per population; unset = generator default
     gen_mode: str = "online"                                # W&B mode of the generation jobs
 
 
 @dataclass
 class TrainSelection(Selection):
-    methods: Tuple[str, ...] = PILOT_METHODS                # ft, online_ewc, online_mas
+    methods: Tuple[str, ...] = PILOT_METHODS                # ft, ewc_multi, er_ace
     seeds: Tuple[int, ...] = (0,)                           # ego seeds: list several explicitly, never implied
     identity: Literal["available", "hidden"] = "available"  # hidden = no identity input AND no oracle head routing
     use_task_id: Optional[bool] = None                      # override the identity input alone
@@ -410,7 +434,7 @@ def make_jobs(sel: TrainSelection, root: Path) -> List[Job]:
     if sel.num_steps != HORIZON and not sel.allow_protocol_change:
         raise PilotError(f"the experiment uses episode horizon {HORIZON}; num_steps={sel.num_steps} is a protocol "
                          f"change (pass --allow-protocol-change to accept it)")
-    total, _, _ = expected_partners(sel.pop_size, sel.gen_seeds)
+    total, _, _ = expected_partners(sel.pop_size, sel.gen_seeds, sel.planners)
     group = sel.wandb_group or ("cpa-identity-hidden" if not task_id and not multihead else "cpa-pilot")
     jobs = []
     for layout in sel.layouts:
@@ -462,7 +486,9 @@ def describe_jobs(sel: TrainSelection, root: Path, jobs: List[Job], out=print) -
     """Print the dry-run plan of the training jobs; returns {job.name: info} (info has the numbers and the status)."""
     from experiments.partner_adaptation.run_br import resolve_run
     info = {}
-    total_expected, learned_expected, planners_expected = expected_partners(sel.pop_size, sel.gen_seeds)
+    total_expected, learned_expected, planners_expected = expected_partners(
+        sel.pop_size, sel.gen_seeds, sel.planners
+    )
     out(f"ego training jobs ({len(jobs)}), run one after another on one GPU; equal ego budget for every method:")
     for job in jobs:
         config = build_config(job, sel.steps_per_partner)
@@ -541,12 +567,12 @@ def run_jobs(sel: TrainSelection, root: Path, info, keep_going: bool, restart: b
 
 @dataclass
 class Smoke:
-    """Local CPU smoke checks without W&B: tiny BRDiv generation, bank assembly (bundled + generated + planner)
-    and FT / Online EWC / Online MAS ego runs with the pilot evaluation schedule, then a no-op resume."""
+    """Local CPU smoke checks: tiny LBRDiv generation, population gate, bank assembly, and ego runs."""
     root: str = ""                                          # default: a temporary directory
     layouts: Tuple[str, ...] = PILOT_LAYOUTS
-    methods: Tuple[str, ...] = ("ft", "online_ewc", "online_mas")
-    generation: bool = True                                 # --no-generation skips the tiny BRDiv run
+    methods: Tuple[str, ...] = ("ft", "ewc_multi", "er_ace")
+    alg: Literal["brdiv", "lbrdiv"] = "lbrdiv"
+    generation: bool = True                                 # --no-generation skips the tiny LBRDiv run
 
     def run(self) -> int:
         from experiments.partner_adaptation.pilot_gpu import smoke
@@ -626,7 +652,7 @@ class Plan(TrainSelection):
 
 @dataclass
 class Generate(Selection):
-    """Generate the missing populations (one BRDiv job per layout and generation seed). Valid existing ones are
+    """Generate the missing populations (one job per layout and generation seed). Valid existing ones are
     reused; incomplete or differently configured ones stop the command and are never touched."""
     run: bool = field(default_factory=default_run)
     keep_going: bool = False
@@ -637,7 +663,7 @@ class Generate(Selection):
 
 @dataclass
 class Bank(Selection):
-    """Assemble the bank of every layout (bundled + generated populations + the 12 planners) and check it."""
+    """Assemble the bank of every layout (bundled + generated populations + selected planners) and check it."""
     check_only: bool = False            # validate existing manifests only
     overwrite: bool = False             # replace a manifest that differs from what would be assembled
 
@@ -676,7 +702,8 @@ def generation_jobs(sel: Selection, root: Path):
     jobs = []
     for layout in sel.layouts:
         for seed in sel.gen_seeds:
-            cfg = generation_config(layout, seed, root, sel.pop_size, sel.gen_total_timesteps, sel.gen_mode)
+            cfg = generation_config(layout, seed, root, sel.pop_size, sel.gen_total_timesteps, sel.gen_mode,
+                                    alg=sel.alg)
             jobs.append((layout, seed, cfg, *population_state(cfg)))
     return jobs
 
@@ -684,7 +711,8 @@ def generation_jobs(sel: Selection, root: Path):
 def describe_generation(sel: Selection, root: Path, out=print):
     from experiments.partner_adaptation.partner_generation.run import interaction_counts
     jobs = generation_jobs(sel, root)
-    out(f"BRDiv generation: {len(jobs)} job(s), population size {sel.pop_size}, one per layout and generation seed")
+    out(f"{sel.alg.upper()} generation: {len(jobs)} job(s), population size {sel.pop_size}, "
+        "one per layout and generation seed")
     for layout, seed, cfg, state, detail in jobs:
         ic = interaction_counts(cfg)
         budget = ("repository default" if sel.gen_total_timesteps is None else "selected")
@@ -710,7 +738,7 @@ def generate(sel: Generate) -> int:
         if state == "valid":
             print(f"[skip] {layout} gseed{seed}: valid population exists")
             continue
-        overrides = dict(layout_name=layout, seed=seed, num_seeds=1, partner_pop_size=sel.pop_size,
+        overrides = dict(alg=sel.alg, layout_name=layout, seed=seed, num_seeds=1, partner_pop_size=sel.pop_size,
                          checkpoint_path=str(root / "populations"), mode=sel.gen_mode,
                          total_timesteps=sel.gen_total_timesteps)
         command = python_module_command("experiments.partner_adaptation.partner_generation.run",
@@ -734,8 +762,10 @@ def bank(sel: Bank) -> int:
     status = 0
     for layout in sel.layouts:
         try:
-            final, tmp, assembled = assemble_checked_bank(root, layout, sel.pop_size, sel.gen_seeds, sel.gen_mode,
-                                                          sel.gen_total_timesteps)
+            final, tmp, assembled = assemble_checked_bank(
+                root, layout, sel.pop_size, sel.gen_seeds, sel.gen_mode, sel.gen_total_timesteps,
+                planners=sel.planners, alg=sel.alg,
+            )
         except PilotError as e:
             print(f"[error] {e}")
             status = 1
@@ -774,7 +804,7 @@ def plan(sel: Plan) -> int:
     jobs = make_jobs(sel, root)
     print(f"output root: {root}")
     describe_generation(sel, root)
-    total, learned, planners = expected_partners(sel.pop_size, sel.gen_seeds)
+    total, learned, planners = expected_partners(sel.pop_size, sel.gen_seeds, sel.planners)
     print(f"\nbanks: {len(sel.layouts)} x {total} partners = {learned} learned (bundled population + "
           f"{len(sel.gen_seeds)} generated x {sel.pop_size}) + {planners} planners")
     for layout in sel.layouts:

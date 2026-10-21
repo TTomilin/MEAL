@@ -174,9 +174,10 @@ def verify_agent_stats(run_dir, config):
 
 
 def smoke(opts) -> int:
-    """Tiny generation -> bank -> FT / Online EWC / Online MAS ego runs -> no-op resume, all on the local device."""
+    """Tiny LBRDiv generation -> population gate -> bank -> FT / EWC-multi / ER-ACE ego runs."""
     import tempfile
     from experiments.partner_adaptation.partner_bank import assemble_bank
+    from experiments.partner_adaptation.partner_generation.population_check import check_population
     from experiments.partner_adaptation.partner_generation.run import generate_population
     from experiments.partner_adaptation.run_br import execute
     check_layouts(opts.layouts)
@@ -188,7 +189,8 @@ def smoke(opts) -> int:
     for layout in opts.layouts:
         dirs = []
         if opts.generation:
-            gen = generation_config(layout, 1001, root, 3, 2 * 8 * 4 * 2, "disabled", num_envs_xp=2, num_envs_sp=2,
+            gen = generation_config(layout, 1001, root, 3, 2 * 8 * 4 * 2, "disabled", alg=opts.alg,
+                                    num_envs_xp=2, num_envs_sp=2,
                                     num_steps=8, update_epochs=1, num_minibatches=2, num_checkpoints=2,
                                     num_eval_episodes=1)
             if population_state(gen)[0] != "valid":
@@ -196,7 +198,14 @@ def smoke(opts) -> int:
                     generate_population(gen)
             assert population_state(gen)[0] == "valid", population_state(gen)
             dirs.append(str(population_dir(gen)))
-            print(f"[ok] {layout}: tiny BRDiv population {population_dir(gen)}")
+            gate = check_population(population_dir(gen), layout, episodes=1, steps=8)
+            if opts.alg == "lbrdiv":
+                assert gate.passed is not None and not gate.passed.all(), \
+                    "an intentionally tiny population should fail the cooperation gate"
+                print(f"[ok] {layout}: tiny LBRDiv population and expected failing population gate")
+            else:
+                assert gate.passed is None, "BRDiv diagnostic should explain that no BR checkpoints are available"
+                print(f"[ok] {layout}: tiny BRDiv population and no-BR diagnostic")
         bank = root / "banks" / f"{layout}_smoke.json"
         assembled = assemble_bank(layout, str(bank), dirs, bundled=True, planners=("P01",))
         n = len(assembled)
@@ -389,7 +398,7 @@ def profile_ego(opts) -> int:
     device = device_report(opts.allow_cpu)
     out_dir = root / "profiles"
     out_dir.mkdir(parents=True, exist_ok=True)
-    total, learned_n, planners_n = expected_partners(opts.pop_size, opts.gen_seeds)
+    total, learned_n, planners_n = expected_partners(opts.pop_size, opts.gen_seeds, opts.planners)
     if opts.bank:
         bank_file = Path(opts.bank)
     else:
@@ -550,7 +559,8 @@ def profile_mismatches(sel, ego, brdiv) -> Dict[str, List[str]]:
                 out["ego"].append(f"{key}: profiled {s.get(key)}, selected {getattr(sel, key)}")
     if brdiv is not None:
         s = brdiv["settings"]
-        cfg = generation_config(sel.layouts[0], sel.gen_seeds[0], Path("."), sel.pop_size, None, "disabled")
+        cfg = generation_config(sel.layouts[0], sel.gen_seeds[0], Path("."), sel.pop_size, None, "disabled",
+                                alg=sel.alg)
         for key, want in (("num_envs_xp", cfg.num_envs_xp), ("num_envs_sp", cfg.num_envs_sp),
                           ("num_steps", cfg.num_steps), ("partner_pop_size", sel.pop_size)):
             if s.get(key) != want:
@@ -607,7 +617,7 @@ def report_projection(sel, root: Path, jobs_info, gate: bool = False) -> int:
     if ego is not None and ego["layout"] not in sel.layouts:
         print(f"  note: the ego profile is from {ego['layout']}; it is applied unchanged to {list(sel.layouts)} "
               f"(layout-to-layout speed differences are not measured)")
-    total, learned, planners = expected_partners(sel.pop_size, sel.gen_seeds)
+    total, learned, planners = expected_partners(sel.pop_size, sel.gen_seeds, sel.planners)
     counts = (total, learned, planners)
     if jobs_info:
         first = next(iter(jobs_info.values()))["numbers"]
