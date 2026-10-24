@@ -1,4 +1,6 @@
 """
+Evaluation with extra metrics like R, FM, etc.
+
 python -m experiments.results.cpa_eval --run FT=<dir> --run EWC-multi=<dir> --run Joint=<dir> --out <figures dir>
 python -m experiments.results.cpa_eval --prefix phase2 --out experiments/results/phase2_figures \\
     --run ft/seed0=<dir> --run ewc1e11/seed0=<dir> --run ewc1e9/seed0=<dir> --run erace/seed0=<dir> \\

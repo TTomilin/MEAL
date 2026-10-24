@@ -1,12 +1,9 @@
 """
-Phase 1 (default: FT / EWC-multi / Joint, one seed, run directories directly below --runs):
-    python -m experiments.results.cpa_figures --runs experiments/results/condc_runs --out experiments/results/condc_figures
-
-Phase 2 (five methods, <runs>/<subdir>/seed<S>/):
-    python -m experiments.results.cpa_figures --prefix phase2 --seeds 0 1 2 \\
-        --runs $MEAL_CPA_ROOT/runs/coord_ring/phase2 --out experiments/results/phase2_figures \\
-        --method FT=ft --method "EWC 1e11=ewc1e11" --method "EWC 1e9=ewc1e9" --method ER-ACE=erace \\
-        --method Joint=joint
+python -m experiments.results.cpa_figures --runs experiments/results/condc_runs --out experiments/results/condc_figures
+python -m experiments.results.cpa_figures --prefix phase2 --seeds 0 1 2 \\
+    --runs $MEAL_CPA_ROOT/runs/coord_ring/phase2 --out experiments/results/phase2_figures \\
+    --method FT=ft --method "EWC 1e11=ewc1e11" --method "EWC 1e9=ewc1e9" --method ER-ACE=erace \\
+    --method Joint=joint
 """
 import argparse
 import json
