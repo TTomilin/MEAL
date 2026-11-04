@@ -9,13 +9,18 @@ directory that names the layout, population size and generation seed, and contai
                                -> input of ``python -m experiments.partner_adaptation.partner_bank``
 
 There is deliberately no generic ``params.pt``: it was a copy of whichever member was written last.
+
+``--alg comedi`` / ``--alg fcp`` run jax-aht's generators on MEAL's Overcooked instead (one seed; see
+``jax_aht_bridge/generators.py``): jax-aht's algorithm config for the layout, overridden by ``--partner-pop-size``,
+``--aht-total-timesteps``, ``--aht-num-envs`` and ``--aht-overrides KEY=VALUE ...``. Members are written as
+``m{k}.pt`` + ``generation.json`` (``kind: jaxaht``), the format-2 bank input.
 '''
 import json
 import os
 import pickle
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import List, Literal, Optional
 
 import jax
 import tyro
@@ -27,6 +32,7 @@ from experiments.partner_adaptation.partner_generation.LBRDiv import run_lbrdiv
 from experiments.partner_adaptation.partner_generation.utils import frozendict_from_layout_repr
 
 MEMBER_FILE_FMT = "params_seed{i}_agent{j}.pt"
+JAX_AHT_ALGS = ("comedi", "fcp")
 
 
 @dataclass
@@ -53,7 +59,10 @@ class TrainConfig:
     num_agents: int = 2
 
     # teammate generation
-    alg: Literal["brdiv", "lbrdiv"] = "brdiv"
+    alg: Literal["brdiv", "lbrdiv", "comedi", "fcp"] = "brdiv"
+    aht_total_timesteps: Optional[float] = None
+    aht_num_envs: Optional[int] = None
+    aht_overrides: List[str] = field(default_factory=list)  # KEY=VALUE
     tolerance_factor: float = 10.0
     lagrange_lr: float = 0.05
     save_br: bool = True
@@ -98,6 +107,8 @@ class TrainConfig:
             "brdiv": {"update_epochs": 8, "num_minibatches": 16, "clip_eps": 0.2, "ent_coef": 0.01},
             "lbrdiv": {"update_epochs": 15, "num_minibatches": 4, "clip_eps": 0.1, "ent_coef": 0.03},
         }
+        if self.alg in JAX_AHT_ALGS:
+            return
         if self.alg not in defaults:
             raise ValueError(f"Unsupported generation algorithm: {self.alg}")
         for name, default in defaults[self.alg].items():
@@ -226,8 +237,35 @@ def save_population_members(save_dir, partner_params, num_seeds, partner_pop_siz
     return (members, br_members) if br_params is not None else members
 
 
+def aht_overrides(config: TrainConfig) -> dict:
+    out = {"PARTNER_POP_SIZE": config.partner_pop_size}
+    if config.aht_total_timesteps is not None:
+        key = "TOTAL_TIMESTEPS_PER_ITERATION" if config.alg == "comedi" else "TOTAL_TIMESTEPS"
+        out[key] = float(config.aht_total_timesteps)
+    if config.aht_num_envs is not None:
+        out["NUM_ENVS"] = config.aht_num_envs
+    for item in config.aht_overrides:
+        key, sep, value = item.partition("=")
+        if not sep:
+            raise ValueError(f"--aht-overrides entries must be KEY=VALUE, got {item!r}")
+        out[key.strip()] = value.strip()
+    return out
+
+
+def generate_aht_population(config: TrainConfig) -> str:
+    if not config.layout_name:
+        raise ValueError("--alg comedi/fcp needs --layout-name (jax-aht configs exist per named layout)")
+    from experiments.partner_adaptation.jax_aht_bridge.generators import generate
+    save_dir = os.path.join(config.checkpoint_path,
+                            f"{config.alg}_{config.layout_name}_pop{config.partner_pop_size}_gseed{config.seed}")
+    generate(config.alg, config.layout_name, save_dir, seed=config.seed, overrides=aht_overrides(config))
+    return save_dir
+
+
 def generate_population(config: TrainConfig) -> str:
     """Trains the population(s) described by ``config``; returns the output directory."""
+    if config.alg in JAX_AHT_ALGS:
+        return generate_aht_population(config)
     if config.num_updates < 1:
         minimum = config.num_agents * config.num_steps * config.num_envs
         raise ValueError(f"total_timesteps={config.total_timesteps} is less than one update "
