@@ -54,6 +54,14 @@ utils = [
     "pytest",
     "tqdm",
 ]
+aht = [
+    "omegaconf",
+    "hydra-core",
+    "huggingface-hub",
+    "safetensors",
+    "orbax-checkpoint",
+    "scipy",
+]
 
 [project.urls]
 Homepage = "https://github.com/TTomilin/MEAL"
@@ -75,3 +83,6 @@ meal = [
 # editable install's finder mapping does not cover the top-level `meal` package.
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "hf_data: downloads jax-aht checkpoints from Hugging Face (run with RUN_HF_DATA=1)",
+]
