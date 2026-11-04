@@ -250,7 +250,7 @@ def run_br_training(
         partner_test_mode=False, env_id_idx=0, eval_partner=[], max_soup_dict=None, cl=None,
         cl_state=None, log_fn=None, compiled_cache=None, record_fn=None, stats=None,
         init_eval=False, key_index=None, init_opt_state=None, update_base=0, step_base=None, shaping_base=0,
-        final_eval=False, carry=None):
+        final_eval=False, carry=None, extra_eval_fn=None):
     '''Run ego agent training against a single partner agent.
 
     Args:
@@ -300,6 +300,7 @@ def run_br_training(
         step_base=step_base,
         shaping_base=shaping_base,
         final_eval=final_eval,
+        extra_eval_fn=extra_eval_fn,
     )
     if carry is not None:
         carry["final_opt_state"] = out["final_opt_state"]

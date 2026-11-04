@@ -62,7 +62,7 @@ TIMING_COLUMNS = [
 NON_SEMANTIC_CONFIG = frozenset({
     "project", "mode", "group", "entity", "tags", "checkpoint_path", "checkpoint_freq", "save_dir", "resume",
     "save_checkpoints", "record_video", "gif_len", "log_train_out", "partner_bank", "layouts_path",
-    "log_agent_stats"})
+    "log_agent_stats", "aht_eval", "aht_eval_episodes"})
 
 
 class RunOutputError(RuntimeError):
@@ -275,7 +275,7 @@ class RunRecorder:
 
     def __init__(self, run_dir, labels: List[str], seed: int, attempt: int = 0,
                  wandb_log: Optional[Callable[[Dict[str, Any], int], None]] = None,
-                 agent_stats: Optional[bool] = None):
+                 agent_stats: Optional[bool] = None, on_eval=None):
         """`agent_stats` selects the CSV schema with (True) or without (False) the per-agent columns; None keeps
         the schema of existing files and is False for new ones. Events without diagnostics leave them blank."""
         run_dir = Path(run_dir)
@@ -287,6 +287,7 @@ class RunRecorder:
         self.eval_log = CsvLog(run_dir / "eval_metrics.csv", EVAL_COLUMNS_AGENT if agent_stats else EVAL_COLUMNS)
         self.timing_log = CsvLog(run_dir / "stage_timings.csv", TIMING_COLUMNS)
         self.wandb_log = wandb_log
+        self.on_eval = on_eval
         self.wandb_failures, self.wandb_error = 0, None
         self._lock = threading.Lock()
         self._error: Optional[BaseException] = None
@@ -368,6 +369,8 @@ class RunRecorder:
                         "completed": done, "attempt": self.attempt})
             self.eval_log.write(rows)
             merged.update(ev_log)
+            if self.on_eval is not None:
+                merged.update(self.on_eval(ev))
             self._summary["eval_events"] += 1
             self._summary["eval_full_events" if scope == "full" else "eval_current_events"] += 1
             self._summary["eval_episodes"] += len(rows)

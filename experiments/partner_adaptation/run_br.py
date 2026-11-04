@@ -33,7 +33,7 @@ from experiments.partner_adaptation.partner_agents.agent_interface import MLPAct
 from experiments.partner_adaptation.partner_agents.overcooked.agent_policy_wrappers import OvercookedIndependentPolicyWrapper, \
     OvercookedOnionPolicyWrapper, OvercookedPlatePolicyWrapper, OvercookedRandomPolicyWrapper, \
     OvercookedStaticPolicyWrapper
-from experiments.partner_adaptation.partner_bank import load_partners, partner_identity, select_partner_bank
+from experiments.partner_adaptation.partner_bank import load_bank_partners, partner_identity, select_partner_bank
 from experiments.partner_adaptation.run_outputs import (
     RunRecorder, RunStatus, allocate_run_dir, atomic_write, build_fingerprint, check_resume, code_revision,
     csv_has_agent_stats, device_info, read_checkpoint, resolve_resume, restore_state, save_checkpoint, truncate_csv,
@@ -177,6 +177,9 @@ class TrainConfig:
     # Legacy heuristic partners (indp, onin, plate, rndm, static) trained after the bank. Default: 5 without
     # `partner_bank`, 0 with one (a manifest is the complete, fixed list of partners).
     num_heuristic_partners: Optional[int] = None
+    aht_eval: bool = True
+    aht_eval_episodes: int = 0  # 0 = num_eval_episodes
+    aht_heldout_eval: str = "final"  # "final" or "every_event"
 
     def __post_init__(self):
         ### MEAL ###
@@ -249,6 +252,8 @@ def validate_config(config: TrainConfig):
         problems.append("eval_current_every must be >= 0 (0 disables current-partner evaluation)")
     if config.ego_reward not in ("team", "own"):
         problems.append(f"ego_reward must be 'team' or 'own', got {config.ego_reward!r}")
+    if config.aht_heldout_eval not in AHT_HELDOUT_EVAL:
+        problems.append(f"aht_heldout_eval must be one of {AHT_HELDOUT_EVAL}, got {config.aht_heldout_eval!r}")
     if config.cl_method and config.cl_method.lower() in IMPORTANCE_METHODS and (
             config.importance_episodes < 1 or config.importance_steps < 1):
         problems.append("importance_episodes and importance_steps must be positive")
@@ -309,7 +314,14 @@ def resolve_run(config: TrainConfig) -> Resolved:
         raise ValueError(f"invalid configuration:\n  reward_shaping_horizon={config.reward_shaping_horizon:g} exceeds "
                          f"the whole interleaved run ({len(identities)} partners x {config.total_timesteps:g} "
                          f"joint steps); the horizon counts over the run in this schedule")
-    return Resolved(bank, cl, identities, labels, build_fingerprint(config_dict, identities), num_heuristics)
+    fingerprint = build_fingerprint(config_dict, identities)
+    if bank.heldout:
+        fingerprint["heldout"] = [partner_identity(r) for r in bank.heldout]
+    if bank.heldout or any(getattr(r, "performance_bounds", None) for r in bank.records):
+        fingerprint["aht_evaluation"] = dict(protocol_version=3, enabled=config.aht_eval,
+                                             episodes=config.aht_eval_episodes or config.num_eval_episodes,
+                                             heldout=config.aht_heldout_eval)
+    return Resolved(bank, cl, identities, labels, fingerprint, num_heuristics)
 
 
 MEMORY_METHODS = ("agem", "er_ace")
@@ -466,7 +478,7 @@ def execute(config: TrainConfig) -> RunResult:
         rng = jax.random.PRNGKey(config.seed)
         rng, init_rng = jax.random.split(rng, 2)
 
-        partners = load_partners(bank, obs_dim=np.prod(env.observation_space().shape))
+        partners, heldout_partners = load_bank_partners(bank, obs_dim=np.prod(env.observation_space().shape))
 
         if config.alg != "br":
             raise NotImplementedError("Selected method not implemented.")
@@ -486,6 +498,20 @@ def execute(config: TrainConfig) -> RunResult:
             obs_dim = np.prod(obs_dim)
 
         ego_policy = MLPActorCriticPolicyCL(ego_network, obs_dim)
+
+        aht_evaluator = final_evaluator = None
+        if config.aht_eval:
+            from experiments.partner_adaptation.jax_aht_bridge.heldout import AhtEvaluator
+            final_only = config.aht_heldout_eval == "final"
+            aht_episodes = config.aht_eval_episodes or config.num_eval_episodes
+            aht_evaluator = AhtEvaluator(
+                config.layout["layout"], layout_name, ego_network, partners,
+                [] if final_only else heldout_partners, aht_episodes, config.seed, use_cnn=config.use_cnn) or None
+            if final_only and heldout_partners:
+                final_evaluator = AhtEvaluator(
+                    config.layout["layout"], layout_name, ego_network, [], heldout_partners, aht_episodes,
+                    config.seed, use_cnn=config.use_cnn, heldout_prefix="Test/Heldout")
+        heldout_identities = [partner_identity(p.record) for p in heldout_partners]
 
         # Initialize the network
         rng, network_rng = jax.random.split(rng)
@@ -532,6 +558,8 @@ def execute(config: TrainConfig) -> RunResult:
             write_json(run_dir / "config.json", dict(config_dict, layout_name_resolved=layout_name))
             atomic_write(run_dir / "config.pckl", pickle.dumps(config_dict))
             write_json(run_dir / "partner_bank.json", identities)
+            if heldout_identities:
+                write_json(run_dir / "heldout_partners.json", heldout_identities)
             write_json(run_dir / "run.json", {
                 "run_name": run_name, "run_uid": run_uid, "created": status.data["attempts"][0]["started_utc"],
                 "code": code, "device": device, "fingerprint": fingerprint,
@@ -569,8 +597,12 @@ def execute(config: TrainConfig) -> RunResult:
                 "schedule": schedule_description(config, labels),
                 "normalization": {
                     "max_soup": float(max_soup_dict[layout_name]),
-                    "definition": "W&B *_scaled metrics = soups / max_soup; the CSVs hold raw soups"},
-                "partners": identities, "bank": {"name": bank.name, "source": str(bank.source)},
+                    "definition": "W&B *_scaled metrics = soups / max_soup; the CSVs hold raw soups",
+                    **({"aht": aht_normalisation_description(aht_evaluator)} if aht_evaluator else {}),
+                    **({"aht_final_heldout": aht_final_description(final_evaluator)} if final_evaluator else {})},
+                "partners": identities, "bank": {"name": bank.name, "source": str(bank.source),
+                                                 "format_version": bank.format_version},
+                "heldout": heldout_identities,
                 "diagnostics": {
                     "per_agent_stats": record_agent_stats, "ego": "agent_0", "partner": "agent_1",
                     "action_order": list(ACTION_NAMES),
@@ -580,6 +612,7 @@ def execute(config: TrainConfig) -> RunResult:
             last = start_stage * config.interleave_updates * steps_per_update
             dropped = sum(truncate_csv(run_dir / f, last, column=c) for f, c in (
                 ("train_metrics.csv", "env_steps"), ("eval_metrics.csv", "env_steps"),
+                ("aht_eval_metrics.csv", "env_steps"),
                 ("stage_timings.csv", "env_steps_end")))
             status.update_attempt(attempt, discarded_rows_of_uncommitted_stages=dropped)
             for stale in run_dir.glob(".*.tmp"):
@@ -587,6 +620,7 @@ def execute(config: TrainConfig) -> RunResult:
         else:
             dropped = sum(truncate_csv(run_dir / f, start_stage - 1)
                           for f in ("train_metrics.csv", "eval_metrics.csv", "stage_timings.csv"))
+            dropped += truncate_csv(run_dir / "aht_eval_metrics.csv", counters["train_env_steps"], column="env_steps")
             status.update_attempt(attempt, discarded_rows_of_uncommitted_stages=dropped)
             for stale in run_dir.glob(".*.tmp"):
                 stale.unlink()
@@ -611,8 +645,19 @@ def execute(config: TrainConfig) -> RunResult:
         print(run.name)
         print("-------------")
 
+        def record_aht_event(event):
+            if "aht_soups" not in event:
+                return {}
+            out = run_aht_eval(aht_evaluator, run_dir, None, None, event["stage_id"],
+                               event["env_steps"] // steps_per_update, event["env_steps"], counters,
+                               mean_soups=event["aht_soups"])
+            return out["metrics"]
+
         recorder = RunRecorder(run_dir, labels, config.seed, attempt=attempt,
                                wandb_log=lambda d, step: run.log(d, step=step), agent_stats=csv_schema)
+        if aht_evaluator and not config.only_stages:
+            recorder.on_eval = record_aht_event
+        extra_eval_fn = aht_evaluator.device_evaluate if aht_evaluator and not config.only_stages else None
 
         # Compiled functions shared by all stages of this run (see train_ppo_ego_agent)
         compiled_cache = {}
@@ -661,6 +706,8 @@ def execute(config: TrainConfig) -> RunResult:
         # schedule cycles through them in micro-stages m instead, (cycle, partner) = divmod(m, num_stages).
         profiling = bool(config.only_stages)
         plan = eval_plan(config)
+        if aht_evaluator and start_stage == 0 and not profiling and config.eval_schedule != "pilot":
+            run_aht_eval(aht_evaluator, run_dir, run, ego_params, 0, 0, 0, counters)
         micro = config.interleave_updates
         for m in (config.only_stages if profiling else range(start_stage, total_stages)):
             cycle, k = divmod(m, num_stages) if interleaved else (0, m)
@@ -680,7 +727,8 @@ def execute(config: TrainConfig) -> RunResult:
                 micro_config if interleaved else config, env, stage.agent_config, ego_policy,
                 ego_params, stage.policy, stage.params, env_id_idx=k, eval_partner=eval_partner,
                 max_soup_dict=max_soup_dict, cl=cl, cl_state=cl_state, compiled_cache=compiled_cache,
-                record_fn=recorder.handle, stats=stats, init_eval=init_eval, **schedule_args)
+                record_fn=recorder.handle, stats=stats, init_eval=init_eval, extra_eval_fn=extra_eval_fn,
+                **schedule_args)
             if interleaved:
                 opt_state = carry["final_opt_state"]
             summary = recorder.end_stage()
@@ -725,6 +773,10 @@ def execute(config: TrainConfig) -> RunResult:
         if profiling:
             status.update(state="profile", counters=counters)
             return RunResult(run_dir, ego_params, cl_state, counters)
+        if final_evaluator:
+            run_aht_eval(final_evaluator, run_dir, run, ego_params, num_stages - 1 if config.use_multihead else 0,
+                         counters["train_env_steps"] // steps_per_update, counters["train_env_steps"], counters,
+                         csv_name=AHT_FINAL_CSV)
         atomic_write(run_dir / f"params_seed{config.seed}.pt", pickle.dumps({"actor_params": ego_params}))
         status.update(state="complete", stages_completed=total_stages, counters=counters,
                       wandb_failures=recorder.wandb_failures, wandb_error=recorder.wandb_error)
@@ -741,6 +793,60 @@ def execute(config: TrainConfig) -> RunResult:
                 run.finish()
             except Exception as e:  # noqa: BLE001 - local records are already complete
                 log.warning("closing the W&B run failed: %s", e)
+
+
+AHT_EVAL_COLUMNS = ("event", "env_steps", "group", "index", "partner", "head", "episodes", "soups",
+                    "base_return", "norm_return")
+AHT_HELDOUT_EVAL = ("final", "every_event")
+AHT_FINAL_CSV = "aht_final_heldout.csv"
+HELDOUT_SUBSET = ("learned + BC-proxy subset of jax-aht's held-out set (heuristic agents excluded, members selected "
+                  "twice by jax-aht's clamped idx_list counted once): NormReturn_Mean is the plain mean over these "
+                  "partners, not jax-aht's official held-out score")
+
+
+def aht_normalisation_description(evaluator):
+    from experiments.partner_adaptation.jax_aht_bridge.heldout import AHT_EVAL_STEPS, NORMALISATION
+    return {"definition": NORMALISATION, "eval_steps": AHT_EVAL_STEPS, "episodes": evaluator.num_episodes,
+            "events": "before stage 0 and at every full/current training evaluation event; event = cumulative "
+                      "PPO updates; held-out partners use the current stage's head",
+            "targets": evaluator.identities(), "csv": "aht_eval_metrics.csv",
+            **({"heldout_metric": HELDOUT_SUBSET} if any(t["group"] == "heldout" for t in evaluator.identities())
+               else {})}
+
+
+def aht_final_description(evaluator):
+    from experiments.partner_adaptation.jax_aht_bridge.heldout import AHT_EVAL_STEPS, NORMALISATION
+    return {"definition": NORMALISATION, "eval_steps": AHT_EVAL_STEPS, "episodes": evaluator.num_episodes,
+            "events": "once, after the last stage, with the last stage's head (test set: final results only)",
+            "heldout_metric": HELDOUT_SUBSET, "targets": evaluator.identities(), "csv": AHT_FINAL_CSV}
+
+
+def run_aht_eval(evaluator, run_dir, run, ego_params, head, event, env_steps, counters, mean_soups=None,
+                 csv_name="aht_eval_metrics.csv"):
+    import csv
+    out = (evaluator.evaluate(ego_params, head, event) if mean_soups is None else
+           evaluator.summarise(mean_soups, head, event))
+    path = Path(run_dir) / csv_name
+    if (event == 0 or csv_name == AHT_FINAL_CSV) and path.exists():
+        path.unlink()
+    new = not path.exists()
+    with open(path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=AHT_EVAL_COLUMNS)
+        if new:
+            writer.writeheader()
+        for row in out["rows"]:
+            writer.writerow(dict(row, env_steps=env_steps, norm_return="" if row["norm_return"] is None
+                                 else row["norm_return"]))
+        f.flush()
+        os.fsync(f.fileno())
+    counters["aht_eval_env_steps"] = counters.get("aht_eval_env_steps", 0) + len(out["rows"]) * \
+        evaluator.num_episodes * 400
+    if run is not None:
+        try:
+            run.log(out["metrics"], step=int(env_steps))
+        except Exception as e:  # noqa: BLE001 - the CSV is the source of truth
+            log.warning("logging jax-aht evaluation to W&B failed: %s", e)
+    return out
 
 
 def video_name(k: int, label: str) -> str:

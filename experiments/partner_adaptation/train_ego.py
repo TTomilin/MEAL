@@ -375,7 +375,8 @@ def train_ppo_ego_agent(
         partner_population: AgentPopulation,
         partner_params, env_id_idx=0, eval_partner=[], cl=None, cl_state=None,
         eval_rng=None, log_fn=None, max_soup=None, compiled_cache=None, record_fn=None, stats=None,
-        init_eval=False, init_opt_state=None, update_base=0, step_base=None, shaping_base=0, final_eval=False
+        init_eval=False, init_opt_state=None, update_base=0, step_base=None, shaping_base=0, final_eval=False,
+        extra_eval_fn=None
 ):
     '''
     Train PPO ego agent using the given partner checkpoints and initial ego parameters.
@@ -414,7 +415,9 @@ def train_ppo_ego_agent(
             before this call (cumulative env steps; default env_id_idx * num_updates) and updates already annealed
             (the shaping weight continues instead of restarting). Defaults reproduce the per-partner schedule.
         final_eval: evaluate every evaluation partner on the host after the last update (scope "full"); used with
-            the internal eval_schedule "none" for full-bank evaluations at interleaving-cycle boundaries.
+             the internal eval_schedule "none" for full-bank evaluations at interleaving-cycle boundaries.
+        extra_eval_fn: optional pure JAX fn(params, head, cumulative_update) run on the same parameters at every
+            evaluation event. Its compact output is attached as `aht_soups` for ordered host recording.
     '''
     if eval_rng is None:
         eval_rng = jax.random.fold_in(train_rng, 1)
@@ -422,13 +425,16 @@ def train_ppo_ego_agent(
     eval_policies, eval_params, eval_ids = group_eval_partners(
         eval_partner, current=(partner_population, partner_params, int(env_id_idx)))
 
-    def host_eval_event(update_steps, train_episodes, result):
+    def host_eval_event(update_steps, train_episodes, result, params):
         """Record a full evaluation computed on the host (before the first / after the last update)."""
         ids, soups, rets, completed, eval_stats = result
         record, log_dict = build_eval_event(
             int(env_id_idx), update_steps, train_episodes, ids, soups, rets, completed, int(config.num_updates),
             int(config.num_envs) * int(config.num_steps), None if max_soup is None else float(max_soup),
             agent_stats=eval_stats, update_base=update_base, step_base=step_base)
+        if extra_eval_fn is not None:
+            record["aht_soups"] = np.asarray(extra_eval_fn(params, jnp.int32(env_id_idx),
+                                                         jnp.int32(step_base + update_steps)))
         if record_fn is not None:
             record_fn("eval", record, log_dict)
         if log_fn is not None:
@@ -905,11 +911,13 @@ def train_ppo_ego_agent(
             def _make_eval_callback(scope):
                 def _on_eval_event(args):
                     (stage_id, update_steps, train_episodes, partner_ids, soups, rets, completed, agent_stats,
-                     offs) = args
+                     offs, extra) = args
                     record, log_dict = build_eval_event(
                         stage_id, update_steps, train_episodes, partner_ids, soups, rets, completed,
                         num_updates, steps_per_update, max_soup_val, scope=scope, agent_stats=agent_stats,
                         update_base=int(offs[0]), step_base=int(offs[1]))
+                    if extra is not None:
+                        record["aht_soups"] = extra
                     if record_fn is not None:
                         record_fn("eval", record, log_dict)
                     emit(log_dict)
@@ -961,9 +969,12 @@ def train_ppo_ego_agent(
                     # The evaluation key depends only on the update index; the training rng is untouched.
                     event_key = jax.random.fold_in(eval_key, update_steps)
                     ids, soups, rets, completed, eval_stats = _run_eval(train_state.params, event_key)
+                    extra = (extra_eval_fn(train_state.params, env_id_idx, offsets[1] + update_steps)
+                             if extra_eval_fn is not None else None)
                     jax.experimental.io_callback(
                         _on_eval_event, None,
-                        (env_id_idx, update_steps, train_episodes, ids, soups, rets, completed, eval_stats, offsets),
+                        (env_id_idx, update_steps, train_episodes, ids, soups, rets, completed, eval_stats, offsets,
+                         extra),
                         ordered=False,
                     )
                     return jnp.array(True)
@@ -972,9 +983,12 @@ def train_ppo_ego_agent(
                     event_key = jax.random.fold_in(eval_key, update_steps)
                     ids, soups, rets, completed, eval_stats = run_current(train_state.params, event_key,
                                                                           partner_params, env_id_idx)
+                    extra = (extra_eval_fn(train_state.params, env_id_idx, offsets[1] + update_steps)
+                             if extra_eval_fn is not None else None)
                     jax.experimental.io_callback(
                         _on_current_event, None,
-                        (env_id_idx, update_steps, train_episodes, ids, soups, rets, completed, eval_stats, offsets),
+                        (env_id_idx, update_steps, train_episodes, ids, soups, rets, completed, eval_stats, offsets,
+                         extra),
                         ordered=False,
                     )
                     return jnp.array(True)
@@ -1060,7 +1074,7 @@ def train_ppo_ego_agent(
         else:
             cache_key = (id(config), env, ego_policy, type(partner_population), partner_population.policy_cls,
                          getattr(partner_population, "test_mode", None), cl, type(cl_state), log_fn, record_fn,
-                         max_soup, eval_policies)
+                         max_soup, eval_policies, extra_eval_fn)
             if cache_key not in compiled_cache:
                 compiled_cache[cache_key] = _StageFn(*make_ppo_train(config))
             stage_fn = compiled_cache[cache_key]
@@ -1068,7 +1082,7 @@ def train_ppo_ego_agent(
             start = time.perf_counter()
             ids, soups, rets, completed, eval_stats = stage_fn.eval_host(
                 (init_ego_params, jax.random.fold_in(eval_rngs[0], 0), eval_params, eval_ids))
-            host_eval_event(0, 0, (ids, soups, rets, completed, eval_stats))
+            host_eval_event(0, 0, (ids, soups, rets, completed, eval_stats), init_ego_params)
             if stats is not None:
                 stats["init_eval_s"] = time.perf_counter() - start
         args = (rngs[0], eval_rngs[0], init_ego_params, partner_params, cl_state, stage_id, eval_params, eval_ids,
@@ -1088,7 +1102,8 @@ def train_ppo_ego_agent(
             start = time.perf_counter()
             result = stage_fn.eval_host(
                 (out["final_params"], jax.random.fold_in(eval_rngs[0], num_updates_int), eval_params, eval_ids))
-            host_eval_event(num_updates_int, int(np.asarray(out["metrics"]["n_episodes"]).sum()), result)
+            host_eval_event(num_updates_int, int(np.asarray(out["metrics"]["n_episodes"]).sum()), result,
+                            out["final_params"])
             if stats is not None:
                 stats["eval_event_s"] = time.perf_counter() - start
     else:
