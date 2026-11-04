@@ -64,6 +64,60 @@ def read_rows(path):
         return list(csv.DictReader(f))
 
 
+def snapshot_directory(root, skip=()):
+    return {p.relative_to(root): None if p.is_dir() else p.read_bytes()
+            for p in root.rglob("*") if p.relative_to(root).as_posix() not in skip}
+
+
+def test_snapshot_directory_includes_all_files_and_directories(tmp_path):
+    (tmp_path / "videos" / "stage0").mkdir(parents=True)
+    (tmp_path / "videos" / "empty").mkdir()
+    (tmp_path / "params_seed0.pt").write_bytes(b"root checkpoint")
+    (tmp_path / "status.json").write_bytes(b"root status")
+    (tmp_path / "videos" / "stage0" / "params_seed0.pt").write_bytes(b"\x00\xff")
+    (tmp_path / "videos" / "stage0" / "status.json").write_bytes(b"nested status")
+    (tmp_path / ".hidden").write_bytes(b"")
+    expected = {
+        Path("videos"): None,
+        Path("videos/stage0"): None,
+        Path("videos/empty"): None,
+        Path("params_seed0.pt"): b"root checkpoint",
+        Path("status.json"): b"root status",
+        Path("videos/stage0/params_seed0.pt"): b"\x00\xff",
+        Path("videos/stage0/status.json"): b"nested status",
+        Path(".hidden"): b"",
+    }
+    assert snapshot_directory(tmp_path) == expected
+    skip = ("status.json", "params_seed0.pt")
+    assert snapshot_directory(tmp_path, skip) == {p: data for p, data in expected.items() if str(p) not in skip}
+
+
+@pytest.mark.parametrize("mutation", ["change_file", "add_file", "remove_file", "add_directory",
+                                     "remove_directory", "directory_to_file"])
+def test_snapshot_directory_detects_nested_mutations(tmp_path, mutation):
+    videos = tmp_path / "videos"
+    videos.mkdir()
+    clip = videos / "clip.mp4"
+    clip.write_bytes(b"before")
+    empty = videos / "empty"
+    empty.mkdir()
+    before = snapshot_directory(tmp_path)
+    if mutation == "change_file":
+        clip.write_bytes(b"after")
+    elif mutation == "add_file":
+        (videos / "new.mp4").write_bytes(b"")
+    elif mutation == "remove_file":
+        clip.unlink()
+    elif mutation == "add_directory":
+        (videos / "new").mkdir()
+    elif mutation == "remove_directory":
+        empty.rmdir()
+    else:
+        empty.rmdir()
+        empty.write_bytes(b"")
+    assert snapshot_directory(tmp_path) != before
+
+
 def assert_rows_match(a, b, ignore=("attempt",)):
     assert len(a) == len(b)
     for ra, rb in zip(a, b):
@@ -196,11 +250,11 @@ def test_boundary_resume_matches_uninterrupted(cl_method, interruption, bank, re
 def test_resume_of_complete_run_changes_nothing(bank, references):
     reference = references("ft")
     skip = ("status.json", "params_seed0.pt")
-    before = {p.name: p.read_bytes() for p in reference.run_dir.iterdir() if p.name not in skip}
+    before = snapshot_directory(reference.run_dir, skip)
     again = execute(tiny_config(reference.run_dir.parent, bank, "ft", resume=str(reference.run_dir)))
     assert again.run_dir == reference.run_dir
     assert_trees_close(again.ego_params, reference.ego_params)
-    after = {p.name: p.read_bytes() for p in reference.run_dir.iterdir() if p.name not in skip}
+    after = snapshot_directory(reference.run_dir, skip)
     assert before == after
     exported = pickle.load(open(reference.run_dir / "params_seed0.pt", "rb"))["actor_params"]
     assert_trees_close(exported, reference.ego_params)
@@ -310,11 +364,11 @@ def test_execute_twice_with_identical_settings_creates_two_runs(bank, tmp_path, 
 ])
 def test_incompatible_resume_is_rejected_and_leaves_the_run_untouched(changes, expected, bank, references):
     reference = references("ft")
-    before = {p.name: p.read_bytes() for p in reference.run_dir.iterdir()}
+    before = snapshot_directory(reference.run_dir)
     with pytest.raises(ResumeError, match=expected):
         execute(tiny_config(reference.run_dir.parent, bank, resume=str(reference.run_dir),
                             **{"cl_method": "ft", **changes}))
-    assert before == {p.name: p.read_bytes() for p in reference.run_dir.iterdir()}
+    assert before == snapshot_directory(reference.run_dir)
 
 
 def test_resume_rejects_a_different_layout(bank, references):
