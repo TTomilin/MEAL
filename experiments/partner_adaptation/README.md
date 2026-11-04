@@ -719,3 +719,97 @@ EWC / Online MAS runs with a learned and a planner partner including checkpoint 
 network, instrumentation not changing the objective, and a CPU rehearsal of `preflight --allow-cpu --identity hidden`.
 **Still to verify on the GPU pod:** `preflight` on CUDA with real W&B, memory fit and speed of 2,048 environments in the
 single-head model, and the runs themselves.
+
+## jax-aht
+
+[jax-aht](https://github.com/LARG/jax-aht) is pinned as the submodule `third_party/jax-aht` and used as a library from
+MEAL's own venv. `experiments/partner_adaptation/jax_aht_bridge/` is the only code that imports its generic
+top-level packages (`agents`, `common`, `envs`, `teammate_generation`).
+
+```bash
+git submodule update --init third_party/jax-aht       # locally, before syncing (send.sh copies no .git)
+./send.sh aht-setup scripts/aht_setup.sh 00:20:00 GPUS=0 PARTITION="$CPU_PARTITION"
+./send.sh aht-fetch scripts/aht_fetch_partners.sh 01:00:00 GPUS=0 PARTITION="$CPU_PARTITION" # all 5 layouts
+./send.sh cpa-aht   scripts/cpa_aht_bank.sh 24:00:00     # GPU: 1 seed on $MEAL_CPA_ROOT/partners/bank_coord_ring.json
+```
+
+**Compatibility.**
+- `compat.py` derives the MEAL to JaxMARL observation-channel and action tables from both libraries' direction vectors.
+  For jaxmarl 0.0.7 both are the identity.
+- `env_adapter.MealOvercookedAHT` exposes MEAL's Overcooked through jax-aht's `BaseEnv`. It supports
+  `WrappedEnvState`, `base_return`, jax-aht's `random_reset`/`random_obj_state`, its reward shaping, and
+  `step(..., reset_state=)`.
+- `tests/test_jax_aht_compat.py` checks observations, transitions, base and shaped rewards against `OvercookedV1`
+  on cramped_room, asymm_advantages, coord_ring, counter_circuit and forced_coord.
+  No transitions are excluded. The adapter and normalised-evaluation env permit following into a vacated cell,
+  matching JaxMARL; legacy MEAL training retains its original collision rule.
+
+**Partner pool (`bank_<layout>.json`, format 2).**
+- `partners`: jax-aht's validation teammates (`global_validation_settings.yaml`: IPPO, BRDiv, LBRDiv and CoMeDi
+  members chosen by `idx_list`), then, on coord_ring only, Concord's 12 MEP/HSP teammates
+  (`tools/convert_concord_partners.py`). Val runs that also supply eval members (different `idx_list` rows of the same
+  population: CoMeDi and LBRDiv on coord_ring, asymm_advantages and forced_coord) are left out of training, so no
+  held-out partner is a sibling of a training partner (`fetch.py --keep-shared-runs` keeps them).
+- `heldout`: jax-aht's held-out test set (`global_heldout_settings.yaml`) and its BC human proxy, as jax-aht intends
+  them (final results only). They are never trained on.
+- Sizes (training / held-out): coord_ring 17 / 14, cramped_room 13 / 14, counter_circuit 14 / 15,
+  asymm_advantages 5 / 15, forced_coord 5 / 17. asymm_advantages and forced_coord need generated partners (below)
+  for a meaningful sequence. Every jax-aht member has `performance_bounds`; Concord's do not.
+- Each population's `generation.json` records source, run, actor type, `test_mode` and per-member
+  `performance_bounds`.
+- Members that jax-aht's clamped `idx_list` gather selects twice are stored once (`duplicates_dropped`).
+- Version-1 manifests load unchanged. The uniqueness and shape checks span `partners` and `heldout` together.
+- Partner kinds:
+
+| kind | policy | notes |
+|---|---|---|
+| `jaxaht` | `JaxMarlCompatPolicy` around jax-aht's own `MLPActorCriticPolicy` / `ActorWithConditionalCriticPolicy` | `test_mode` as in jax-aht's config |
+| `bc_proxy` | `BCProxyPolicy` (jax-aht `BCModel` + `BCFeaturizer` + unblock-if-stuck memory, reset on `done`) | action-for-action identical to jax-aht's `BCPolicy`; an MLP, not an LSTM |
+| `concord` | `ConcordCNNPolicy` (Flax replica of Concord's `R_Actor`, Overcooked-AI 20-channel encoding from MEAL `State`) | samples, like Concord's human policies; no bounds |
+
+**Metrics.** AHT evaluations use separate RNGs and run once per policy group (`--aht-eval`, `--aht-eval-episodes`).
+- `Eval/NormReturn_Partner{i}`: training partners that have bounds, with their own head, before stage 0 and at every
+  full/current training evaluation event (interleaved: at cycle boundaries), in `<run dir>/aht_eval_metrics.csv`.
+- Held-out test set (`--aht-heldout-eval final`, default): evaluated **once, after the last stage**, with the last
+  stage's head: `Test/Heldout/Soup_<label>`, `Test/Heldout/Mean`, `Test/Heldout/NormReturn_<label>` and
+  `Test/Heldout/NormReturn_Mean`, in `<run dir>/aht_final_heldout.csv` (rewritten, never appended, on resume).
+  Test results therefore cannot steer hyperparameter, method or checkpoint choices during training.
+  `--aht-heldout-eval every_event` additionally logs the same metrics as `Eval/Heldout/*` at every event (head of
+  the stage just trained); use such curves for development only, not as final results. The mode is fingerprinted.
+- **Subset metric.** `*/Heldout/NormReturn_Mean` is the plain mean over the bank's held-out partners: the learned
+  members and the BC proxy of jax-aht's held-out set. jax-aht's heuristic agents (independent, onion, plate; 1-5
+  per layout) are not imported, and a member that jax-aht's clamped `idx_list` selects twice counts once (one on
+  coord_ring). It is therefore not jax-aht's official held-out score; report it as "learned + BC subset of
+  jax-aht's held-out set" (`run.json["normalization"]` records this). Learned-vs-BC breakdowns come from the
+  per-partner columns.
+- `NormReturn = (base_return - lo) / (hi - lo)`, with `base_return = 20 x soups` of the pair. It is computed on an
+  evaluation-only env with `max_steps=400` and jax-aht's random start cells, so jax-aht's `performance_bounds`
+  apply unchanged.
+- Raw soups in `eval_metrics.csv` stay the primary CPA metric.
+- AHT CSV rows beyond the saved checkpoint are discarded on resume, just like training/evaluation rows.
+  Held-out identities, imported-policy activation/architecture settings and AHT protocol/episode settings are
+  fingerprinted. Old AHT runs are intentionally incompatible with this corrected protocol; start a fresh run
+  rather than mixing the earlier collision rules or stage-only evaluations with corrected results.
+- `heldout_partners.json` and `run.json["heldout"]` list the held-out identities. `partner_bank.json` keeps its
+  training-only list format.
+
+**Generating CoMeDi / FCP partners on MEAL's env.**
+- `./send.sh aht-comedi scripts/aht_generate.sh 24:00:00 ALG=comedi` (or `ALG=fcp`) runs
+  `partner_generation/run.py --alg comedi|fcp`. That uses jax-aht's per-layout algorithm config with `ENV_NAME=meal-overcooked`,
+  one seed, 1024 envs by default, and overrides via `--partner-pop-size`, `--aht-total-timesteps`, `--aht-num-envs`
+  and `--aht-overrides KEY=VALUE`.
+- Increasing `NUM_ENVS` at a fixed sample budget reduces PPO updates. The generator prints the update count;
+  choose production budgets explicitly. FCP rejects budgets whose upstream schedule underfills/overflows the
+  checkpoint array (5 or 16 updates are safe for 5 slots; 4 or 10 are not), and verifies the final policy is saved.
+  Nonempty output directories, including interrupted exports, require a new destination.
+- Output: `$MEAL_CPA_ROOT/partners/generated/<alg>_<layout>_pop<N>_gseed<seed>/` with `m{k}.pt` and `generation.json`
+  (`kind: jaxaht`, `source: meal-generated`, no bounds). Add its members to a bank with
+  `generators.bank_entries` + `partner_bank.write_bank_v2`, or pass them to `fetch.build_layout_bank(extra_partners=...)`.
+
+**Reward shaping.** `scripts/cpa_aht_bank.sh` sets `--reward-shaping-horizon` to a quarter of `TOTAL_TIMESTEPS`
+(the pilot's 25 % convention; override with `REWARD_SHAPING_HORIZON=`), so shaping reaches 0 within every stage.
+`run_br.py`'s default of 2.5e7 would leave ~64 % shaping weight at the end of a 1e7-step stage.
+
+**Limits.**
+- AGEM and ER-ACE keep at most 20 partner slots; every default bank fits (coord_ring has 17).
+- Generated partners record jax-aht's `FC_HIDDEN_DIM` (default 64), so custom widths load back.
