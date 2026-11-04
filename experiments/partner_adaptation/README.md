@@ -52,7 +52,10 @@ and do not pool them. The pilot writes under its own root with W&B group `cpa-pi
 ## Not changed
 
 Per-stage optimizer state and the per-stage reward-shaping schedule are unchanged. The ego training reward is
-the ego's own delivery reward plus (annealed) shaping, as before.
+the team's delivery reward (both agents' deliveries, the JaxMARL/jax-aht convention the partners were trained
+with) plus the ego's own (annealed) shaping; `Train/EgoSparseReward` logs that team reward. MEAL's env pays a
+delivery only to the delivering agent, so runs before `--ego-reward` trained on the ego's own deliveries; pass
+`--ego-reward own` to reproduce them. The option is part of the resume fingerprint, so such runs cannot be resumed.
 
 ## Partner banks
 

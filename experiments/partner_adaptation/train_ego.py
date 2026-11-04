@@ -287,6 +287,15 @@ def shaping_coefficient(horizon, update_steps, steps_per_update, shaping_base=0)
     return 1.0 - min(1.0, (int(shaping_base) + int(update_steps) - 1) * int(steps_per_update) / float(int(horizon)))
 
 
+EGO_REWARDS = ("team", "own")
+
+
+def ego_sparse_reward(reward, mode="team"):
+    if mode not in EGO_REWARDS:
+        raise ValueError(f"ego_reward must be one of {EGO_REWARDS}, got {mode!r}")
+    return reward["agent_0"] + reward["agent_1"] if mode == "team" else reward["agent_0"]
+
+
 def shaping_weight(horizon, timestep):
     """In-graph shaped-reward weight at joint step `timestep` (float32; no int32 overflow on long runs)."""
     return jnp.clip(1.0 - jnp.asarray(timestep, jnp.float32) / float(int(horizon)), 0.0, 1.0)
@@ -516,6 +525,8 @@ def train_ppo_ego_agent(
                 rew_shaping_anneal = partial(shaping_weight, rew_shaping_horizon)
             else:
                 rew_shaping_anneal = None
+            ego_reward_mode = getattr(config, "ego_reward", "team")
+            ego_sparse_reward({"agent_0": 0.0, "agent_1": 0.0}, ego_reward_mode)
 
             def _env_step(runner_state, unused):
                 """
@@ -596,13 +607,14 @@ def train_ppo_ego_agent(
                     step_rngs, env_state, env_act
                 )
                 # Apply reward shaping annealing if configured
+                sparse_reward_0 = ego_sparse_reward(reward, ego_reward_mode)
                 shaped_reward_0 = info["shaped_reward"]["agent_0"]
                 if rew_shaping_anneal is not None:
                     current_timestep = ((offsets[2] + update_steps_inner).astype(jnp.float32)
                                         * float(config.num_envs * config.num_steps))
-                    ego_reward = reward["agent_0"] + rew_shaping_anneal(current_timestep) * shaped_reward_0
+                    ego_reward = sparse_reward_0 + rew_shaping_anneal(current_timestep) * shaped_reward_0
                 else:
-                    ego_reward = reward["agent_0"]
+                    ego_reward = sparse_reward_0
 
                 # Team episode soups (raw deliveries by either agent, summed once) as reported by LogWrapper.
                 # Only meaningful where the episode has completed.
@@ -638,7 +650,7 @@ def train_ppo_ego_agent(
                                     new_ego_hstate, new_partner_hstate, updated_partner_indices, rng,
                                     update_steps_inner)
                 return new_runner_state, (transition, team_ep_soups,
-                                          jnp.stack([reward["agent_0"], shaped_reward_0]), agent_stats_step)
+                                          jnp.stack([sparse_reward_0, shaped_reward_0]), agent_stats_step)
 
             def _calculate_gae(traj_batch, last_val):
                 def _get_advantages(gae_and_next_value, transition):

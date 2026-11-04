@@ -77,6 +77,7 @@ class TrainConfig:
     layout_name: str = ""  # If specified, overrides layout_idx
 
     reward_shaping_horizon: float = 2.5e7
+    ego_reward: str = "team"  # "team" or "own" deliveries as the ego's sparse reward
     num_agents: int = 2
 
     # best_response
@@ -246,6 +247,8 @@ def validate_config(config: TrainConfig):
         problems.append("eval_every must be at least 1")
     if config.eval_current_every < 0:
         problems.append("eval_current_every must be >= 0 (0 disables current-partner evaluation)")
+    if config.ego_reward not in ("team", "own"):
+        problems.append(f"ego_reward must be 'team' or 'own', got {config.ego_reward!r}")
     if config.cl_method and config.cl_method.lower() in IMPORTANCE_METHODS and (
             config.importance_episodes < 1 or config.importance_steps < 1):
         problems.append("importance_episodes and importance_steps must be positive")
