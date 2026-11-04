@@ -165,7 +165,8 @@ def make_partner_switches(env, partner_population, partner_params):
 
 def make_partner_population(partner_policy, partner_params, ego_params, partner_test_mode=False):
     """Population wrapper and parameters (with the leading population axis) for one frozen partner."""
-    if partner_params is not None and not getattr(partner_policy, "is_planner", False):  # RL agent
+    reads_state = getattr(partner_policy, "is_planner", False) or getattr(partner_policy, "needs_env_state", False)
+    if partner_params is not None and not reads_state:  # RL agent
         return (DummyPolicyPopulation(policy_cls=partner_policy, test_mode=partner_test_mode),
                 jax.tree.map(lambda x: x[jnp.newaxis, ...], partner_params))
     # heuristic agent

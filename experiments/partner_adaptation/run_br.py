@@ -639,7 +639,8 @@ def execute(config: TrainConfig) -> RunResult:
 
         # Add population partners
         for partner in partners:
-            population_cls = HeuristicPolicyPopulation if partner.record.kind == "planner" else DummyPolicyPopulation
+            reads_state = partner.record.kind == "planner" or getattr(partner.policy, "needs_env_state", False)
+            population_cls = HeuristicPolicyPopulation if reads_state else DummyPolicyPopulation
             eval_partner.append((
                 population_cls(policy_cls=partner.policy),
                 jax.tree.map(lambda x: x[jnp.newaxis, ...], partner.params),
