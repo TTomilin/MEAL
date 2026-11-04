@@ -63,24 +63,25 @@ def test_plan_for_every_layout(layout, tmp_path, capsys):
     assert code == 0, out.err
     text = out.out
     assert f"{layout}_bank24.json" in text
-    assert f"{layout}/ft__id-mh/seed0" in text and f"{layout}/online_ewc__id-mh/seed0" in text
+    assert f"{layout}/ft__id-mh/seed0" in text
+    assert f"{layout}/ewc_multi__id-mh/seed0" in text and f"{layout}/er_ace__id-mh/seed0" in text
     assert "partners 24 (12 learned + 12 planners)" in text
     assert text.count("MISSING") == 3                                   # three generation seeds
     assert "(6 updates of 819,200)" in text
     assert "reward shaping: weight 1 -> 0 linearly over 25,000,000 joint steps" in text
 
 
-def test_default_selection_is_pilot_ft_ewc_seed0_identity_available(tmp_path):
+def test_default_selection_is_pilot_ft_ewc_erace_seed0_identity_available(tmp_path):
     sel = pilot.Plan(root=str(tmp_path), steps_per_partner=4915200)
     jobs = pilot.make_jobs(sel, tmp_path)
     assert [j.name for j in jobs] == [
-        "coord_ring/ft__id-mh/seed0", "coord_ring/online_ewc__id-mh/seed0",
-        "cramped_room/ft__id-mh/seed0", "cramped_room/online_ewc__id-mh/seed0"]
+        "coord_ring/ft__id-mh/seed0", "coord_ring/ewc_multi__id-mh/seed0", "coord_ring/er_ace__id-mh/seed0",
+        "cramped_room/ft__id-mh/seed0", "cramped_room/ewc_multi__id-mh/seed0", "cramped_room/er_ace__id-mh/seed0"]
     for job in jobs:
         assert job.overrides["use_task_id"] and job.overrides["use_multihead"]
         assert job.overrides["seed"] == 0 and job.overrides["eval_schedule"] == "pilot"
     ewc = jobs[1].overrides
-    assert (ewc["cl_method"], ewc["importance_mode"]) == ("ewc", "online")
+    assert (ewc["cl_method"], ewc["importance_mode"]) == ("ewc", "multi")
     assert sel.eval_episodes == 5 and sel.eval_current_every == 5 and sel.num_steps == 400
 
 
@@ -107,10 +108,10 @@ def test_a_bank_that_does_not_hold_24_partners_is_rejected(tmp_path, capsys):
 
 def test_one_seed_by_default_and_several_only_when_listed(tmp_path):
     one = pilot.make_jobs(pilot.Plan(root=str(tmp_path), layouts=("coord_ring",), steps_per_partner=4915200), tmp_path)
-    assert sorted({j.seed for j in one}) == [0] and len(one) == 2
+    assert sorted({j.seed for j in one}) == [0] and len(one) == 3
     many = pilot.make_jobs(pilot.Plan(root=str(tmp_path), layouts=("coord_ring",), seeds=(0, 1),
                                       steps_per_partner=4915200), tmp_path)
-    assert len(many) == 4 and sorted({j.seed for j in many}) == [0, 1]
+    assert len(many) == 6 and sorted({j.seed for j in many}) == [0, 1]
     with pytest.raises(pilot.PilotError):
         pilot.make_jobs(pilot.Plan(root=str(tmp_path), seeds=(0, 0)), tmp_path)
 
@@ -217,10 +218,14 @@ def make_population(root, layout="coord_ring", seed=1001, status="complete", tot
     d = pilot.population_dir(cfg)
     d.mkdir(parents=True)
     files = [MEMBER_FILE_FMT.format(i=0, j=j) for j in range(3)]
+    br_files = [f"params_seed0_br{j}.pt" for j in range(3)] if cfg.alg == "lbrdiv" else []
     for f in files if members else []:
         (d / f).write_bytes(b"x")
+    for f in br_files if members else []:
+        (d / f).write_bytes(b"x")
     write_generation_record(str(d), cfg, layout, "preset", status,
-                            [{"seed_index": 0, "member_index": j, "file": f} for j, f in enumerate(files)])
+                            [{"seed_index": 0, "member_index": j, "file": f} for j, f in enumerate(files)],
+                            [{"seed_index": 0, "member_index": j, "file": f} for j, f in enumerate(br_files)])
     return cfg, d
 
 
@@ -475,7 +480,8 @@ def test_a_profile_from_other_batch_settings_is_not_applied(tmp_path, capsys):
 
 def test_suggested_budget_is_the_largest_that_fits_and_is_labelled(tmp_path, capsys):
     ego, brdiv = write_profiles(tmp_path)
-    sel = pilot.Plan(root=str(tmp_path), profile=ego, brdiv_profile=brdiv, layouts=("coord_ring", "cramped_room"))
+    sel = pilot.Plan(root=str(tmp_path), profile=ego, brdiv_profile=brdiv, layouts=("coord_ring", "cramped_room"),
+                     methods=("ft", "online_ewc"))
     assert pilot_gpu.report_projection(sel, tmp_path, None) == 0
     text = capsys.readouterr().out
     assert "SUGGESTION ONLY" in text and "you must choose --steps-per-partner yourself" in text
@@ -503,7 +509,8 @@ def test_projection_counts_only_populations_still_to_generate(tmp_path):
 def test_over_budget_train_is_refused_with_per_layout_commands_unless_accepted(tmp_path, capsys):
     ego, brdiv = write_profiles(tmp_path)
     info = {"j": {"numbers": dict(partners=24, learned=12, planners=12, updates_per_partner=2000)}}
-    sel = pilot.Train(root=str(tmp_path), profile=ego, brdiv_profile=brdiv, steps_per_partner=2000 * 819200.0)
+    sel = pilot.Train(root=str(tmp_path), profile=ego, brdiv_profile=brdiv, steps_per_partner=2000 * 819200.0,
+                      methods=("ft", "online_ewc"))
     assert pilot_gpu.report_projection(sel, tmp_path, info, gate=True) == 1
     text = capsys.readouterr().out
     assert "refusing to start" in text and "bottlenecks" in text
