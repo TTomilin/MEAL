@@ -12,11 +12,12 @@ import json
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import numpy as np
 
-KINDS = ("brdiv", "planner")
+KINDS = ("jaxaht", "brdiv", "planner")
+RECOVERY_FRACTION = 0.9
 
 
 @dataclass
@@ -31,6 +32,9 @@ class Run:
     ego: np.ndarray # (events, partners) summed ego soups
     partner: np.ndarray # (events, partners) summed partner soups
     event_steps: List[int]
+    order: List[int]
+    steps_per_update: int
+    current: Dict[Tuple[int, int], list] = field(default_factory=dict)
     train: List[dict] = field(default_factory=list)
 
     @property
@@ -63,9 +67,17 @@ def load_run(name: str, path) -> Run:
     kinds = [i.get("kind", "brdiv") for i in identities]
     P = len(labels)
 
+    order = list(config["stage_order"]) if config.get("stage_order") else list(range(P))
+    steps_per_update = int(config["num_envs"]) * int(config["num_steps"])
     events: Dict[int, Dict[int, list]] = {}
+    current: Dict[Tuple[int, int], List[float]] = {}
     for r in read_csv(path / "eval_metrics.csv"):
-        if r["scope"] != "full" or not int(float(r["completed"])):
+        if not int(float(r["completed"])):
+            continue
+        if r["scope"] == "current":
+            current.setdefault((int(r["stage"]), int(r["update"])), []).append(float(r["soups"]))
+            continue
+        if r["scope"] != "full":
             continue
         slot = events.setdefault(int(r["env_steps"]), {}).setdefault(int(r["eval_partner_id"]), [])
         slot.append((float(r["soups"]), float(r.get("ego_soups") or "nan"), float(r.get("partner_soups") or "nan")))
@@ -77,10 +89,11 @@ def load_run(name: str, path) -> Run:
             a = np.asarray(rows)
             R[e, i] = a[:, 0].mean() / scale
             ego[e, i], partner[e, i] = a[:, 1].sum(), a[:, 2].sum()
+    train = read_csv(path / "train_metrics.csv") if (path / "train_metrics.csv").exists() else []
     run = Run(name, path, config.get("schedule", "sequential"), labels, kinds, max_soup, R, ego, partner, steps,
-              read_csv(path / "train_metrics.csv") if (path / "train_metrics.csv").exists() else [])
-    if run.schedule == "sequential" and len(steps) != P + 1:
-        print(f"warning: {name}: {len(steps)} full evaluations, expected {P + 1} (incomplete run?)")
+              order, steps_per_update, current, train)
+    if run.schedule == "sequential" and len(steps) != len(order) + 1:
+        print(f"warning: {name}: {len(steps)} full evaluations, expected {len(order) + 1} (incomplete run?)")
     return run
 
 
@@ -95,7 +108,9 @@ def partner_metrics(run: Run) -> Dict[str, np.ndarray]:
     Sequential runs: see module docstring. 
     Joint run: acq = peak = max over cycles, final = last cycle"""
     R, P = run.R, run.P
-    out = {k: np.full(P, np.nan) for k in ("solo", "acq", "peak", "final", "min", "forgetting", "nfm_term", "ego_share_final", "ego_share_acq")}
+    out = {k: np.full(P, np.nan) for k in (
+        "solo", "acq", "peak", "final", "min", "forgetting", "nfm_term",
+        "ego_share_final", "ego_share_acq", "first_stage")}
     out["solo"] = R[0].copy()
     out["final"] = R[-1].copy()
     out["min"] = np.nanmin(R, axis=0)
@@ -104,12 +119,17 @@ def partner_metrics(run: Run) -> Dict[str, np.ndarray]:
         out["peak"] = out["acq"] = np.nanmax(R[1:], axis=0) if len(R) > 1 else R[0]
         return out
     for i in range(P):
-        if i + 1 >= len(R):
+        stages = [m for m, k in enumerate(run.order) if k == i]
+        if not stages:
             continue
-        out["acq"][i] = R[i + 1, i]
-        out["ego_share_acq"][i] = ego_share(run.ego[i + 1, i], run.partner[i + 1, i])
-        out["peak"][i] = np.nanmax(R[i + 1:, i])
-        if i < P - 1 and len(R) == P + 1:
+        first, last = stages[0], stages[-1]
+        out["first_stage"][i] = float(first)
+        if first + 1 >= len(R):
+            continue
+        out["acq"][i] = R[first + 1, i]
+        out["ego_share_acq"][i] = ego_share(run.ego[first + 1, i], run.partner[first + 1, i])
+        out["peak"][i] = np.nanmax(R[first + 1:, i])
+        if last < len(run.order) - 1 and len(R) == len(run.order) + 1:
             out["forgetting"][i] = out["peak"][i] - out["final"][i]
             denom = 1.0 - out["min"][i]
             out["nfm_term"][i] = out["forgetting"][i] / denom if denom > 1e-9 else np.nan
@@ -136,17 +156,37 @@ def stage_train_stats(run: Run) -> List[dict]:
     """Each training stage (partner, sequential order): first/last training soups (normalised) and cl_penalty."""
     scale = run.max_soup if run.max_soup > 0 else 1.0
     stats = []
-    for k in range(run.P):
-        rows = [r for r in run.train if int(r["stage"]) == k]
+    for m, k in enumerate(run.order):
+        rows = [r for r in run.train if int(r["stage"]) == m]
         soups = [float(r["soups"]) / scale for r in rows if r.get("soups") not in ("", None)]
         pen = [float(r["cl_penalty"]) for r in rows if r.get("cl_penalty") not in ("", None)]
         n = max(1, len(soups) // 10)
-        stats.append({"stage": k, "updates": len(rows),
+        stats.append({"stage": m, "partner": run.labels[k], "updates": len(rows),
                       "train_soups_first": float(np.mean(soups[:n])) if soups else float("nan"),
                       "train_soups_last": float(np.mean(soups[-n:])) if soups else float("nan"),
                       "cl_penalty_mean": float(np.mean(pen)) if pen else float("nan"),
                       "cl_penalty_last": pen[-1] if pen else float("nan")})
     return stats
+
+
+def recovery(run: Run, fraction: float = RECOVERY_FRACTION) -> List[dict]:
+    """Updates until a returning partner reaches `fraction` of its previous end-of-stage score."""
+    scale = run.max_soup if run.max_soup > 0 else 1.0
+    rows = []
+    for m, k in enumerate(run.order):
+        prev = [p for p in range(m) if run.order[p] == k]
+        if not prev:
+            continue
+        p, previous_end, before = prev[-1], float(run.R[prev[-1] + 1, k]), float(run.R[m, k])
+        target, pts = fraction * previous_end, {u: float(np.mean(s)) / scale for (st, u), s in run.current.items() if st == m}
+        end_us = list(pts) + [int(r["update"]) for r in run.train if int(r["stage"]) == m]
+        if end_us and m + 1 < len(run.R):
+            pts[max(end_us)] = float(run.R[m + 1, k])
+        ru = next((u for u in sorted(pts) if pts[u] >= target), None)
+        rows.append({"run": run.name, "stage": m, "partner_id": k, "label": run.labels[k], "kind": run.kinds[k],
+                     "before": before, "previous_end": previous_end, "target": target, "recovery_update": ru,
+                     "recovery_env_steps": None if ru is None else ru * run.steps_per_update})
+    return rows
 
 
 def fmt(x, digits=3):
@@ -369,6 +409,33 @@ def main():
         if name in named:
             ap.error(f"--run name {name!r} given twice")
         named[name] = d
+
+    runs = [load_run(name, d) for name, d in named.items()]
+    metrics = {r.name: partner_metrics(r) for r in runs}
+    summaries = {r.name: summarise(r, metrics[r.name]) for r in runs}
+    train_stats = {r.name: stage_train_stats(r) for r in runs}
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"{args.prefix}_summary.json").write_text(json.dumps(aggregate_seeds(runs, summaries), indent=2) + "\n")
+
+    def write_csv(name, fields, rows):
+        with open(out / f"{args.prefix}_{name}.csv", "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fields)
+            w.writeheader()
+            w.writerows(rows)
+
+    pk = ("first_stage", "solo", "acq", "peak", "final", "forgetting")
+    write_csv("partners", ["run", "partner_id", "label", "kind", *pk],
+              [{"run": r.name, "partner_id": i, "label": r.labels[i], "kind": r.kinds[i],
+                **{k: metrics[r.name][k][i] for k in pk}} for r in runs for i in range(r.P)])
+    write_csv("stages", ["run", "stage", "partner", "updates", "train_soups_first", "train_soups_last",
+                         "cl_penalty_mean", "cl_penalty_last"],
+              [{"run": r.name, **row} for r in runs for row in train_stats[r.name]])
+    write_csv("recovery", ["run", "stage", "partner_id", "label", "kind", "before", "previous_end", "target",
+                           "recovery_update", "recovery_env_steps"],
+              [row for r in runs for row in recovery(r)])
+    if not args.no_figures:
+        figures(runs, metrics, train_stats, out, prefix=args.prefix)
 
 
 if __name__ == "__main__":
