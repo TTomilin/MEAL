@@ -156,6 +156,8 @@ class TrainConfig:
     # Plain fine-tuning only (no CL state), constant learning rate.
     schedule: str = "sequential"
     interleave_updates: int = 2
+    # partner index per stage; empty = bank order; a repeated index is a returning partner.
+    stage_order: List[int] = field(default_factory=list)
     # After each stage, record one episode of the ego with the frozen partner it was just trained with and upload it
     # to W&B as Video/stage_<k>_<partner> (files under <run dir>/videos/).
     record_video: bool = True
@@ -271,9 +273,13 @@ def validate_config(config: TrainConfig):
                             "micro-stage)")
         if config.only_stages:
             problems.append("only_stages (profiling) is not supported with schedule=interleaved")
+        if config.stage_order:
+            problems.append("stage_order is not supported with schedule=interleaved")
     elif config.reward_shaping_horizon > config.total_timesteps:
         log.warning("reward_shaping_horizon=%g exceeds the %g joint steps per partner: the shaped reward never "
                     "reaches 0 within a stage", config.reward_shaping_horizon, config.total_timesteps)
+    if config.stage_order and config.only_stages:
+        problems.append("stage_order cannot be combined with only_stages")
     if problems:
         raise ValueError("invalid configuration:\n  " + "\n  ".join(problems))
 
@@ -303,6 +309,14 @@ def resolve_run(config: TrainConfig) -> Resolved:
     identities = [partner_identity(r) for r in bank.records] + [
         dict(partner_id=len(bank) + i, kind="heuristic", label=HEURISTIC_NAMES[i]) for i in range(num_heuristics)]
     labels = [i["label"] for i in identities]
+    if config.stage_order:
+        n = len(identities)
+        bad = [i for i in config.stage_order if not 0 <= i < n]
+        if bad:
+            raise ValueError(f"invalid configuration:\n  stage_order indices out of range for {n} partners: {bad}")
+        missing = sorted(set(range(n)) - set(config.stage_order))
+        if missing:
+            raise ValueError(f"invalid configuration:\n  stage_order never trains partner(s) {missing}")
     if config.cl_method and config.cl_method.lower() in MEMORY_METHODS and len(identities) > AGEM_MAX_TASKS:
         raise ValueError(f"invalid configuration:\n  {config.cl_method} keeps one memory slot per partner and "
                          f"init_agem_memory has max_tasks={AGEM_MAX_TASKS}, but the run has {len(identities)} "
@@ -310,7 +324,9 @@ def resolve_run(config: TrainConfig) -> Resolved:
     config_dict = asdict(config)
     if config.schedule == "sequential":  # sequential runs keep the fingerprint they had before schedules existed
         config_dict.pop("schedule"), config_dict.pop("interleave_updates")
-    elif config.reward_shaping_horizon > len(identities) * config.total_timesteps:
+    if not config.stage_order:  # empty = bank order; omit so pre-stage_order fingerprints still match
+        config_dict.pop("stage_order")
+    if config.schedule == "interleaved" and config.reward_shaping_horizon > len(identities) * config.total_timesteps:
         raise ValueError(f"invalid configuration:\n  reward_shaping_horizon={config.reward_shaping_horizon:g} exceeds "
                          f"the whole interleaved run ({len(identities)} partners x {config.total_timesteps:g} "
                          f"joint steps); the horizon counts over the run in this schedule")
@@ -374,8 +390,10 @@ def build_cl_method(config):
 def schedule_description(config, labels):
     """What is, and is not, carried from one partner to the next (read from train_ego.py)."""
     spu = int(config.num_envs) * int(config.num_steps)
+    order = config.stage_order or list(range(len(labels)))
+    stage_labels = [labels[k] for k in order]
     return {
-        "stage_order": labels,
+        "stage_order": stage_labels,
         "stage_budget": f"every partner is trained for {int(config.num_updates)} updates ({int(config.num_updates) * spu} "
                         f"joint environment steps); the budget is per partner, not cumulative",
         "optimizer": "Adam with global-norm clipping, re-created at every partner: moments and step count reset "
@@ -395,7 +413,7 @@ def schedule_description(config, labels):
                        f"every {config.eval_every} updates, after update 1 and after the last, "
                        f"{config.num_eval_episodes} episodes against every evaluation partner"),
     } if config.schedule != "interleaved" else {
-        "stage_order": labels,
+        "stage_order": stage_labels,
         "stage_budget": f"joint-training upper bound: the partners are cycled in micro-stages of "
                         f"{config.interleave_updates} updates for {int(config.num_updates) // config.interleave_updates} "
                         f"cycles, so every partner gets {int(config.num_updates)} updates "
@@ -418,7 +436,9 @@ def execute(config: TrainConfig) -> RunResult:
     run_string = get_run_string(config) + ("_interleaved" if config.schedule == "interleaved" else "")
     interleaved = config.schedule == "interleaved"
     cycles = int(config.num_updates) // config.interleave_updates if interleaved else 1
-    total_stages = len(identities) * cycles  # partners, or micro-stages of the interleaved schedule
+    order = config.stage_order or list(range(len(identities)))
+    # partners (or a custom stage_order), or micro-stages of the interleaved schedule
+    total_stages = len(identities) * cycles if interleaved else len(order)
 
     checkpoint_meta = None
     if config.resume:
@@ -710,7 +730,7 @@ def execute(config: TrainConfig) -> RunResult:
             run_aht_eval(aht_evaluator, run_dir, run, ego_params, 0, 0, 0, counters)
         micro = config.interleave_updates
         for m in (config.only_stages if profiling else range(start_stage, total_stages)):
-            cycle, k = divmod(m, num_stages) if interleaved else (0, m)
+            cycle, k = divmod(m, num_stages) if interleaved else (0, order[m])
             stage, stats, carry = stages[k], {}, {}
             stage_start = time.perf_counter()
             init_eval = config.eval_schedule == "pilot" and m == 0 and not checkpoint_meta
@@ -721,8 +741,8 @@ def execute(config: TrainConfig) -> RunResult:
                 schedule_args = dict(key_index=m, init_opt_state=opt_state, update_base=cycle * micro,
                                      step_base=m * micro, shaping_base=m * micro, final_eval=final_eval, carry=carry)
             else:
-                recorder.begin_stage(k, int(config.num_updates), plan, init_eval=init_eval)
-                schedule_args = {}
+                recorder.begin_stage(m, int(config.num_updates), plan, init_eval=init_eval, partner=k)
+                schedule_args = dict(key_index=m, step_base=m * int(config.num_updates))
             ego_params, cl_state = run_br_training(
                 micro_config if interleaved else config, env, stage.agent_config, ego_policy,
                 ego_params, stage.policy, stage.params, env_id_idx=k, eval_partner=eval_partner,
@@ -742,7 +762,8 @@ def execute(config: TrainConfig) -> RunResult:
                 counters["importance_env_steps"] += config.importance_episodes * config.importance_steps
             peak = stats.get("peak_bytes_in_use")
             recorder.write_timing(dict(
-                stage=k, partner_id=k, partner=labels[k], attempt=attempt, updates=summary["updates"],
+                stage=(m if not interleaved else k), partner_id=k, partner=labels[k], attempt=attempt,
+                updates=summary["updates"],
                 env_steps_end=summary["env_steps_end"], compile_s=stats.get("compile_s"),
                 compile_cached=stats.get("compile_cached"), train_eval_s=stats.get("train_eval_s"),
                 eval_events=summary["eval_full_events"], eval_event_s=stats.get("eval_event_s"),
@@ -774,7 +795,8 @@ def execute(config: TrainConfig) -> RunResult:
             status.update(state="profile", counters=counters)
             return RunResult(run_dir, ego_params, cl_state, counters)
         if final_evaluator:
-            run_aht_eval(final_evaluator, run_dir, run, ego_params, num_stages - 1 if config.use_multihead else 0,
+            run_aht_eval(final_evaluator, run_dir, run, ego_params,
+                         order[-1] if config.use_multihead else 0,
                          counters["train_env_steps"] // steps_per_update, counters["train_env_steps"], counters,
                          csv_name=AHT_FINAL_CSV)
         atomic_write(run_dir / f"params_seed{config.seed}.pt", pickle.dumps({"actor_params": ego_params}))

@@ -297,13 +297,16 @@ class RunRecorder:
         return self.labels[partner_id] if 0 <= partner_id < len(self.labels) else f"partner{partner_id}"
 
     def begin_stage(self, stage: int, num_updates: int, eval_plan: Dict[int, str], init_eval: bool = False,
-                    update_base: int = 0):
+                    update_base: int = 0, partner=None):
         """`eval_plan` maps update -> "full"/"current" (see train_ego.eval_plan); `init_eval` adds the evaluation
         before the first update (update 0), which has no training event. `update_base` (interleaved schedule:
-        updates already trained with this partner) shifts the expected updates to base+1 .. base+num_updates."""
+        updates already trained with this partner) shifts the expected updates to base+1 .. base+num_updates.
+        `partner` is the partner index / record stage_id when it differs from the output stage number."""
         with self._lock:
             base = int(update_base)
-            self._stage, self._num_updates = int(stage), base + int(num_updates)
+            self._output_stage = int(stage)
+            self._stage = int(stage if partner is None else partner)
+            self._num_updates = base + int(num_updates)
             self._eval_updates = {base + u for u in eval_plan} | ({base} if init_eval else set())
             self._pending, self._next = {}, base if init_eval else base + 1
             self._eval_only = base if init_eval else None  # the initial evaluation has no training event
@@ -336,12 +339,12 @@ class RunRecorder:
             self._next += 1
 
     def _commit(self, update, slot):
-        merged, stage, env_steps = {}, self._stage, None
+        merged, out_stage, env_steps = {}, self._output_stage, None
         if "train" in slot:
             train, train_log = slot["train"]
-            stage, env_steps = train["stage_id"], train["env_steps"]
-            self.train_log.write([dict(train, stage=stage, partner_id=stage, partner=self._label(stage),
-                                       attempt=self.attempt)])
+            partner_id, env_steps = train["stage_id"], train["env_steps"]
+            self.train_log.write([dict(train, stage=out_stage, partner_id=partner_id,
+                                       partner=self._label(partner_id), attempt=self.attempt)])
             merged.update(train_log)
             self._summary["updates"] += 1
             self._summary["train_episodes"] += train["episodes"]
@@ -350,7 +353,7 @@ class RunRecorder:
             ev, ev_log = slot["eval"]
             env_steps = ev["env_steps"]
             scope = ev.get("scope", "full")
-            event_id = f"s{stage:03d}-u{update:05d}"
+            event_id = f"s{out_stage:03d}-u{update:05d}"
             rows = []
             stats = ev.get("agent_stats")
             for row, pid in enumerate(ev["partner_ids"]):
@@ -360,10 +363,10 @@ class RunRecorder:
                         **(dict(zip(AGENT_STAT_COLUMNS, map(float, stats[row][ep]))) if done and stats is not None
                            else {}),
                         "event_id": event_id, "row_id": f"{event_id}-p{pid:03d}-e{ep:03d}", "scope": scope,
-                        "env_steps": ev["env_steps"], "stage": stage, "update": update,
+                        "env_steps": ev["env_steps"], "stage": out_stage, "update": update,
                         "train_episodes": ev["train_episodes"], "eval_partner_id": pid,
                         "eval_partner": self._label(pid), "eval_episode": ep,
-                        "episode_key": f"seed{self.seed}/stage{stage}/update{update}/episode{ep}",
+                        "episode_key": f"seed{self.seed}/stage{out_stage}/update{update}/episode{ep}",
                         "soups": float(ev["team_soups"][row][ep]) if done else None,
                         "ego_return": float(ev["team_returns"][row][ep]) if done else None,
                         "completed": done, "attempt": self.attempt})

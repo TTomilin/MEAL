@@ -54,7 +54,8 @@ def tiny_config(root, bank, cl_method="ft", **overrides):
         mode="disabled", checkpoint_path=str(root), layout_name="cramped_room", partner_bank=bank,
         num_heuristic_partners=0, num_envs=4, num_steps=16, total_timesteps=2 * 4 * 16, update_epochs=1,
         num_minibatches=2, num_eval_episodes=2, eval_every=2, hidden_size=16, num_layers=1, importance_episodes=1,
-        importance_steps=8, cl_method=cl_method, reg_coef=1.0, seed=0, reward_shaping_horizon=1e3)
+        importance_steps=8, cl_method=cl_method, reg_coef=1.0, seed=0, reward_shaping_horizon=1e3,
+        aht_eval=False)
     settings.update(overrides)
     return TrainConfig(**settings)
 

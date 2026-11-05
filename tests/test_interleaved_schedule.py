@@ -34,7 +34,7 @@ def config(root, bank, **overrides):
         num_heuristic_partners=0, num_envs=4, num_steps=16, total_timesteps=2 * SPU, update_epochs=1,
         num_minibatches=2, num_eval_episodes=1, hidden_size=16, num_layers=1, cl_method="ft", seed=0,
         use_task_id=False, use_multihead=False, eval_schedule="pilot", reward_shaping_horizon=200,
-        schedule="interleaved", interleave_updates=1)
+        schedule="interleaved", interleave_updates=1, aht_eval=False)
     settings.update(overrides)
     return TrainConfig(**settings)
 
