@@ -16,20 +16,25 @@ NUM_ENVS="${NUM_ENVS:-2048}"
 TOTAL_TIMESTEPS="${TOTAL_TIMESTEPS:-1e7}"
 # a quarter of TOTAL_TIMESTEPS so shaping reaches 0 within every stage
 REWARD_SHAPING_HORIZON="${REWARD_SHAPING_HORIZON:-$(awk -v t="${TOTAL_TIMESTEPS}" 'BEGIN { printf "%.6g", t / 4 }')}"
-BANK="${MEAL_CPA_ROOT}/partners/bank_${LAYOUT}.json"
+# optional override for the partner-bank manifest path
+BANK="${BANK:-${MEAL_CPA_ROOT}/partners/bank_${LAYOUT}.json}"
 [[ -f "${BANK}" ]] || { echo "${BANK} not found: run scripts/aht_fetch_partners.sh first" >&2; exit 1; }
+# optional sub-directory under runs/aht_${LAYOUT} (e.g. r1/ft/seed0)
+RUN_DIR="${MEAL_CPA_ROOT}/runs/aht_${LAYOUT}${RUN_TAG:+/${RUN_TAG}}"
 
 args=(--layout-name "${LAYOUT}" --partner-bank "${BANK}" --seed "${SEED}"
       --num-envs "${NUM_ENVS}" --num-steps 400 --total-timesteps "${TOTAL_TIMESTEPS}"
       --reward-shaping-horizon "${REWARD_SHAPING_HORIZON}"
       --no-use-task-id --no-use-multihead
-      --eval-schedule pilot --checkpoint-path "${MEAL_CPA_ROOT}/runs/aht_${LAYOUT}"
+      --eval-schedule pilot --checkpoint-path "${RUN_DIR}"
       --group "cpa_aht_${LAYOUT}" --tags cpa aht "${LAYOUT}")
 [[ -n "${CL_METHOD:-}" ]] && args+=(--cl-method "${CL_METHOD}")
+# optional space-separated partner indices that set stage order
+[[ -n "${STAGE_ORDER:-}" ]] && args+=(--stage-order ${STAGE_ORDER})
 if command -v nvidia-smi >/dev/null; then
-    mkdir -p "${MEAL_CPA_ROOT}/runs/aht_${LAYOUT}"
+    mkdir -p "${RUN_DIR}"
     nvidia-smi --query-gpu=timestamp,utilization.gpu,memory.used,memory.total --format=csv -l 30 \
-        > "${MEAL_CPA_ROOT}/runs/aht_${LAYOUT}/gpu_util_${SLURM_JOB_ID:-local}.csv" 2>&1 &
+        > "${RUN_DIR}/gpu_util_${SLURM_JOB_ID:-local}.csv" 2>&1 &
     trap 'kill $! 2>/dev/null || true' EXIT
 fi
 # shellcheck disable=SC2086
