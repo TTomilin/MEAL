@@ -76,6 +76,20 @@ def test_keep_drops_weaker_duplicate_and_writes_bank(setup):
     assert rows[0][0] == "best_response" and len(rows) == 5
 
 
+def test_keep_drops_zero_own_score_before_duplicate(tmp_path):
+    # Same duplicate pair as the default fixture, but P04 has own score 0.
+    diag = np.array([10.0, 8.0, 12.0, 0.0])
+    xp = REL * diag[np.newaxis, :]
+    bank = write_bank(tmp_path / "bank.json")
+    runs = [write_run(tmp_path / "runs", i, xp[i]) for i in range(4)]
+    out, out_bank = tmp_path / "out", tmp_path / "final_bank.json"
+    main(["--bank", str(bank), "--runs", *[str(r) for r in runs], "--keep", "planner=3",
+          "--out", str(out), "--out-bank", str(out_bank)])
+    sel = json.loads((out / "selection.json").read_text())
+    assert sel["dropped"] == [3]
+    assert set(sel["kept"]) == {0, 1, 2}
+
+
 def test_missing_run_raises(setup):
     bank, runs, out, out_bank = setup
     with pytest.raises(SystemExit, match="partner 3 has no run"):

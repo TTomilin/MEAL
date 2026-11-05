@@ -40,6 +40,7 @@ def main(argv=None):
     ap.add_argument("--bank", required=True)
     ap.add_argument("--runs", nargs="+", required=True)
     ap.add_argument("--keep", action="append", default=[], metavar="KIND=N")
+    ap.add_argument("--min-own-score", type=float, default=0.5)
     ap.add_argument("--tau", type=float, default=0.8)
     ap.add_argument("--out", required=True)
     ap.add_argument("--out-bank", required=True)
@@ -64,8 +65,20 @@ def main(argv=None):
     for item in args.keep:
         kind, _, n = item.partition("="); n = int(n)
         while sum(kinds[i] == kind for i in kept) > n:
+            low = [i for i in kept if kinds[i] == kind and XP[i, i] < args.min_own_score]
+            if not low: break
+            kept.remove(min(low, key=lambda i: XP[i, i]))
+        while sum(kinds[i] == kind for i in kept) > n:
             cands = [i for i in kept if kinds[i] == kind]
-            kept.remove(max(cands, key=lambda i: (np.nanmax(sim[i, [j for j in kept if j != i]]), -XP[i, i])))
+            def max_sim(i):
+                others = [j for j in kept if j != i]
+                vals = sim[i, others]
+                if not others or np.all(np.isnan(vals)): return np.inf
+                return float(np.nanmax(vals))
+            kept.remove(max(cands, key=lambda i: (max_sim(i), -XP[i, i])))
+    for i in kept:
+        if XP[i, i] < args.min_own_score:
+            print(f"warning: {labels[i]}: own score below min-own-score ({XP[i, i]:.3f})")
     dropped = [i for i in range(P) if i not in set(kept)]
     comps = components(kept, sim, args.tau)
     groups = [[labels[i] for i in g] for g in comps]
