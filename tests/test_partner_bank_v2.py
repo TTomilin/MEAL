@@ -413,3 +413,21 @@ def test_real_jaxaht_checkpoint_restores_and_loads(tmp_path):
                          {"p": gen_path})
     partners = load_partners(bank, obs_dim_of())
     assert len(partners) == 3 and all(p.record.performance_bounds.get("base_return") for p in partners)
+
+
+def test_brdiv_members_append_to_bank_v2(tmp_path):
+    from experiments.partner_adaptation.jax_aht_bridge.fetch import brdiv_members
+    from tests.test_partner_bank import synthetic_population
+
+    dirs = [synthetic_population(tmp_path, f"g{s}", LAYOUT, 3, s) for s in (1001, 1002)]
+    partners, pops = brdiv_members(dirs)
+    partners += [dict(kind="planner", planner_id="P01"), dict(kind="planner", planner_id="P02")]
+    bank = write_bank_v2(str(tmp_path / "bank.json"), LAYOUT, partners, [], pops)
+    assert len(bank.records) == 8
+    assert [r.kind for r in bank.records] == ["brdiv"] * 6 + ["planner"] * 2
+    assert [r.partner_id for r in bank.records] == list(range(8))
+
+    incomplete = dirs[0] / "generation.json"
+    incomplete.write_text(json.dumps({**json.loads(incomplete.read_text()), "status": "running"}))
+    with pytest.raises(ValueError, match=str(incomplete)):
+        brdiv_members([dirs[0]])

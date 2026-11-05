@@ -69,6 +69,22 @@ def concord_members(root: Path) -> Tuple[List[Dict], Dict[str, Path]]:
                   checkpoint=gen_path.parent / m["file"]) for m in gen["members"]], {key: gen_path})
 
 
+def brdiv_members(dirs) -> Tuple[List[Dict], Dict[str, Path]]:
+    import json
+    entries, populations = [], {}
+    for d in dirs:
+        d = Path(d)
+        gen_path = d / "generation.json"
+        gen = json.loads(gen_path.read_text())
+        if gen.get("status") != "complete":
+            raise ValueError(f"{gen_path}")
+        key = f"brdiv_gseed{gen['seed']}"
+        populations[key] = gen_path
+        entries += [dict(kind="brdiv", population=key, member_index=m["member_index"],
+                         checkpoint=d / m["file"]) for m in gen["members"]]
+    return entries, populations
+
+
 def build_layout_bank(layout: str, root: Path, download: bool = True, extra_partners=None,
                       extra_populations=None, concord: bool = True, keep_shared_runs: bool = False,
                       planners=()) -> PartnerBank:
@@ -101,11 +117,14 @@ def main(argv=None):
     parser.add_argument("--keep-shared-runs", action="store_true",
                         help="also train on val members whose run supplies held-out (eval) members")
     parser.add_argument("--planners", nargs="*", default=[], help="planner ids appended to training, e.g. P01")
+    parser.add_argument("--brdiv-dirs", nargs="*", type=Path, default=[])
     args = parser.parse_args(argv)
     root = (args.root or default_root()).resolve()
+    extra, extra_pops = brdiv_members(args.brdiv_dirs)
     for layout in args.layouts:
         build_layout_bank(layout, root, download=not args.skip_download, concord=not args.no_concord,
-                          keep_shared_runs=args.keep_shared_runs, planners=args.planners)
+                          keep_shared_runs=args.keep_shared_runs, planners=args.planners,
+                          extra_partners=extra, extra_populations=extra_pops)
 
 
 if __name__ == "__main__":
