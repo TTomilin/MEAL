@@ -17,7 +17,7 @@ TOTAL_TIMESTEPS="${TOTAL_TIMESTEPS:-1e7}"
 # a quarter of TOTAL_TIMESTEPS so shaping reaches 0 within every stage
 REWARD_SHAPING_HORIZON="${REWARD_SHAPING_HORIZON:-$(awk -v t="${TOTAL_TIMESTEPS}" 'BEGIN { printf "%.6g", t / 4 }')}"
 # optional override for the partner-bank manifest path
-BANK="${BANK:-${MEAL_CPA_ROOT}/partners/bank_${LAYOUT}.json}"
+BANK="${BANK:-${MEAL_CPA_ROOT}/partners/bank_${LAYOUT}${BANK_SUFFIX:-}.json}"
 [[ -f "${BANK}" ]] || { echo "${BANK} not found: run scripts/aht_fetch_partners.sh first" >&2; exit 1; }
 # optional sub-directory under runs/aht_${LAYOUT} (e.g. r1/ft/seed0)
 RUN_DIR="${MEAL_CPA_ROOT}/runs/aht_${LAYOUT}${RUN_TAG:+/${RUN_TAG}}"
