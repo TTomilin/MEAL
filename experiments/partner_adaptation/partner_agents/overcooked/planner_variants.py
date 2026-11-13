@@ -60,6 +60,7 @@ from .base_agent import AgentState, BaseAgent, Goal, Holding
 
 HISTORY_LEN = 32
 STALL_LIMIT = 8
+YIELD_NEVER = -1  # yield_wait sentinel: keep the planned move when blocked (no wait, no replan)
 
 STAY = int(Actions.stay)
 INTERACT = int(Actions.interact)
@@ -70,8 +71,12 @@ O_WALL, O_ONION, O_ONION_PILE, O_PLATE, O_PLATE_PILE, O_GOAL, O_POT, O_DISH = (
 
 FACE_DY = jnp.array([-1, 1, 0, 0])
 FACE_DX = jnp.array([0, 0, 1, -1])
+MOVE_DY = (-1, 1, 0, 0)
+MOVE_DX = (0, 0, 1, -1)
 
 FILL, SERVE = 0, 1  # subtasks and history event codes (-1: no event)
+
+CLASSIC_PLANNER_IDS = tuple(f"P{i:02d}" for i in range(1, 13))
 
 
 class Priority:
@@ -87,8 +92,26 @@ class Handoff:
     HIGHEST = 2
 
 
+class Role:
+    ALL = 0
+    ONION = 1
+    SERVE = 2
+
+
+class PotPref:
+    NEAREST = 0
+    LEFT = 1
+    RIGHT = 2
+
+
+class Rotation:
+    NONE = 0
+    CLOCKWISE = 1
+    COUNTERCLOCKWISE = 2
+
+
 class Case:
-    NONE, PICK_ONION, PICK_PLATE, ONION_TO_POT, ONION_TO_COUNTER, PLATE_TO_POT, PLATE_WAIT, PLATE_STASH, DELIVER = range(9)
+    NONE, PICK_ONION, PICK_PLATE, ONION_TO_POT, ONION_TO_COUNTER, PLATE_TO_POT, PLATE_WAIT, PLATE_STASH, DELIVER, PARK = range(10)
 
 
 @struct.dataclass
@@ -99,6 +122,11 @@ class PlannerParams:
     yield_wait: Any
     handoff_rule: Any
     history_window: Any
+    role: Any
+    counter_only: Any
+    pot_preference: Any
+    rotation: Any
+    idle_prob: Any
 
 
 @struct.dataclass
@@ -169,7 +197,35 @@ PLANNER_SPECS: Dict[str, PlannerSpec] = {s.planner_id: s for s in (
           priority=Priority.COMPLEMENT, history_window=8),
     _spec("P12", "complement_32", "least-covered subtask over 32 steps", "complement_decided",
           priority=Priority.COMPLEMENT, history_window=HISTORY_LEN),
+    _spec("onion_left_cw", "onion_left_cw", "fills only, left pot, walks clockwise", "role_onion",
+          role=Role.ONION, pot_preference=PotPref.LEFT, rotation=Rotation.CLOCKWISE),
+    _spec("onion_right_ccw", "onion_right_ccw", "fills only, right pot, walks counter-clockwise", "role_onion",
+          role=Role.ONION, pot_preference=PotPref.RIGHT, rotation=Rotation.COUNTERCLOCKWISE),
+    _spec("server_cw", "server_cw", "serves only, walks clockwise", "role_serve",
+          role=Role.SERVE, rotation=Rotation.CLOCKWISE),
+    _spec("server_ccw", "server_ccw", "serves only, walks counter-clockwise", "role_serve",
+          role=Role.SERVE, rotation=Rotation.COUNTERCLOCKWISE),
+    _spec("counter_feeder", "counter_feeder", "fills only, every onion onto a handoff counter", "counter_only",
+          role=Role.ONION, counter_only=True),
+    _spec("generalist_left_cw", "generalist_left_cw", "does everything, left pot, walks clockwise", "pot_preference",
+          pot_preference=PotPref.LEFT, rotation=Rotation.CLOCKWISE),
+    _spec("generalist_right_ccw", "generalist_right_ccw",
+          "does everything, right pot, walks counter-clockwise", "pot_preference",
+          pot_preference=PotPref.RIGHT, rotation=Rotation.COUNTERCLOCKWISE),
+    _spec("generalist_stubborn", "generalist_stubborn", "does everything, never gives way when blocked",
+          "never_yield", yield_wait=YIELD_NEVER),
+    _spec("generalist_slow", "generalist_slow", "does everything, idles half the steps", "idle", idle_prob=0.5),
+    _spec("server_stubborn", "server_stubborn", "serves only, never gives way when blocked", "never_yield",
+          role=Role.SERVE, yield_wait=YIELD_NEVER),
+    _spec("onion_slow_ccw", "onion_slow_ccw",
+          "fills only, idles half the steps, walks counter-clockwise", "idle",
+          role=Role.ONION, idle_prob=0.5, rotation=Rotation.COUNTERCLOCKWISE),
+    _spec("counter_feeder_right", "counter_feeder_right",
+          "fills only via handoff counters, right pot when it must use a pot", "counter_only",
+          role=Role.ONION, counter_only=True, pot_preference=PotPref.RIGHT),
 )}
+
+NEW_PLANNER_IDS = tuple(pid for pid in PLANNER_SPECS if pid not in CLASSIC_PLANNER_IDS)
 
 
 def planner_params(spec) -> PlannerParams:
@@ -178,7 +234,10 @@ def planner_params(spec) -> PlannerParams:
     return PlannerParams(
         p_onion_on_counter=jnp.float32(p["p_onion_on_counter"]), prefetch_steps=jnp.int32(p["prefetch_steps"]),
         priority=jnp.int32(p["priority"]), yield_wait=jnp.int32(p["yield_wait"]),
-        handoff_rule=jnp.int32(p["handoff_rule"]), history_window=jnp.int32(p["history_window"]))
+        handoff_rule=jnp.int32(p["handoff_rule"]), history_window=jnp.int32(p["history_window"]),
+        role=jnp.int32(p.get("role", Role.ALL)), counter_only=jnp.asarray(p.get("counter_only", False)),
+        pot_preference=jnp.int32(p.get("pot_preference", PotPref.NEAREST)),
+        rotation=jnp.int32(p.get("rotation", Rotation.NONE)), idle_prob=jnp.float32(p.get("idle_prob", 0.0)))
 
 
 # ---------------------------------------------------------------------------------------------- geometry
@@ -219,6 +278,92 @@ def _geometry(layout):
     return floor, comp, reach, counters
 
 
+def _inner_counter_block(floor, counters):
+    """Connected solid component that does not touch the map border and includes a counter, else None."""
+    H, W = floor.shape
+    solid = ~floor
+    seen = np.zeros_like(solid)
+    for y in range(H):
+        for x in range(W):
+            if not solid[y, x] or seen[y, x]:
+                continue
+            stack, cells, touches_border, has_counter = [(y, x)], [], False, False
+            seen[y, x] = True
+            while stack:
+                cy, cx = stack.pop()
+                cells.append((cy, cx))
+                touches_border |= cy in (0, H - 1) or cx in (0, W - 1)
+                has_counter |= bool(counters[cy, cx])
+                for ny, nx in ((cy - 1, cx), (cy + 1, cx), (cy, cx - 1), (cy, cx + 1)):
+                    if 0 <= ny < H and 0 <= nx < W and solid[ny, nx] and not seen[ny, nx]:
+                        seen[ny, nx] = True
+                        stack.append((ny, nx))
+            if not touches_border and has_counter:
+                return cells
+    return None
+
+
+def _ring_edges(floor, counters):
+    """Directed floor edges that do not go against clockwise around an inner counter block.
+
+    With y growing downward, a positive 2D cross product is clockwise. Moves with zero angular change
+    (purely radial) are allowed. Returns (has_loop, center_y, center_x, edge_cw[H,W,4]).
+    """
+    H, W = floor.shape
+    block = _inner_counter_block(floor, counters)
+    edge_cw = np.zeros((H, W, 4), bool)
+    if not block:
+        return False, 0.0, 0.0, edge_cw
+    cy = sum(y for y, _ in block) / len(block)
+    cx = sum(x for _, x in block) / len(block)
+    for y in range(H):
+        for x in range(W):
+            if not floor[y, x]:
+                continue
+            for a, (dy, dx) in enumerate(zip(MOVE_DY, MOVE_DX)):
+                ny, nx = y + dy, x + dx
+                if not (0 <= ny < H and 0 <= nx < W and floor[ny, nx]):
+                    continue
+                # (x right, y down): positive cross = clockwise
+                cross = (x - cx) * (ny - cy) - (y - cy) * (nx - cx)
+                edge_cw[y, x, a] = cross >= 0
+    return True, cy, cx, edge_cw
+
+
+def _next_hops(floor, edge_ok):
+    """next/dist[sy,sx,ty,tx]: first action and length of a shortest directed path (-1 / big if none)."""
+    H, W = floor.shape
+    inf = H * W + 1
+    nxt = -np.ones((H, W, H, W), np.int8)
+    dist_all = np.full((H, W, H, W), inf, np.int32)
+    for sy in range(H):
+        for sx in range(W):
+            if not floor[sy, sx]:
+                continue
+            dist = np.full((H, W), inf, np.int32)
+            first = -np.ones((H, W), np.int8)
+            dist[sy, sx] = 0
+            first[sy, sx] = STAY
+            queue = [(sy, sx)]
+            head = 0
+            while head < len(queue):
+                y, x = queue[head]
+                head += 1
+                for a, (dy, dx) in enumerate(zip(MOVE_DY, MOVE_DX)):
+                    if not edge_ok[y, x, a]:
+                        continue
+                    ny, nx = y + dy, x + dx
+                    if not (0 <= ny < H and 0 <= nx < W and floor[ny, nx]):
+                        continue
+                    if dist[ny, nx] > dist[y, x] + 1:
+                        dist[ny, nx] = dist[y, x] + 1
+                        first[ny, nx] = np.int8(a if (y, x) == (sy, sx) else first[y, x])
+                        queue.append((ny, nx))
+            nxt[sy, sx] = first
+            dist_all[sy, sx] = dist
+    return nxt, dist_all
+
+
 # ------------------------------------------------------------------------------------------------- agent
 
 class PlannerAgent(BaseAgent):
@@ -231,6 +376,27 @@ class PlannerAgent(BaseAgent):
         self.flat = np.arange(H * W, dtype=np.int32).reshape(H, W)
         self.yy, self.xx = np.mgrid[0:H, 0:W].astype(np.int32)
         self.big = H * W * (H + W + 2) * 8
+        self.has_loop, self.ring_cy, self.ring_cx, edge_cw = _ring_edges(self.floor, self.counters)
+        edge_ccw = np.zeros_like(edge_cw)
+        if self.has_loop:
+            # zero angular change is in both; against-clockwise = not strictly clockwise
+            for y in range(H):
+                for x in range(W):
+                    if not self.floor[y, x]:
+                        continue
+                    for a, (dy, dx) in enumerate(zip(MOVE_DY, MOVE_DX)):
+                        ny, nx = y + dy, x + dx
+                        if not (0 <= ny < H and 0 <= nx < W and self.floor[ny, nx]):
+                            continue
+                        cross = (x - self.ring_cx) * (ny - self.ring_cy) - (y - self.ring_cy) * (nx - self.ring_cx)
+                        edge_ccw[y, x, a] = cross <= 0
+            self.edge_cw, self.edge_ccw = edge_cw, edge_ccw
+            self.next_cw, self.dist_cw = _next_hops(self.floor, edge_cw)
+            self.next_ccw, self.dist_ccw = _next_hops(self.floor, edge_ccw)
+        else:
+            self.edge_cw = self.edge_ccw = np.zeros((H, W, 4), bool)
+            self.next_cw = self.next_ccw = -np.ones((H, W, H, W), np.int8)
+            self.dist_cw = self.dist_ccw = np.full((H, W, H, W), H * W + 1, np.int32)
 
     # state --------------------------------------------------------------------------------------------
     def init_agent_state(self, agent_id) -> PlannerState:
@@ -276,13 +442,42 @@ class PlannerAgent(BaseAgent):
         found = jnp.min(jnp.stack(keys)) < 10 ** 6
         return jnp.where(found, jnp.stack(ys)[best], my_y), jnp.where(found, jnp.stack(xs)[best], my_x)
 
-    def _go_interact(self, obs3, env_state, aid, my_y, my_x, ty, tx, comp, oy, ox, interact_ok, key):
+    def _move_rotated(self, my_y, my_x, ay, ax, oy, ox, obs3, key, rotation):
+        base, key = self._move_towards(my_y, my_x, ay, ax, obs3, key)
+        use = self.has_loop & (rotation != Rotation.NONE)
+        cw = rotation == Rotation.CLOCKWISE
+        hop = jnp.where(cw, jnp.asarray(self.next_cw)[my_y, my_x, ay, ax],
+                        jnp.asarray(self.next_ccw)[my_y, my_x, ay, ax]).astype(jnp.int32)
+        # unreachable under the directed graph: fall back to today's step
+        unreachable = hop < 0
+        edge = jnp.where(cw, jnp.asarray(self.edge_cw)[my_y, my_x], jnp.asarray(self.edge_ccw)[my_y, my_x])
+        dist = jnp.where(cw, jnp.asarray(self.dist_cw)[:, :, ay, ax], jnp.asarray(self.dist_ccw)[:, :, ay, ax])
+        # if the shortest hop is occupied, take the directed neighbour that still gets closer
+        scores = []
+        for a, (dy, dx) in enumerate(zip(MOVE_DY, MOVE_DX)):
+            ny, nx = my_y + dy, my_x + dx
+            free = edge[a] & jnp.asarray(self.floor)[jnp.clip(ny, 0, self.map_height - 1),
+                                                      jnp.clip(nx, 0, self.map_width - 1)]
+            free = free & (ny >= 0) & (ny < self.map_height) & (nx >= 0) & (nx < self.map_width)
+            free = free & ~((ny == oy) & (nx == ox))
+            scores.append(jnp.where(free, dist[jnp.clip(ny, 0, self.map_height - 1),
+                                               jnp.clip(nx, 0, self.map_width - 1)], 10 ** 6))
+        scores = jnp.stack(scores)
+        alt = jnp.argmin(scores).astype(jnp.int32)
+        alt_ok = jnp.min(scores) < 10 ** 6
+        ny = my_y + jnp.array(MOVE_DY)[jnp.clip(hop, 0, 3)]
+        nx = my_x + jnp.array(MOVE_DX)[jnp.clip(hop, 0, 3)]
+        hop_blocked = (hop < 4) & (ny == oy) & (nx == ox)
+        directed = jnp.where(unreachable, base, jnp.where(hop_blocked, jnp.where(alt_ok, alt, STAY), hop))
+        return jnp.where(use, directed, base).astype(jnp.int32), key
+
+    def _go_interact(self, obs3, env_state, aid, my_y, my_x, ty, tx, comp, oy, ox, interact_ok, key, rotation):
         adjacent = (jnp.abs(my_y - ty) + jnp.abs(my_x - tx)) == 1
         face = self._get_target_orientation_action(my_y, my_x, ty, tx)
         facing = env_state.agent_dir_idx[aid]
         at_target = jnp.where(facing == face, jnp.where(interact_ok, INTERACT, STAY), face)
         ay, ax = self._approach_tile(ty, tx, my_y, my_x, comp, oy, ox)
-        move, _ = self._move_towards(my_y, my_x, ay, ax, obs3, key)
+        move, _ = self._move_rotated(my_y, my_x, ay, ax, oy, ox, obs3, key, rotation)
         return jnp.where(adjacent, at_target, move).astype(jnp.int32)
 
     def _sidestep(self, my_y, my_x, oy, ox, key):
@@ -333,13 +528,16 @@ class PlannerAgent(BaseAgent):
         dist = jnp.abs(jnp.asarray(self.yy) - my_y) + jnp.abs(jnp.asarray(self.xx) - my_x)
         flat = jnp.asarray(self.flat)
         nearest_key = dist
+        xx = jnp.asarray(self.xx)
+        pot_key = jnp.where(params.pot_preference == PotPref.LEFT, xx,
+                            jnp.where(params.pot_preference == PotPref.RIGHT, -xx, dist))
         pick_onion = self._pick(onion_src, nearest_key)
         pick_plate = self._pick(plate_src, nearest_key)
-        pick_pot = self._pick(nonfull, nearest_key)
-        pick_ready = self._pick(ready, nearest_key)
+        pick_pot = self._pick(nonfull, pot_key)
+        pick_ready = self._pick(ready, pot_key)
         pick_goal = self._pick(goals, nearest_key)
         pick_stash = self._pick(free_counter, nearest_key)
-        pick_wait_pot = self._pick(cooking, status * (H + W + 2) + dist)
+        pick_wait_pot = self._pick(cooking, status * (H + W + 2) + pot_key)
         rule = params.handoff_rule
         hand_key = jnp.where(rule == Handoff.LOWEST, flat, jnp.where(rule == Handoff.HIGHEST, H * W - 1 - flat, dist))
         handoff_ok = handoff.any()
@@ -369,11 +567,30 @@ class PlannerAgent(BaseAgent):
                                                      covered_fill <= covered_serve)))
         both = fill_ok & serve_ok
         do_fill = jnp.where(both, fill_over_serve, fill_ok)
-        c_empty = jnp.where(do_fill, Case.PICK_ONION, jnp.where(serve_ok, Case.PICK_PLATE, Case.NONE))
+        c_empty_all = jnp.where(do_fill, Case.PICK_ONION, jnp.where(serve_ok, Case.PICK_PLATE, Case.NONE))
+
+        # role parking targets when the role has nothing it can act on yet
+        park_onion_t = jnp.where(onion_src.any(), jnp.stack([pick_onion[0], pick_onion[1]]),
+                                 jnp.where(nonfull.any(), jnp.stack([pick_pot[0], pick_pot[1]]),
+                                           jnp.where(handoff_ok, jnp.stack([pick_counter[0], pick_counter[1]]),
+                                                     jnp.stack([my_y, my_x]))))
+        park_onion_ok = onion_src.any() | nonfull.any() | handoff_ok
+        park_serve_t = jnp.where(plate_src.any(), jnp.stack([pick_plate[0], pick_plate[1]]),
+                                 jnp.where(ready.any(), jnp.stack([pick_ready[0], pick_ready[1]]),
+                                           jnp.where(cooking.any(), jnp.stack([pick_wait_pot[0], pick_wait_pot[1]]),
+                                                     jnp.where(goals.any(), jnp.stack([pick_goal[0], pick_goal[1]]),
+                                                               jnp.stack([my_y, my_x])))))
+        park_serve_ok = plate_src.any() | ready.any() | cooking.any() | goals.any()
+        c_empty = jnp.where(
+            params.role == Role.ONION,
+            jnp.where(fill_ok, Case.PICK_ONION, jnp.where(park_onion_ok, Case.PARK, Case.NONE)),
+            jnp.where(params.role == Role.SERVE,
+                      jnp.where(serve_ok, Case.PICK_PLATE, jnp.where(park_serve_ok, Case.PARK, Case.NONE)),
+                      c_empty_all))
 
         # onion destination, committed once per held onion ----------------------------------------------
         holds_onion = inv == I_ONION
-        draw = jax.random.uniform(jax.random.fold_in(rng, 1)) < params.p_onion_on_counter
+        draw = (jax.random.uniform(jax.random.fold_in(rng, 1)) < params.p_onion_on_counter) | params.counter_only
         want_counter = jnp.where(state.dest_valid, state.dest_counter, draw)
         pot_ok, stash_ok = nonfull.any(), free_counter.any()
         go_counter = (want_counter & handoff_ok) | (~pot_ok & stash_ok)
@@ -382,27 +599,38 @@ class PlannerAgent(BaseAgent):
         c_plate = jnp.where(ready.any(), Case.PLATE_TO_POT, jnp.where(
             cooking.any(), Case.PLATE_WAIT, jnp.where(stash_ok, Case.PLATE_STASH, Case.NONE)))
         c_dish = jnp.where(goals.any(), Case.DELIVER, Case.NONE)
-        case = jnp.where(inv == I_EMPTY, c_empty, jnp.where(holds_onion, c_onion, jnp.where(
-            inv == I_PLATE, c_plate, jnp.where(inv == I_DISH, c_dish, Case.NONE))))
+        # role filters: ONION never serves; SERVE never handles onions
+        c_held_onion = jnp.where(params.role == Role.SERVE, jnp.where(park_serve_ok, Case.PARK, Case.NONE), c_onion)
+        c_held_plate = jnp.where(params.role == Role.ONION, jnp.where(park_onion_ok, Case.PARK, Case.NONE), c_plate)
+        c_held_dish = jnp.where(params.role == Role.ONION, jnp.where(park_onion_ok, Case.PARK, Case.NONE), c_dish)
+        case = jnp.where(inv == I_EMPTY, c_empty, jnp.where(holds_onion, c_held_onion, jnp.where(
+            inv == I_PLATE, c_held_plate, jnp.where(inv == I_DISH, c_held_dish, Case.NONE))))
 
+        park_t = jnp.where(params.role == Role.SERVE, park_serve_t, park_onion_t)
         targets = jnp.stack([jnp.stack([my_y, my_x])] + [jnp.stack([p[0], p[1]]) for p in (
-            pick_onion, pick_plate, pick_pot, pick_counter, pick_ready, pick_wait_pot, pick_stash, pick_goal)])
+            pick_onion, pick_plate, pick_pot, pick_counter, pick_ready, pick_wait_pot, pick_stash, pick_goal)]
+                            + [park_t])
         ty, tx = targets[case, 0], targets[case, 1]
         key_nav, key_side = jax.random.split(jax.random.fold_in(rng, 2))
+        interact_ok = (case != Case.PLATE_WAIT) & (case != Case.PARK)
         planned = self._go_interact(obs3, env_state, aid, my_y, my_x, ty, tx, c_me, oy, ox,
-                                    case != Case.PLATE_WAIT, key_nav)
+                                    interact_ok, key_nav, params.rotation)
         planned = jnp.where(case == Case.NONE, STAY, planned)
+        idle = jax.random.uniform(jax.random.fold_in(rng, 3)) < params.idle_prob
+        planned = jnp.where(idle, STAY, planned)
 
         # blocked moves, yielding, deadlock recovery ----------------------------------------------------
         moved = jnp.any(jnp.stack([my_y, my_x]) != state.prev_pos)
         blocked = state.move_intended & ~moved
+        # NEVER: keep pushing the blocked move instead of taking a freshly planned action
+        planned = jnp.where(blocked & (params.yield_wait == YIELD_NEVER), state.prev_action, planned)
         target_dist = i32(jnp.abs(my_y - ty) + jnp.abs(my_x - tx))
         case_changed = case != state.prev_case
         fresh = (inv != state.prev_inv) | (case_changed & (state.case_run >= 3))
         improved = fresh | (target_dist < state.best_dist)
         best_dist = jnp.where(fresh, target_dist, jnp.minimum(state.best_dist, target_dist))
         counting = (case != Case.NONE) & (case != Case.PLATE_WAIT)
-        stall = jnp.where(improved | ~counting, 0, state.stall + 1)
+        stall = jnp.where(improved | ~counting | idle, 0, state.stall + 1)
         recover = stall >= STALL_LIMIT
 
         start_wait = blocked & (params.yield_wait > 0) & (state.wait_left == 0)
@@ -435,10 +663,17 @@ class PlannerAgent(BaseAgent):
             prev_faced=jnp.stack([my_y + FACE_DY[dir_idx], my_x + FACE_DX[dir_idx]]), dropped=dropped)
         info = dict(case=case, target=jnp.stack([ty, tx]), pot_route=case == Case.ONION_TO_POT,
                     plate_ready=(case == Case.PICK_PLATE) & ready.any(),
-                    multi_handoff=(case == Case.ONION_TO_COUNTER) & (jnp.sum(handoff) >= 2), both=both, prefetch=(case == Case.PICK_PLATE) & ~ready.any(),
+                    multi_handoff=(case == Case.ONION_TO_COUNTER) & (jnp.sum(handoff) >= 2), both=both,
+                    prefetch=(case == Case.PICK_PLATE) & ~ready.any(),
                     counter_route=case == Case.ONION_TO_COUNTER, handoff_ok=handoff_ok, blocked=blocked,
                     waiting=waiting, recovered=recover, covered_fill=covered_fill, covered_serve=covered_serve,
-                    complement_decided=both & (prio == Priority.COMPLEMENT) & (covered_fill != covered_serve))
+                    complement_decided=both & (prio == Priority.COMPLEMENT) & (covered_fill != covered_serve),
+                    role_onion=(params.role == Role.ONION) & (case != Case.NONE),
+                    role_serve=(params.role == Role.SERVE) & (case != Case.NONE),
+                    counter_only=params.counter_only & (case == Case.ONION_TO_COUNTER),
+                    pot_preference=(params.pot_preference != PotPref.NEAREST) & jnp.isin(
+                        case, jnp.array([Case.ONION_TO_POT, Case.PLATE_TO_POT, Case.PLATE_WAIT])),
+                    never_yield=blocked & (params.yield_wait == YIELD_NEVER), idle=idle)
         return action, new_state, info
 
 
@@ -461,12 +696,25 @@ def layout_collapses(layout: Dict[str, Any]) -> Dict[str, str]:
     if pots_reachable < 2:
         why = f"{pots_reachable} reachable pot: fill and serve are never both feasible"
         out["P05/P06"] = out["P11/P12"] = why
+        why_pot = f"{pots_reachable} reachable pot: pot_preference LEFT/RIGHT has no effect"
+        out["generalist_left_cw/generalist_right_ccw"] = why_pot
+        out["onion_left_cw/onion_right_ccw"] = why_pot
+        out["counter_feeder/counter_feeder_right"] = why_pot
     shared = counters & np.logical_and.reduce([reach[c] for c in spawn_comps])
     n_shared = int(shared.sum())
     if n_shared < 1:
         out["P01/P02"] = "no counter shared by both agents' floor: counter handoff cannot happen, onions go to pots"
+        out["counter_feeder/counter_feeder_right"] = (
+            "no counter shared by both agents' floor: counter_only falls back to pots")
     if n_shared < 2:
         out["P09/P10"] = f"{n_shared} counters shared by both agents' floor: lowest and highest coincide"
     if len(spawn_comps) > 1:
         out["P07/P08"] = "the agents' floors are disjoint: one can never block the other's move"
+    has_loop, _, _, _ = _ring_edges(floor, counters)
+    if not has_loop:
+        why_rot = "no floor loop around an inner counter block: rotation has no effect"
+        out["server_cw/server_ccw"] = why_rot
+        out["onion_left_cw/onion_right_ccw"] = out.get("onion_left_cw/onion_right_ccw", why_rot)
+        out["generalist_left_cw/generalist_right_ccw"] = out.get("generalist_left_cw/generalist_right_ccw", why_rot)
+        out["onion_slow_ccw/server_ccw"] = why_rot
     return out

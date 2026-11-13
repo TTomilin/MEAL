@@ -1,4 +1,4 @@
-"""Diagnostic rollouts for the planner partners P01-P12 (not a benchmark).
+"""Diagnostic rollouts for the planner partners (P01-P12 and the later variants; not a benchmark).
 
 Each planner plays agent_1 (its training seat) for one episode per seed against each existing competent
 counterpart in the agent_0 seat: the independent planner (no counters), the onion specialist and the plate
@@ -38,10 +38,13 @@ from meal.wrappers.logging import LogWrapper
 
 ACTION_NAMES = ("up", "down", "right", "left", "stay", "interact")
 ITEMS = [OBJECT_TO_INDEX[k] for k in ("onion", "plate", "dish")]
-PAIRS = (("P01", "P02"), ("P03", "P04"), ("P05", "P06"), ("P07", "P08"), ("P09", "P10"), ("P11", "P12"))
+PAIRS = (("P01", "P02"), ("P03", "P04"), ("P05", "P06"), ("P07", "P08"), ("P09", "P10"), ("P11", "P12"),
+         ("onion_left_cw", "onion_right_ccw"), ("server_cw", "server_ccw"),
+         ("generalist_left_cw", "generalist_right_ccw"), ("counter_feeder", "counter_feeder_right"),
+         ("generalist_stubborn", "server_stubborn"), ("generalist_slow", "onion_slow_ccw"))
 DIRECTIONS = jnp.array([[0, -1], [0, 1], [1, 0], [-1, 0]])  # (dx, dy) of up, down, right, left
 FLAGS = ("pot_route", "counter_route", "plate_ready", "prefetch", "both", "blocked", "waiting", "multi_handoff",
-         "complement_decided")
+         "complement_decided", "role_onion", "role_serve", "counter_only", "pot_preference", "never_yield", "idle")
 
 
 @dataclass

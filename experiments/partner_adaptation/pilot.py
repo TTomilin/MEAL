@@ -102,8 +102,9 @@ def check_methods(methods):
 
 
 def planner_ids(planners=DEFAULT_PLANNERS) -> Tuple[str, ...]:
-    from experiments.partner_adaptation.partner_agents.overcooked.planner_variants import PLANNER_SPECS
-    selected = tuple(PLANNER_SPECS) if tuple(planners) == DEFAULT_PLANNERS else tuple(planners)
+    from experiments.partner_adaptation.partner_agents.overcooked.planner_variants import (
+        CLASSIC_PLANNER_IDS, PLANNER_SPECS)
+    selected = CLASSIC_PLANNER_IDS if tuple(planners) == DEFAULT_PLANNERS else tuple(planners)
     unknown = [planner for planner in selected if planner not in PLANNER_SPECS]
     if unknown or len(set(selected)) != len(selected):
         raise PilotError(f"planners must be distinct known ids or ('all',), got {selected}")

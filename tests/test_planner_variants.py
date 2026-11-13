@@ -19,10 +19,11 @@ from experiments.partner_adaptation.partner_agents.agent_interface import (
     ActorWithConditionalCriticPolicy, MLPActorCriticPolicyCL,
 )
 from experiments.partner_adaptation.partner_agents.overcooked.agent_policy_wrappers import (
-    OvercookedPlannerPolicyWrapper,
+    OvercookedIndependentPolicyWrapper, OvercookedPlannerPolicyWrapper, OvercookedStaticPolicyWrapper,
 )
 from experiments.partner_adaptation.partner_agents.overcooked.planner_variants import (
-    PLANNER_SPECS, STALL_LIMIT, Case, PlannerAgent, layout_collapses, planner_params,
+    CLASSIC_PLANNER_IDS, NEW_PLANNER_IDS, PLANNER_SPECS, STALL_LIMIT, YIELD_NEVER, Case,
+    PlannerAgent, PotPref, layout_collapses, planner_params,
 )
 from experiments.partner_adaptation.partner_bank import (
     PartnerBankError, assemble_bank, load_partner_bank, load_partners,
@@ -42,7 +43,24 @@ STAY, INTERACT = 4, 5
 UP, DOWN, RIGHT, LEFT = 0, 1, 2, 3
 ONION, PLATE, DISH = (OBJECT_TO_INDEX[k] for k in ("onion", "plate", "dish"))
 EMPTY = OBJECT_TO_INDEX["empty"]
-IDS = list(PLANNER_SPECS)
+IDS = list(CLASSIC_PLANNER_IDS)
+NEW_IDS = list(NEW_PLANNER_IDS)
+
+# Frozen before the six new PlannerParams options; must stay identical for old banks.
+CLASSIC_CONFIG_SHA256 = {
+    "P01": "5646b7b6ee203d88de72da2306bcbb520213f7d44955256be802fc2ad4f35f31",
+    "P02": "6a5231f05e938de83f59940ffa4465baeb8ce2061d13a0f03018ce9a8fb0e1b7",
+    "P03": "4ce4b2891e604e62d15d91c2f63b5025c46f678c8dae6d3d3d820fc0eb272608",
+    "P04": "041a5e2ae09c5e434e14a2d23f36984fc1bb6e205b3cea1667874793abc37a2b",
+    "P05": "235d04f848ee94380d5fa16e5d3c782864d2dfa883c45be9fac2471ad2775e2d",
+    "P06": "6054e2b37980030db9c16661ebc1e5547aff00a4077223d7fa8454ee7548b612",
+    "P07": "d927ee8ee909566c9838ac88ec059ef56ed6a2a6a5873bb1f5564f2acf9eac19",
+    "P08": "1b5ed9911697874eb2a6a20f6187f534d451b4fd28140fa313d2aff6c39ce96d",
+    "P09": "b3a8b2d42471b273d30cf336cb25ef0c1342933f4424768d3d5e4e387ec7b40c",
+    "P10": "dfe7dae91c3f249a1c0ad1139aaae721a13a7c63fab4be7084b0e3dd18f2f503",
+    "P11": "78848a6c613fc13531091c73af1d3166f7e9aa1be00d165e89a22e5accc46e2a",
+    "P12": "60158a68f63825038696b067d16f5e92fdf18b7177106ab30f3ae4e612cbe43c",
+}
 
 # coord_ring (y, x):  ###P#   pots (0,3) (1,4); onion piles (3,0) (4,1); plate pile (2,0); goal (4,2)
 #                     #.A.P   agents start at (2,1) [agent_1, the planner] and (1,2)
@@ -103,13 +121,18 @@ def ring():
 
 def test_registry_has_twelve_stable_distinct_planners():
     assert IDS == [f"P{i:02d}" for i in range(1, 13)]
-    assert len({s.config_sha256 for s in PLANNER_SPECS.values()}) == 12
-    assert len({s.name for s in PLANNER_SPECS.values()}) == 12
+    assert list(NEW_PLANNER_IDS) == NEW_IDS and len(NEW_IDS) == 12
+    assert list(PLANNER_SPECS) == IDS + NEW_IDS
+    assert len({s.config_sha256 for s in PLANNER_SPECS.values()}) == 24
+    assert len({s.name for s in PLANNER_SPECS.values()}) == 24
+    assert {pid: PLANNER_SPECS[pid].config_sha256 for pid in IDS} == CLASSIC_CONFIG_SHA256
     p = {k: v.params for k, v in PLANNER_SPECS.items()}
     assert (p["P01"]["p_onion_on_counter"], p["P02"]["p_onion_on_counter"]) == (0.0, 0.8)
     assert (p["P03"]["prefetch_steps"], p["P04"]["prefetch_steps"]) == (0, 10)
     assert (p["P07"]["yield_wait"], p["P08"]["yield_wait"]) == (0, 2)
     assert (p["P11"]["history_window"], p["P12"]["history_window"]) == (8, 32)
+    for pid in IDS:
+        assert not {"role", "counter_only", "pot_preference", "rotation", "idle_prob"} & p[pid].keys()
     # a pair differs from the fixed generalist only through its own option
     for a, b, key in (("P01", "P02", "p_onion_on_counter"), ("P03", "P04", "prefetch_steps"),
                       ("P05", "P06", "priority"), ("P07", "P08", "yield_wait"), ("P09", "P10", "handoff_rule")):
@@ -349,8 +372,8 @@ def test_done_clears_planner_memory_before_acting(ring):
 
 @pytest.mark.parametrize("layout", ["coord_ring", "cramped_room", "asymm_advantages", "counter_circuit"])
 def test_every_planner_runs_with_existing_counterparts_on_all_layouts(layout):
-    """Construction and a 60-step rollout of all twelve planners against the onion specialist; no BRDiv partners."""
-    cfg = QualityConfig(layouts=[layout], counterparts=["onion"], episodes=2, steps=60)
+    """Construction and a 60-step rollout of all twelve classic planners against the onion specialist."""
+    cfg = QualityConfig(layouts=[layout], planners=IDS, counterparts=["onion"], episodes=2, steps=60)
     result = run_layout(layout, cfg)
     assert list(result["rows"]) == IDS
     for pid in IDS:
@@ -365,8 +388,8 @@ def test_quality_diagnostic_flags_identical_never_active_and_collapsed_variants(
                         counterparts=["independent"], episodes=2, steps=60)
     result = run_layout("cramped_room", cfg)
     flags = diagnose(result, cfg)
-    assert set(layout_collapses(overcooked_layouts["cramped_room"])) == {"P05/P06", "P11/P12"}
-    assert {f.split(":")[0] for f in flags["collapsed"]} == {"P05/P06", "P11/P12"}
+    assert {"P05/P06", "P11/P12"} <= set(layout_collapses(overcooked_layouts["cramped_room"]))
+    assert {"P05/P06", "P11/P12"} <= {f.split(":")[0] for f in flags["collapsed"]}
     assert not any(f.startswith(("P05", "P06", "P11", "P12")) for f in flags["never_active"])  # explained by collapse
     assert any({"P05", "P06"} <= set(group.split(" = ")) for group in flags["identical"])
     # a variant whose option never mattered is reported when the layout does not explain it
@@ -376,7 +399,13 @@ def test_quality_diagnostic_flags_identical_never_active_and_collapsed_variants(
 
 
 def test_layouts_report_the_distinctions_they_cannot_express():
-    assert set(layout_collapses(overcooked_layouts["asymm_advantages"])) == {"P01/P02", "P07/P08", "P09/P10"}
+    asymm = layout_collapses(overcooked_layouts["asymm_advantages"])
+    assert {"P01/P02", "P07/P08", "P09/P10"} <= set(asymm)
+    assert "counter_feeder/counter_feeder_right" in asymm
+    cramped = layout_collapses(overcooked_layouts["cramped_room"])
+    assert {"P05/P06", "P11/P12"} <= set(cramped)
+    assert "generalist_left_cw/generalist_right_ccw" in cramped
+    assert "server_cw/server_ccw" in cramped
     assert layout_collapses(overcooked_layouts["coord_ring"]) == {}
     assert layout_collapses(overcooked_layouts["counter_circuit"]) == {}
 
@@ -469,3 +498,143 @@ def test_bank_rejects_bad_planner_records(tmp_path):
     ok = load_partner_bank(_planner_manifest(tmp_path, [planner(0, "P01", config_sha256=PLANNER_SPECS["P01"].config_sha256)]),
                            "coord_ring")
     assert len(ok) == 1
+
+
+#  new behaviour options and planners
+
+def _rollout_inv(layout_name, planner_id, steps=400, seed=0, counterpart="independent"):
+    """Inventories held by the planner (agent_1) over a real env rollout."""
+    layout = overcooked_layouts[layout_name]
+    env = LogWrapper(make_env("overcooked", layout=layout, max_steps=steps))
+    planner = OvercookedPlannerPolicyWrapper(layout)
+    other = OvercookedIndependentPolicyWrapper(layout, p_onion_on_counter=0.0, p_plate_on_counter=0.0)
+    params = planner_params(planner_id)
+    key = jax.random.PRNGKey(seed)
+    obs, state = env.reset(key)
+    h0 = other.init_hstate(1, {"agent_id": 0})
+    h1 = planner.init_hstate(1, {"agent_id": 1})
+    invs, actions = [], []
+    act_key = jax.random.fold_in(key, 1)
+    step_key = jax.random.fold_in(key, 2)
+    for t in range(steps):
+        invs.append(int(state.env_state.agent_inv[1]))
+        k0, k1 = jax.random.split(jax.random.fold_in(act_key, t))
+        a0, h0 = other.get_action(None, obs["agent_0"], jnp.asarray(False), jnp.ones(6), h0, k0, env_state=state)
+        a1, h1 = planner.get_action(params, obs["agent_1"], jnp.asarray(False), jnp.ones(6), h1, k1, env_state=state)
+        actions.append(int(a1))
+        obs, state, _, _, _ = env.step(jax.random.fold_in(step_key, t), state,
+                                       {"agent_0": jnp.asarray([a0], jnp.uint32),
+                                        "agent_1": jnp.asarray([a1], jnp.uint32)})
+    return np.asarray(invs), np.asarray(actions)
+
+
+def test_role_onion_never_holds_plate_or_dish_and_serve_never_holds_onion():
+    for layout in ("coord_ring", "counter_circuit"):
+        onion_inv, _ = _rollout_inv(layout, "onion_left_cw")
+        assert not np.isin(onion_inv, [PLATE, DISH]).any()
+        serve_inv, _ = _rollout_inv(layout, "server_cw")
+        assert not (serve_inv == ONION).any()
+
+
+def test_pot_preference_left_right_select_matching_pot(ring):
+    holding = arrange(ring, inv1=ONION)
+    for pref, pot in ((PotPref.LEFT, (0, 3)), (PotPref.RIGHT, (1, 4))):
+        params = planner_params("P01").replace(pot_preference=jnp.int32(pref),
+                                               p_onion_on_counter=jnp.float32(0.0))
+        _, _, info = decide("coord_ring", holding, "P01", params=params)
+        assert info["case"] == Case.ONION_TO_POT and tuple(info["target"]) == pot
+
+
+def _angular_progress(layout_name, planner_id, steps=400, seed=1):
+    """Angular sum of the planner's displacements around the inner block (static counterpart off the path)."""
+    layout = overcooked_layouts[layout_name]
+    agent = PlannerAgent(layout)
+    assert agent.has_loop
+    cy, cx = float(agent.ring_cy), float(agent.ring_cx)
+    env = LogWrapper(make_env("overcooked", layout=layout, max_steps=steps))
+    planner = OvercookedPlannerPolicyWrapper(layout)
+    other = OvercookedStaticPolicyWrapper(layout)
+    params = planner_params(planner_id)
+    key = jax.random.PRNGKey(seed)
+    obs, state = env.reset(key)
+    # park agent_0 on a floor tile that is not the planner's spawn so the ring stays clear
+    if layout_name == "coord_ring":
+        state = state.replace(env_state=state.env_state.replace(
+            agent_pos=state.env_state.agent_pos.at[0].set(jnp.asarray([3, 3], state.env_state.agent_pos.dtype))))
+    else:
+        state = state.replace(env_state=state.env_state.replace(
+            agent_pos=state.env_state.agent_pos.at[0].set(jnp.asarray([1, 1], state.env_state.agent_pos.dtype))))
+    h0 = other.init_hstate(1, {"agent_id": 0})
+    h1 = planner.init_hstate(1, {"agent_id": 1})
+    act_key, step_key = jax.random.fold_in(key, 1), jax.random.fold_in(key, 2)
+    total, prev = 0.0, state.env_state.agent_pos[1]
+    for t in range(steps):
+        k0, k1 = jax.random.split(jax.random.fold_in(act_key, t))
+        a0, h0 = other.get_action(None, obs["agent_0"], jnp.asarray(False), jnp.ones(6), h0, k0, env_state=state)
+        a1, h1 = planner.get_action(params, obs["agent_1"], jnp.asarray(False), jnp.ones(6), h1, k1, env_state=state)
+        obs, state, _, _, _ = env.step(jax.random.fold_in(step_key, t), state,
+                                       {"agent_0": jnp.asarray([a0], jnp.uint32),
+                                        "agent_1": jnp.asarray([a1], jnp.uint32)})
+        cur = state.env_state.agent_pos[1]
+        x, y = float(prev[0]), float(prev[1])
+        nx, ny = float(cur[0]), float(cur[1])
+        total += (x - cx) * (ny - cy) - (y - cy) * (nx - cx)
+        prev = cur
+    return total
+
+
+def test_rotation_clockwise_and_counterclockwise_accumulate_angular_progress():
+    for layout in ("coord_ring", "counter_circuit"):
+        assert _angular_progress(layout, "onion_left_cw") > 0
+        assert _angular_progress(layout, "onion_right_ccw") < 0
+
+
+def test_idle_prob_half_stays_about_half_the_steps(ring):
+    """Frozen world where the non-idle plan is always a translation: idle_prob=0.5 -> ~half stays."""
+    state = arrange(ring, inv1=ONION, pos1=(3, 1), pos0=(1, 2))
+    params = planner_params("generalist_slow").replace(
+        p_onion_on_counter=jnp.float32(0.0), yield_wait=jnp.int32(0))
+    env, agent, act, _ = world()
+    obs = env.get_obs(state)["agent_1"]
+    pstate = agent.init_agent_state(1)
+    stays = 0
+    for t in range(400):
+        action, pstate, _ = act(params, obs, state, pstate, jax.random.PRNGKey(t))
+        stays += int(action == STAY)
+    assert 0.4 <= stays / 400 <= 0.6
+
+
+def test_never_yield_keeps_blocked_move_and_deadlock_escape_still_fires(ring):
+    blocked = arrange(ring, inv1=ONION, pos1=(1, 2), pos0=(1, 3))
+    params = planner_params("generalist_stubborn").replace(p_onion_on_counter=jnp.float32(0.0))
+    assert int(params.yield_wait) == YIELD_NEVER
+    action0, pstate, _ = decide("coord_ring", blocked, "generalist_stubborn", params=params)
+    assert action0 < 4
+    action1, pstate, info = decide("coord_ring", blocked, "generalist_stubborn", pstate=pstate, params=params)
+    assert info["blocked"] and action1 == action0 and not info["waiting"]
+    recovered = False
+    for t in range(2 * STALL_LIMIT + 4):
+        action, pstate, info = decide("coord_ring", blocked, "generalist_stubborn", pstate=pstate, rng=t,
+                                      params=params)
+        if info["recovered"]:
+            recovered = True
+            assert action in (UP, DOWN, RIGHT, LEFT)
+            break
+    assert recovered
+
+
+def test_new_planners_load_through_bank_manifest_and_resolve(tmp_path):
+    partners = [{"partner_id": i, "kind": "planner", "planner_id": pid,
+                 "config_sha256": PLANNER_SPECS[pid].config_sha256}
+                for i, pid in enumerate(NEW_IDS)]
+    path = _planner_manifest(tmp_path, partners)
+    bank = load_partner_bank(path, "coord_ring")
+    loaded = load_partners(bank, obs_dim=5 * 5 * 26)
+    assert [r.planner_id for r in bank.records] == NEW_IDS
+    assert len(loaded) == 12 and len({id(p.policy) for p in loaded}) == 1
+    assert int(loaded[NEW_IDS.index("generalist_stubborn")].params.yield_wait) == YIELD_NEVER
+    assert float(loaded[NEW_IDS.index("generalist_slow")].params.idle_prob) == 0.5
+    # --planners all still means only P01-P12
+    out = tmp_path / "classic.json"
+    bank24 = assemble_bank("coord_ring", str(out), [], bundled=False, planners=("all",))
+    assert [r.planner_id for r in bank24.records] == IDS

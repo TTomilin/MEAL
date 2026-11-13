@@ -537,10 +537,11 @@ def _relpath(target: Path, base: Path) -> str:
 def assemble_bank(layout: str, out: str, generation_dirs: List[str], name: str = "", bundled: bool = True,
                   bundled_root: Path = BUNDLED_ROOT, planners: Tuple[str, ...] = ()) -> PartnerBank:
     """Write a manifest listing the bundled members (optional), every member recorded in each
-    ``generation.json`` and then the requested planners (ids, or ``("all",)`` for P01-P12), and load it back so an
+    ``generation.json`` and then the requested planners (ids, or ``("all",)`` for P01-P12 only), and load it back so an
     invalid bank is never left behind silently. Order in the manifest is training order."""
-    from experiments.partner_adaptation.partner_agents.overcooked.planner_variants import PLANNER_SPECS
-    planners = tuple(PLANNER_SPECS) if tuple(planners) == ("all",) else tuple(planners)
+    from experiments.partner_adaptation.partner_agents.overcooked.planner_variants import (
+        CLASSIC_PLANNER_IDS, PLANNER_SPECS)
+    planners = CLASSIC_PLANNER_IDS if tuple(planners) == ("all",) else tuple(planners)
     out_path = Path(out).resolve()
     base = out_path.parent
     populations, members = {}, []
