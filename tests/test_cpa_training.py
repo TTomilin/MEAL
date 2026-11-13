@@ -4,6 +4,7 @@ Everything here uses tiny shapes (a handful of envs, 16-step episodes unless sta
 BRDiv partner from `partner_agents/BRDiv_population/cramped_room` and the existing onion planner.
 These tests exercise logic and wiring on CPU; they say nothing about GPU performance or numerics.
 """
+import json
 import pickle
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,7 +25,7 @@ from experiments.partner_adaptation.partner_agents.agent_interface import (
 from experiments.partner_adaptation.partner_agents.overcooked.agent_policy_wrappers import (
     OvercookedOnionPolicyWrapper,
 )
-from experiments.partner_adaptation.run_br import TrainConfig
+from experiments.partner_adaptation.run_br import TrainConfig, execute
 from experiments.partner_adaptation.train_br import (
     DummyPolicyPopulation, HeuristicPolicyPopulation, make_partner_switches, run_br_training,
 )
@@ -409,3 +410,22 @@ def test_full_and_current_events_are_separate_and_use_their_own_names(cpa):
     assert "EvalCurrent/TeamSoups" in events[0] and "EvalCurrent/EgoStayFraction" in events[0]
     assert "EvalCurrent/TeamSoups_Partner0" not in events[0]
     assert "EvalFull/MeanTeamSoups" in events[2] and "EvalFull/EgoStayFraction_Partner2" in events[2]
+
+
+def test_only_stages_writes_params_and_profile_status(tmp_path):
+    bank = tmp_path / "bank.json"
+    bank.write_text(json.dumps({
+        "format_version": 2, "name": "tiny_planner", "layout": "cramped_room", "num_partners": 1,
+        "populations": {}, "partners": [{"partner_id": 0, "kind": "planner", "planner_id": "P01"}],
+        "heldout": [],
+    }))
+    spu = 4 * 16
+    cfg = TrainConfig(
+        mode="disabled", checkpoint_path=str(tmp_path / "runs"), layout_name="cramped_room",
+        partner_bank=str(bank), num_heuristic_partners=0, num_envs=4, num_steps=16, total_timesteps=spu,
+        update_epochs=1, num_minibatches=2, num_eval_episodes=1, hidden_size=16, num_layers=1, seed=0,
+        reward_shaping_horizon=spu, aht_eval=False, record_video=False, only_stages=[0],
+        eval_schedule="pilot")
+    result = execute(cfg)
+    assert (result.run_dir / "params_seed0.pt").is_file()
+    assert json.loads((result.run_dir / "status.json").read_text())["state"] == "profile"

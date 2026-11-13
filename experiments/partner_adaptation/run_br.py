@@ -48,6 +48,7 @@ log = logging.getLogger(__name__)
 HEURISTIC_NAMES = ["Independent_Policy", "Onion_Policy", "Plate_Policy", "Random_Policy", "Static_Policy"]
 IMPORTANCE_METHODS = ("ewc", "mas", "l2")
 SCHEDULES = ("sequential", "interleaved")
+ENV_DYNAMICS = ("meal", "aht")
 
 
 @dataclass
@@ -75,6 +76,9 @@ class TrainConfig:
     layout_difficulty: str = "easy"
     layout_idx: int = 0
     layout_name: str = ""  # If specified, overrides layout_idx
+    # "meal" = MEAL's Overcooked (fixed start cells, MEAL collision rule);
+    # "aht" = jax-aht dynamics (random start cells, JaxMARL collision rule).
+    env_dynamics: str = "meal"
 
     reward_shaping_horizon: float = 2.5e7
     ego_reward: str = "team"  # "team" or "own" deliveries as the ego's sparse reward
@@ -254,6 +258,8 @@ def validate_config(config: TrainConfig):
         problems.append("eval_current_every must be >= 0 (0 disables current-partner evaluation)")
     if config.ego_reward not in ("team", "own"):
         problems.append(f"ego_reward must be 'team' or 'own', got {config.ego_reward!r}")
+    if config.env_dynamics not in ENV_DYNAMICS:
+        problems.append(f"env_dynamics must be one of {ENV_DYNAMICS}, got {config.env_dynamics!r}")
     if config.aht_heldout_eval not in AHT_HELDOUT_EVAL:
         problems.append(f"aht_heldout_eval must be one of {AHT_HELDOUT_EVAL}, got {config.aht_heldout_eval!r}")
     if config.cl_method and config.cl_method.lower() in IMPORTANCE_METHODS and (
@@ -326,6 +332,8 @@ def resolve_run(config: TrainConfig) -> Resolved:
         config_dict.pop("schedule"), config_dict.pop("interleave_updates")
     if not config.stage_order:  # empty = bank order; omit so pre-stage_order fingerprints still match
         config_dict.pop("stage_order")
+    if config.env_dynamics == "meal":  # omit so pre-env_dynamics fingerprints still match
+        config_dict.pop("env_dynamics")
     if config.schedule == "interleaved" and config.reward_shaping_horizon > len(identities) * config.total_timesteps:
         raise ValueError(f"invalid configuration:\n  reward_shaping_horizon={config.reward_shaping_horizon:g} exceeds "
                          f"the whole interleaved run ({len(identities)} partners x {config.total_timesteps:g} "
@@ -385,6 +393,26 @@ def build_cl_method(config):
         raise ValueError(f"Unknown continual learning method: {config.cl_method}")
     print(f"Initialized continual learning method: {config.cl_method.upper()}")
     return method_map[config.cl_method.lower()]
+
+
+def make_train_env(config, layout_name: str, agent_stats: bool = False):
+    """Training/eval Overcooked for this run: MEAL defaults, or jax-aht dynamics when requested."""
+    if config.env_dynamics == "aht":
+        from experiments.partner_adaptation.jax_aht_bridge.heldout import AhtEvalOvercooked
+        env = AhtEvalOvercooked(config.layout["layout"], layout_name, max_steps=config.num_steps)
+    else:
+        env = make_env(config.env_name, **config.layout, max_steps=config.num_steps)
+    return LogWrapper(env, agent_stats=agent_stats)
+
+
+def build_ego_network(config, action_dim: int):
+    """Actor-critic module for the learning ego; architecture follows `config`."""
+    ac_cls = CNNActorCritic if config.use_cnn else MLPActorCritic
+    seq_length = config.num_population_partners + config.num_heuristic_partners
+    return ac_cls(
+        action_dim, config.activation, seq_length, config.use_multihead,
+        config.shared_backbone, config.hidden_size, config.num_layers, config.use_task_id,
+        config.use_layer_norm)
 
 
 def schedule_description(config, labels):
@@ -483,11 +511,10 @@ def execute(config: TrainConfig) -> RunResult:
         status.update_attempt(attempt, agent_stats={"requested": config.log_agent_stats,
                                                     "recorded": record_agent_stats, "csv_columns": csv_schema})
 
-        env = make_env(config.env_name, **config.layout, max_steps=config.num_steps)
-        env = LogWrapper(env, agent_stats=record_agent_stats)
+        layout_name = config.layout_name if config.layout_name != "" else f"layout_{config.layout_idx}"
+        env = make_train_env(config, layout_name, agent_stats=record_agent_stats)
 
         # Calculate max soup for the layout
-        layout_name = config.layout_name if config.layout_name != "" else f"layout_{config.layout_idx}"
         max_soup_dict = {layout_name: calculate_max_soup(config.layout["layout"], env.max_steps, n_agents=env.num_agents)}
 
         # Visualization extras (pygame/imageio) are only needed when recording videos
@@ -504,14 +531,9 @@ def execute(config: TrainConfig) -> RunResult:
             raise NotImplementedError("Selected method not implemented.")
 
         # Initialize ego agent
-        ac_cls = CNNActorCritic if config.use_cnn else MLPActorCritic
-
+        ego_network = build_ego_network(config, len(env.action_set))
+        ac_cls = type(ego_network)
         seq_length = config.num_population_partners + config.num_heuristic_partners
-
-        ego_network = ac_cls(
-            len(env.action_set), config.activation, seq_length, config.use_multihead,
-            config.shared_backbone, config.hidden_size, config.num_layers, config.use_task_id,
-            config.use_layer_norm)
 
         obs_dim = env.observation_space().shape
         if not config.use_cnn:
@@ -582,7 +604,7 @@ def execute(config: TrainConfig) -> RunResult:
                 write_json(run_dir / "heldout_partners.json", heldout_identities)
             write_json(run_dir / "run.json", {
                 "run_name": run_name, "run_uid": run_uid, "created": status.data["attempts"][0]["started_utc"],
-                "code": code, "device": device, "fingerprint": fingerprint,
+                "code": code, "device": device, "env_dynamics": config.env_dynamics, "fingerprint": fingerprint,
                 "architecture": {
                     "network": f"{ac_cls.__module__}.{ac_cls.__name__}", "hidden_size": config.hidden_size,
                     "num_layers": config.num_layers, "activation": config.activation,
@@ -792,6 +814,7 @@ def execute(config: TrainConfig) -> RunResult:
                     log.warning("recording the stage-%d video failed: %s: %s", k, type(e).__name__, e)
 
         if profiling:
+            atomic_write(run_dir / f"params_seed{config.seed}.pt", pickle.dumps({"actor_params": ego_params}))
             status.update(state="profile", counters=counters)
             return RunResult(run_dir, ego_params, cl_state, counters)
         if final_evaluator:
