@@ -52,6 +52,7 @@ utils = [
     "orbax-checkpoint",
     "pandas",
     "pytest",
+    "scikit-learn",
     "tqdm",
 ]
 aht = [

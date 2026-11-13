@@ -228,6 +228,44 @@ These pairs are still in the bank (24 ids, no replacement); they behave as copie
 after one step because the other agent moves), and on `coord_ring` P05 identical to P11 in sampled behaviour. Such
 coincidences are reported, not fixed.
 
+### Additional planners (roles, pots, rotation, yield, idle)
+
+Twelve further frozen planners share the same `PlannerAgent` graph. They are listed by id in a bank manifest (not
+covered by `--planners all`, which remains P01-P12). New `PlannerParams` options default to today's behaviour
+(`role=ALL`, `counter_only=False`, `pot_preference=NEAREST`, `rotation=NONE`, `yield_wait=1`, `idle_prob=0.0`);
+P01-P12 configs and hashes are unchanged.
+
+| id | description | activation | options set |
+|---|---|---|---|
+| onion_left_cw | fills only, left pot, walks clockwise | role_onion | role=ONION, pot_preference=LEFT, rotation=CLOCKWISE |
+| onion_right_ccw | fills only, right pot, walks counter-clockwise | role_onion | role=ONION, pot_preference=RIGHT, rotation=COUNTERCLOCKWISE |
+| server_cw | serves only, walks clockwise | role_serve | role=SERVE, rotation=CLOCKWISE |
+| server_ccw | serves only, walks counter-clockwise | role_serve | role=SERVE, rotation=COUNTERCLOCKWISE |
+| counter_feeder | fills only, every onion onto a handoff counter | counter_only | role=ONION, counter_only=True |
+| generalist_left_cw | does everything, left pot, walks clockwise | pot_preference | pot_preference=LEFT, rotation=CLOCKWISE |
+| generalist_right_ccw | does everything, right pot, walks counter-clockwise | pot_preference | pot_preference=RIGHT, rotation=COUNTERCLOCKWISE |
+| generalist_stubborn | does everything, never gives way when blocked | never_yield | yield_wait=NEVER (-1) |
+| generalist_slow | does everything, idles half the steps | idle | idle_prob=0.5 |
+| server_stubborn | serves only, never gives way when blocked | never_yield | role=SERVE, yield_wait=NEVER |
+| onion_slow_ccw | fills only, idles half the steps, walks counter-clockwise | idle | role=ONION, idle_prob=0.5, rotation=COUNTERCLOCKWISE |
+| counter_feeder_right | fills only via handoff counters, right pot when it must use a pot | counter_only | role=ONION, counter_only=True, pot_preference=RIGHT |
+
+- **role** `ALL` / `ONION` / `SERVE`: `ONION` only supplies (onions to pot or handoff; never plates or serves);
+  `SERVE` only plates ready soup and delivers. With nothing to do in its role, the agent walks next to the role's
+  next target and stays.
+- **counter_only**: every held onion is routed to a shared handoff counter, never a pot; if the layout has no
+  handoff counter, fall back to the pot (flagged by `layout_collapses`).
+- **pot_preference** `NEAREST` / `LEFT` / `RIGHT`: which pot to fill, wait beside, or plate (`LEFT` = lowest
+  column). One-pot layouts: no effect (collapse).
+- **rotation** `NONE` / `CLOCKWISE` / `COUNTERCLOCKWISE`: on layouts whose floor loops around an inner counter
+  block (`coord_ring`, `counter_circuit`), movement uses a directed floor graph that forbids moves against the
+  chosen sense around the block (zero angular change allowed; y grows downward so positive cross product is
+  clockwise). If no directed path exists, the unrestricted step is used. Other layouts: no effect (collapse).
+- **yield_wait** `NEVER` (`-1`): when a translation is blocked, keep the previous move (no wait, no replan). The
+  8-step deadlock escape still applies.
+- **idle_prob**: each step, with this probability take `stay` instead of the planned action (from the per-step
+  RNG). Idle steps do not count as no-progress for the deadlock escape.
+
 ## Run outputs, checkpoints and resume
 
 Every invocation of `run_br` creates a new directory `<checkpoint_path>/<run string>_<YYYYMMDD-HHMMSS>_<8 hex>`
@@ -725,6 +763,9 @@ single-head model, and the runs themselves.
 [jax-aht](https://github.com/LARG/jax-aht) is pinned as the submodule `third_party/jax-aht` and used as a library from
 MEAL's own venv. `experiments/partner_adaptation/jax_aht_bridge/` is the only code that imports its generic
 top-level packages (`agents`, `common`, `envs`, `teammate_generation`).
+
+`--env-dynamics meal` (default) keeps MEAL's Overcooked (fixed starts, MEAL collisions); `--env-dynamics aht` trains in
+`AhtEvalOvercooked` (random starts, JaxMARL collisions). Fingerprinted only when `aht`; always written in `run.json`.
 
 ```bash
 git submodule update --init third_party/jax-aht       # locally, before syncing (send.sh copies no .git)

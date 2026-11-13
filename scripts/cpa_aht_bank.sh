@@ -14,6 +14,7 @@ LAYOUT="${LAYOUT:-coord_ring}"
 SEED="${SEED:-0}"
 NUM_ENVS="${NUM_ENVS:-2048}"
 TOTAL_TIMESTEPS="${TOTAL_TIMESTEPS:-1e7}"
+GROUP="${GROUP:-cpa_aht_${LAYOUT}}"
 # a quarter of TOTAL_TIMESTEPS so shaping reaches 0 within every stage
 REWARD_SHAPING_HORIZON="${REWARD_SHAPING_HORIZON:-$(awk -v t="${TOTAL_TIMESTEPS}" 'BEGIN { printf "%.6g", t / 4 }')}"
 # optional override for the partner-bank manifest path
@@ -27,7 +28,7 @@ args=(--layout-name "${LAYOUT}" --partner-bank "${BANK}" --seed "${SEED}"
       --reward-shaping-horizon "${REWARD_SHAPING_HORIZON}"
       --no-use-task-id --no-use-multihead
       --eval-schedule pilot --checkpoint-path "${RUN_DIR}"
-      --group "cpa_aht_${LAYOUT}" --tags cpa aht "${LAYOUT}")
+      --group "${GROUP}" --tags cpa aht "${LAYOUT}")
 [[ -n "${CL_METHOD:-}" ]] && args+=(--cl-method "${CL_METHOD}")
 # optional space-separated partner indices that set stage order
 [[ -n "${STAGE_ORDER:-}" ]] && args+=(--stage-order ${STAGE_ORDER})
