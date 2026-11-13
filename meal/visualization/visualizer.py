@@ -172,8 +172,8 @@ class OvercookedVisualizer:
               pixels in different frames map to the same palette index and
               therefore produce identical bytes → no flickering.
 
-        Video — uses lossless H.264 (libx264rgb, CRF 0, RGB pixel format).
-                No YUV colour-space conversion, no blocking artefacts.
+        Video — uses browser-playable H.264 (libx264, yuv420p, High profile,
+                CRF 10), frames edge-padded to multiples of 16 (no rescaling).
         """
         ext = os.path.splitext(out_path)[1].lower()
         if ext == ".gif":
@@ -215,15 +215,16 @@ class OvercookedVisualizer:
 
     @staticmethod
     def _save_video(frames: np.ndarray, out_path: str, fps: int) -> None:
-        # libx264rgb: lossless H.264 in native RGB (no YUV conversion, no chroma
-        # subsampling).  CRF 0 = mathematically lossless.  Files are moderate in
-        # size for short sprite-art clips.
+        # Firefox rejects libx264rgb; padding to 16 px stops imageio from rescaling.
+        H, W = frames.shape[1:3]
+        frames = np.pad(frames, ((0, 0), (0, -H % 16), (0, -W % 16), (0, 0)), mode="edge")
         iio.imwrite(
             out_path,
             frames,
             fps=fps,
             plugin="FFMPEG",
-            codec="libx264rgb",
-            pixelformat="rgb24",
-            output_params=["-crf", "0", "-preset", "fast"],
+            codec="libx264",
+            pixelformat="yuv420p",
+            output_params=["-crf", "10", "-preset", "fast", "-profile:v", "high",
+                           "-movflags", "+faststart"],
         )
