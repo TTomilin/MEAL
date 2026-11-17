@@ -241,9 +241,11 @@ class ActorWithConditionalCriticPolicy(AgentPolicy):
         dummy_agent_id = jnp.zeros(obs.shape[:-1] + (self.pop_size,))
         pi, _ = self.network.apply(
             params, (obs, dummy_agent_id, avail_actions))
+        # Gumbel-max with the noise behind a barrier: a fused pi.sample takes ptxas tens of minutes at 16384 envs
+        noise = jax.lax.optimization_barrier(jax.random.gumbel(rng, pi.logits.shape, pi.logits.dtype))
         action = jax.lax.cond(test_mode,
                               lambda: pi.mode(),
-                              lambda: pi.sample(seed=rng))
+                              lambda: jnp.argmax(pi.logits + noise, axis=-1))
         return action, None  # no hidden state
 
     @partial(jax.jit, static_argnums=(0,))
