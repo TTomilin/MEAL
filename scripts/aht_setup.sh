@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 AHT_DIR=third_party/jax-aht
-AHT_COMMIT=890a2826100f86fab3b37da6ec88720e27ac17ef  # LARG/jax-aht v1.1.0 + README update (2026)
+AHT_COMMIT=87a9e44b9b4c24167905b462f7bf0e3fc554346b  # LARG/jax-aht v1.1.0 + heldout-br-xp-update (2026)
 
 if [[ ! -f "${AHT_DIR}/teammate_generation/CoMeDi.py" ]]; then
     if [[ -e .git ]]; then
