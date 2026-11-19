@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from experiments.partner_adaptation.partner_bank import load_partner_bank, write_bank_v2
-from experiments.results.crossplay import LEARNABILITY_FRACTION, main
+from experiments.results.crossplay import LEARNABILITY_FRACTION, largest_all_different, main
 
 LAYOUT = "coord_ring"
 IDS = ("P01", "P02", "P03", "P04")
@@ -304,3 +304,17 @@ def test_own_score_keep_learned_distinctness_learnability_and_out_bank_dir(tmp_p
 
     loaded = load_partner_bank(str(out_bank), LAYOUT)
     assert [r.kind for r in loaded.records] == ["jaxaht", "jaxaht", "planner", "planner"]
+
+
+def test_largest_all_different_exact_max_clique():
+    # Five partners; pairwise different iff both directed ratios are below 0.7.
+    # Edges: 0-1, 0-2, 0-3, 1-2, 1-3, 2-3 form a K4 on {0,1,2,3}; 4 only meets 0.
+    # Largest all-different set is therefore {0,1,2,3}.
+    thr = 0.7
+    ratio = np.ones((5, 5))
+    np.fill_diagonal(ratio, 0.0)
+    for i, j in [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3), (0, 4)]:
+        ratio[i, j] = ratio[j, i] = 0.5
+    assert largest_all_different(ratio, range(5), thr) == [0, 1, 2, 3]
+    assert largest_all_different(ratio, [0, 4], thr) == [0, 4]
+    assert largest_all_different(ratio, [1, 4], thr) == [1]

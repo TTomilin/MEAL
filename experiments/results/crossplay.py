@@ -136,11 +136,59 @@ def learnability_row(path, label, own_score):
     return out
 
 
+def read_partner_events(path, labels):
+    with open(path, newline="") as f:
+        rows = list(csv.DictReader(f))
+    if not rows or "partner" not in rows[0]:
+        raise SystemExit(f"{path}: expected a partner_events.csv with a partner column")
+    by_label = {}
+    for row in rows:
+        label = row["partner"]
+        by_label[label] = sum(float(row[k]) for k in row if k != "partner" and row[k] != "")
+    missing = [lab for lab in labels if lab not in by_label]
+    if missing:
+        raise SystemExit(f"{path}: missing rows for {missing}")
+    return np.array([by_label[lab] for lab in labels], float)
+
+
+def largest_all_different(ratio_matrix, candidates, threshold):
+    """Largest subset of candidates that are pairwise different (ratio < threshold both ways)."""
+    cand = sorted(candidates)
+    nbrs = {
+        i: {j for j in cand if j != i
+            and ratio_matrix[i, j] < threshold and ratio_matrix[j, i] < threshold}
+        for i in cand
+    }
+    best = []
+
+    def search(r, p, x):
+        nonlocal best
+        if not p and not x:
+            chosen = sorted(r)
+            if len(chosen) > len(best) or (len(chosen) == len(best) and chosen < best):
+                best = chosen
+            return
+        u = next(iter(p | x))
+        for v in list(p - nbrs[u]):
+            search(r | {v}, p & nbrs[v], x & nbrs[v])
+            p.remove(v)
+            x.add(v)
+
+    search(set(), set(cand), set())
+    return best
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--bank", required=True)
     ap.add_argument("--runs", nargs="+", required=True)
     ap.add_argument("--matrix", default=None, help="xp_matrix.csv from specialist_crossplay (labels match the bank)")
+    ap.add_argument("--events", default=None, help="partner_events.csv from specialist_crossplay")
+    ap.add_argument("--reference", default=None, metavar="LABEL",
+                    help="idle planner; its own score is the ego-alone score")
+    ap.add_argument("--helpful-ratio", type=float, default=0.8)
+    ap.add_argument("--min-events", type=float, default=6)
+    ap.add_argument("--different", type=float, default=0.7)
     ap.add_argument("--keep", action="append", default=[], metavar="KIND=N")
     ap.add_argument("--keep-by", choices=("similarity", "own_score"), default="similarity")
     ap.add_argument("--min-own-score", type=float, default=0.5)
@@ -149,6 +197,8 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     ap.add_argument("--out-bank", required=True)
     args = ap.parse_args(argv)
+    if args.events and not args.reference:
+        raise SystemExit("--reference is required with --events")
     bank_path, out_bank_path = Path(args.bank), Path(args.out_bank)
     if out_bank_path.resolve().parent != bank_path.resolve().parent:
         raise SystemExit(
@@ -241,6 +291,39 @@ def main(argv=None):
     print(f"distinct partners by kind: {dict(by_kind)}")
     for label, closest, why in non_distinct:
         print(f"not distinct: {label} (closest {closest}; {why})")
+
+    if args.events:
+        if args.reference not in labels:
+            raise SystemExit(f"--reference {args.reference!r} is not in the bank")
+        ref_i = labels.index(args.reference)
+        ref_score = float(XP[ref_i, ref_i])
+        event_sums = read_partner_events(args.events, labels)
+        floor = args.helpful_ratio * ref_score
+        works, reasons = [], []
+        for i in range(P):
+            if event_sums[i] < args.min_events:
+                works.append(False); reasons.append("no_job")
+            elif XP[i, i] < floor:
+                works.append(False); reasons.append("below_ego_alone")
+            else:
+                works.append(True); reasons.append("")
+        candidates = [i for i in range(P) if works[i] and i != ref_i]
+        best = XP.max(axis=0)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            ratio = XP / np.where(best == 0, np.nan, best)
+        chosen = set(largest_all_different(ratio, candidates, args.different))
+        with open(out / "working_set.csv", "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=["label", "kind", "own_score", "events_per_episode",
+                                              "works", "reason", "in_set"])
+            w.writeheader()
+            for i in range(P):
+                w.writerow(dict(
+                    label=labels[i], kind=kinds[i], own_score=float(XP[i, i]),
+                    events_per_episode=float(event_sums[i]),
+                    works="true" if works[i] else "false",
+                    reason=reasons[i],
+                    in_set="true" if i in chosen else "false"))
+        print(f"reference_score={ref_score} working_set_size={len(chosen)}")
 
 
 if __name__ == "__main__":
