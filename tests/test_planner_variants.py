@@ -5,6 +5,7 @@ decision (and the action it takes) for the variant under test. Rollout tests use
 competent planners as counterparts. Nothing here measures strength or diversity of the partners; see
 `partner_quality.py` for the diagnostic.
 """
+import csv
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -23,13 +24,15 @@ from experiments.partner_adaptation.partner_agents.overcooked.agent_policy_wrapp
 )
 from experiments.partner_adaptation.partner_agents.overcooked.planner_variants import (
     CLASSIC_PLANNER_IDS, NEW_PLANNER_IDS, PLANNER_SPECS, STALL_LIMIT, YIELD_NEVER, Case,
-    PlannerAgent, PotPref, layout_collapses, planner_params,
+    PlannerAgent, PotPref, Role, Rotation, layout_collapses, planner_params,
 )
 from experiments.partner_adaptation.partner_bank import (
     PartnerBankError, assemble_bank, load_partner_bank, load_partners,
 )
 from experiments.partner_adaptation.partner_generation.run import save_population_members
-from experiments.partner_adaptation.partner_quality import QualityConfig, diagnose, format_report, run_layout
+from experiments.partner_adaptation.partner_quality import (
+    QualityConfig, diagnose, format_report, run_layout, run_planner_screen,
+)
 from experiments.partner_adaptation.run_br import TrainConfig
 from experiments.partner_adaptation.train_br import HeuristicPolicyPopulation, run_br_training
 from experiments.utils import init_cl_state
@@ -602,6 +605,29 @@ def test_idle_prob_half_stays_about_half_the_steps(ring):
         action, pstate, _ = act(params, obs, state, pstate, jax.random.PRNGKey(t))
         stays += int(action == STAY)
     assert 0.4 <= stays / 400 <= 0.6
+
+
+def test_idle_planner_only_returns_stay(ring):
+    state = arrange(ring, inv1=ONION, pos1=(3, 1), pos0=(1, 2))
+    for t in range(64):
+        action, _, _ = decide("coord_ring", state, "idle", rng=t)
+        assert action == STAY
+
+
+def test_planner_screen_square_matrix_and_bounded_set(tmp_path):
+    grid = [
+        ("all_nearest_none", dict(role=Role.ALL, pot_preference=PotPref.NEAREST, rotation=Rotation.NONE)),
+        ("onion_left_cw", dict(role=Role.ONION, pot_preference=PotPref.LEFT, rotation=Rotation.CLOCKWISE)),
+        ("serve_nearest_none_stubborn", dict(role=Role.SERVE, yield_wait=YIELD_NEVER)),
+        ("idle", dict(idle_prob=1.0)),
+    ]
+    result = run_planner_screen("cramped_room", 1, tmp_path, steps=40, grid=grid)
+    with open(tmp_path / "planner_screen.csv", newline="") as f:
+        rows = list(csv.reader(f))
+    assert rows[0] == ["planner"] + result["names"]
+    assert len(rows) == 5 and all(len(r) == 5 for r in rows)
+    assert result["matrix"].shape == (4, 4)
+    assert len(result["chosen"]) <= 4
 
 
 def test_never_yield_keeps_blocked_move_and_deadlock_escape_still_fires(ring):

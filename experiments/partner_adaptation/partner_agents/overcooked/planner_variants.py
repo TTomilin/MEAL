@@ -223,6 +223,8 @@ PLANNER_SPECS: Dict[str, PlannerSpec] = {s.planner_id: s for s in (
     _spec("counter_feeder_right", "counter_feeder_right",
           "fills only via handoff counters, right pot when it must use a pot", "counter_only",
           role=Role.ONION, counter_only=True, pot_preference=PotPref.RIGHT),
+    _spec("idle", "idle", "never acts; reference for the ego working alone", "idle",
+          idle_prob=1.0),
 )}
 
 NEW_PLANNER_IDS = tuple(pid for pid in PLANNER_SPECS if pid not in CLASSIC_PLANNER_IDS)
