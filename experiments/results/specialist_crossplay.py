@@ -17,7 +17,7 @@ from experiments.partner_adaptation.run_outputs import code_revision
 from experiments.partner_adaptation.train_br import PartnerRolloutState, make_partner_population
 from experiments.results.cpa_eval import resolve_run_dir
 from meal import make_env
-from meal.env.overcooked.common import DIR_TO_VEC
+from meal.env.overcooked.common import DIR_TO_VEC, EVENT_NAMES
 from meal.env.overcooked.layouts.presets import overcooked_layouts
 from meal.env.overcooked.overcooked_env import Actions
 from meal.wrappers.logging import LogWrapper
@@ -70,7 +70,7 @@ def make_behaviour_eval_fn(env, ego_network, partner_population, num_episodes: i
         )
 
         def step(carry, _):
-            obs, state, rng, soups, action_counts, visits, pot_hits = carry
+            obs, state, rng, soups, partner_events, action_counts, visits, pot_hits = carry
             rng, act_key, step_key, partner_key = jax.random.split(rng, 4)
             ego_obs = obs[ego][None] if use_cnn else obs[ego].reshape(1, -1)
             pi, _, _ = ego_network.apply(ego_params, ego_obs, env_idx=env_idx)
@@ -107,16 +107,18 @@ def make_behaviour_eval_fn(env, ego_network, partner_population, num_episodes: i
                 partner_hstate=partner_hstate,
             )
             soups = soups + sum(jnp.asarray(info["soups"][a]).reshape(()) for a in env.agents)
+            partner_events = partner_events + jnp.asarray(info["events"][partner], jnp.float32)
             action_counts = action_counts.at[partner_act].add(1)
             visits = visits.at[cell].add(1)
             pot_hits = pot_hits + pot_hit.astype(jnp.float32)
-            return (obs, next_state, rng, soups, action_counts, visits, pot_hits), None
+            return (obs, next_state, rng, soups, partner_events, action_counts, visits, pot_hits), None
 
-        init = (obs, state, rng, jnp.float32(0), jnp.zeros(NUM_ACTIONS, jnp.float32),
-                jnp.zeros(n_cells, jnp.float32), jnp.zeros(num_pots, jnp.float32))
-        (_, _, _, soups, action_counts, visits, pot_hits), _ = jax.lax.scan(
+        init = (obs, state, rng, jnp.float32(0), jnp.zeros(len(EVENT_NAMES), jnp.float32),
+                jnp.zeros(NUM_ACTIONS, jnp.float32), jnp.zeros(n_cells, jnp.float32),
+                jnp.zeros(num_pots, jnp.float32))
+        (_, _, _, soups, partner_events, action_counts, visits, pot_hits), _ = jax.lax.scan(
             step, init, None, EPISODE_STEPS)
-        return soups, action_counts, visits, pot_hits
+        return soups, partner_events, action_counts, visits, pot_hits
 
     def run(rng, ego_params, env_idx, partner_params):
         keys = jax.random.split(rng, num_episodes)
@@ -175,6 +177,7 @@ def main(argv=None):
 
     means = np.zeros((P, P), np.float64)
     stds = np.zeros((P, P), np.float64)
+    partner_event_means = np.zeros((P, len(EVENT_NAMES)), np.float64)
     action_counts = np.zeros((P, P, NUM_ACTIONS), np.float64)
     visits = np.zeros((P, P, height * width), np.float64)
     pot_interactions = np.zeros((P, P, num_pots), np.float64)
@@ -202,12 +205,15 @@ def main(argv=None):
             stacked = jax.tree.map(lambda *xs: jnp.stack(xs), *(params for _, _, params in items))
             base = jax.random.fold_in(jax.random.PRNGKey(args.seed), i)
             keys = jax.vmap(lambda n: jax.random.fold_in(base, n))(indices)
-            soups, acts, vis, pots = jax.vmap(fn, in_axes=(0, None, None, 0))(
+            soups, partner_evs, acts, vis, pots = jax.vmap(fn, in_axes=(0, None, None, 0))(
                 keys, ego_params, head, stacked)
-            soups, acts, vis, pots = map(np.asarray, (soups, acts, vis, pots))
+            soups, partner_evs, acts, vis, pots = map(
+                np.asarray, (soups, partner_evs, acts, vis, pots))
             for n, j in enumerate(int(x) for x in indices):
                 means[i, j] = soups[n].mean()
                 stds[i, j] = soups[n].std(ddof=0)
+                if i == j:
+                    partner_event_means[i] = partner_evs[n].mean(axis=0)
                 action_counts[i, j] = acts[n].sum(axis=0)
                 visits[i, j] = vis[n].sum(axis=0)
                 pot_interactions[i, j] = pots[n].sum(axis=0)
@@ -216,6 +222,11 @@ def main(argv=None):
     out.mkdir(parents=True, exist_ok=True)
     write_matrix_csv(out / "xp_matrix.csv", "specialist", labels, means)
     write_matrix_csv(out / "xp_matrix_std.csv", "specialist", labels, stds)
+    with open(out / "partner_events.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["partner"] + list(EVENT_NAMES))
+        for i, label in enumerate(labels):
+            w.writerow([label] + [f"{partner_event_means[i, k]:.6g}" for k in range(len(EVENT_NAMES))])
     np.savez(out / "partner_behaviour.npz", labels=np.asarray(labels), kinds=np.asarray(kinds),
              action_counts=action_counts, visits=visits, pot_interactions=pot_interactions,
              episodes=np.asarray(args.episodes))

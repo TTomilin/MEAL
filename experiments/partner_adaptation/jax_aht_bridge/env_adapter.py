@@ -215,6 +215,7 @@ class MealOvercookedAHT(BaseEnv):
         maze_views = jnp.stack([nxt.maze_map] * self.num_agents)
         shaped = self._shaped_rewards(prev, acts, maze_views, nxt.agent_inv)
         soups = jnp.stack([info["soups"][a] for a in self.agents])
+        events = jnp.stack([info["events"][a] for a in self.agents])
 
         if reset_state is None:
             _, reset_wrapped = self.reset(k_reset)
@@ -228,7 +229,7 @@ class MealOvercookedAHT(BaseEnv):
         out_rewards = {a: base_reward[i] + self.do_reward_shaping * shaped[i] for i, a in enumerate(self.agents)}
         base_return = state.base_return_so_far + base_reward
         infos = {"shaped_reward": shaped, "base_reward": base_reward, "base_return": base_return,
-                 "soups": soups}
+                 "soups": soups, "events": events}
         new_state = WrappedEnvState(env_state=env_state,
                                     base_return_so_far=jnp.where(done, jnp.zeros(self.num_agents), base_return),
                                     avail_actions=jnp.zeros(self.num_agents),

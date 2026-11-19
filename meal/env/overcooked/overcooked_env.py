@@ -14,6 +14,7 @@ from meal.env.overcooked.common import (
     OBJECT_TO_INDEX,
     OBJECT_INDEX_TO_VEC,
     DIR_TO_VEC,
+    EVENT_NAMES,
     make_overcooked_map)
 from meal.env.overcooked.generation.layout_generator import generate_layout
 from meal.env.overcooked.layouts.presets import overcooked_layouts as layouts
@@ -391,9 +392,9 @@ class Overcooked(MultiAgentEnv):
         # interactions – sequential scan
         # ---------------------------------------------------------------------
         def body(carry, idx):
-            maze, inv, rew, shaped, soups = carry
+            maze, inv, rew, shaped, soups, events = carry
             # only process when the agent actually pressed INTERACT
-            maze_new, inv_i, r_i, s_i = lax.cond(
+            maze_new, inv_i, r_i, s_i, events_i = lax.cond(
                 action[idx] == Actions.interact,
                 lambda _: self.process_interact(
                     maze, state.wall_map, fwd_pos_all,
@@ -401,7 +402,7 @@ class Overcooked(MultiAgentEnv):
                     agent_dir_idx, state.pot_pos,
                     state.pot_empty_status, state.pot_full_status),
                 # no-op branch
-                lambda _: (maze, inv[idx], 0., 0.),
+                lambda _: (maze, inv[idx], 0., 0., jnp.zeros(len(EVENT_NAMES), jnp.float32)),
                 operand=None,
             )
             inv = inv.at[idx].set(inv_i)
@@ -410,15 +411,17 @@ class Overcooked(MultiAgentEnv):
             # Calculate soups delivered by this agent
             soups_delivered = r_i / DELIVERY_REWARD
             soups = soups.at[idx].set(soups_delivered)
-            return (maze_new, inv, rew, shaped, soups), None
+            events = events.at[idx].set(events_i)
+            return (maze_new, inv, rew, shaped, soups, events), None
 
         init_carry = (state.maze_map, state.agent_inv,
                       jnp.zeros((self.num_agents,), jnp.float32),
                       jnp.zeros((self.num_agents,), jnp.float32),
-                      jnp.zeros((self.num_agents,), jnp.float32))
+                      jnp.zeros((self.num_agents,), jnp.float32),
+                      jnp.zeros((self.num_agents, len(EVENT_NAMES)), jnp.float32))
 
-        (maze_map, agent_inv, reward, shaped_r, soups_delivered), _ = lax.scan(body, init_carry,
-                                                                               jnp.arange(self.num_agents))
+        (maze_map, agent_inv, reward, shaped_r, soups_delivered, events), _ = lax.scan(
+            body, init_carry, jnp.arange(self.num_agents))
 
         # ─── tick every pot exactly once per env-step ────────────────────────
         def tick_one(carry, i):
@@ -460,7 +463,7 @@ class Overcooked(MultiAgentEnv):
             maze_map=maze_map,
             terminal=False,
         )
-        return new_state, reward, shaped_r, soups_delivered
+        return new_state, reward, shaped_r, soups_delivered, events
 
     def step_env(
             self,
@@ -479,7 +482,7 @@ class Overcooked(MultiAgentEnv):
         # Use action_set.take() to convert indices to action values
         act_arr = self.action_set.take(indices=action_indices)
 
-        state, reward, shaped_rewards, soups_delivered = self.step_agents(key, state, act_arr)
+        state, reward, shaped_rewards, soups_delivered, events = self.step_agents(key, state, act_arr)
 
         state = state.replace(time=state.time + 1)
 
@@ -495,8 +498,9 @@ class Overcooked(MultiAgentEnv):
         shaped_dict = {a: shaped_rewards[i] for i, a in enumerate(self.agents)}
         # Add soups dictionary
         soups_dict = {a: soups_delivered[i] for i, a in enumerate(self.agents)}
+        events_dict = {a: events[i] for i, a in enumerate(self.agents)}
         done_dict = {a: done for a in self.agents} | {"__all__": done}
-        info = {'shaped_reward': shaped_dict, 'soups': soups_dict}
+        info = {'shaped_reward': shaped_dict, 'soups': soups_dict, 'events': events_dict}
 
         return (
             lax.stop_gradient(obs),
@@ -697,7 +701,7 @@ class Overcooked(MultiAgentEnv):
             pot_pos: chex.Array,
             pot_empty_status: chex.Array,
             pot_full_status: chex.Array,
-    ) -> Tuple[chex.Array, int, float, float]:
+    ) -> Tuple[chex.Array, int, float, float, chex.Array]:
         """Assume agent took interact actions. Result depends on what agent is facing and what it is holding."""
 
         fwd_pos = fwd_pos_all[player_idx]
@@ -841,7 +845,16 @@ class Overcooked(MultiAgentEnv):
 
         # Reward of 20 for a soup delivery
         reward = jnp.array(successful_delivery, dtype=float) * DELIVERY_REWARD
-        return maze_map, inventory, reward, shaped_reward
+        events = jnp.stack([
+            successful_pickup * picking_up_onion,
+            case_1,
+            has_picked_up_plate,
+            case_2,
+            successful_delivery,
+            successfully_dropped_object,
+            successful_pickup * object_is_pickable,
+        ]).astype(jnp.float32)
+        return maze_map, inventory, reward, shaped_reward, events
 
     def is_terminal(self, state: State) -> bool:
         """Check whether state is terminal."""

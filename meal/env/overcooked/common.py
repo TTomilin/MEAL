@@ -73,6 +73,16 @@ DIR_TO_VEC = jnp.array([
     (-1, 0),  # WEST
 ], dtype=jnp.int8)
 
+EVENT_NAMES = (
+    "onion_pickups",
+    "onions_into_pot",
+    "plate_pickups",
+    "soup_pickups",
+    "deliveries",
+    "counter_drops",
+    "counter_pickups",
+)
+
 
 def make_overcooked_map(
         wall_map,
