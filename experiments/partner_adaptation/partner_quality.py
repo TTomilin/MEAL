@@ -17,10 +17,13 @@ It is a smoke diagnostic. Few episodes against three fixed counterparts do not s
 planner that scores badly with these counterparts is not thereby proven unsolvable or unhelpful.
 
     python -m experiments.partner_adaptation.partner_quality --layouts coord_ring cramped_room
+    python -m experiments.partner_adaptation.partner_quality --screen coord_ring --out /tmp/screen
 """
+import csv
 import hashlib
 from dataclasses import dataclass, field
-from typing import Dict, List
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -30,11 +33,28 @@ from experiments.partner_adaptation.partner_agents.overcooked.agent_policy_wrapp
     OvercookedIndependentPolicyWrapper, OvercookedOnionPolicyWrapper, OvercookedPlannerPolicyWrapper,
     OvercookedPlatePolicyWrapper)
 from experiments.partner_adaptation.partner_agents.overcooked.planner_variants import (
-    PLANNER_SPECS, layout_collapses, planner_params)
+    GENERALIST, PLANNER_SPECS, PlannerSpec, PotPref, Role, Rotation, YIELD_NEVER, layout_collapses,
+    planner_params)
+from experiments.results.crossplay import largest_all_different
 from meal import make_env
 from meal.env.overcooked.common import OBJECT_TO_INDEX
 from meal.env.overcooked.layouts.presets import overcooked_layouts
 from meal.wrappers.logging import LogWrapper
+
+HELPFUL_RATIO = 0.8
+DIFFERENT_THRESHOLD = 0.7
+_PARAM_FIELDS = (
+    "p_onion_on_counter", "prefetch_steps", "priority", "yield_wait", "handoff_rule", "history_window",
+    "role", "counter_only", "pot_preference", "rotation", "idle_prob")
+_ROLE_TOKEN = {Role.ALL: "all", Role.ONION: "onion", Role.SERVE: "serve"}
+_POT_TOKEN = {PotPref.NEAREST: "nearest", PotPref.LEFT: "left", PotPref.RIGHT: "right"}
+_ROT_TOKEN = {Rotation.NONE: "none", Rotation.CLOCKWISE: "cw", Rotation.COUNTERCLOCKWISE: "ccw"}
+_ROLE_REPR = {Role.ALL: "Role.ALL", Role.ONION: "Role.ONION", Role.SERVE: "Role.SERVE"}
+_POT_REPR = {PotPref.NEAREST: "PotPref.NEAREST", PotPref.LEFT: "PotPref.LEFT", PotPref.RIGHT: "PotPref.RIGHT"}
+_ROT_REPR = {
+    Rotation.NONE: "Rotation.NONE", Rotation.CLOCKWISE: "Rotation.CLOCKWISE",
+    Rotation.COUNTERCLOCKWISE: "Rotation.COUNTERCLOCKWISE",
+}
 
 ACTION_NAMES = ("up", "down", "right", "left", "stay", "interact")
 ITEMS = [OBJECT_TO_INDEX[k] for k in ("onion", "plate", "dish")]
@@ -205,7 +225,143 @@ def format_report(result: Dict, flags: Dict[str, List[str]], cfg: QualityConfig)
     return "\n".join(lines)
 
 
-def main():
+def _grid_name(role, pot, rotation, yield_wait, counter_only=False):
+    parts = [_ROLE_TOKEN[role], _POT_TOKEN[pot], _ROT_TOKEN[rotation]]
+    if yield_wait == YIELD_NEVER:
+        parts.append("stubborn")
+    if counter_only:
+        parts.append("counter")
+    return "_".join(parts)
+
+
+def _params_from_override(override: dict):
+    return planner_params(PlannerSpec("", "", "", {**GENERALIST, **override}))
+
+
+def _params_key(params):
+    return tuple(np.asarray(getattr(params, f)).item() for f in _PARAM_FIELDS)
+
+
+def _override_repr(key, value):
+    if key == "role":
+        return _ROLE_REPR[value]
+    if key == "pot_preference":
+        return _POT_REPR[value]
+    if key == "rotation":
+        return _ROT_REPR[value]
+    if key == "yield_wait" and value == YIELD_NEVER:
+        return "YIELD_NEVER"
+    if key == "counter_only":
+        return "True" if value else "False"
+    return repr(value)
+
+
+def _spec_line(name: str, override: dict) -> str:
+    args = ", ".join(f"{k}={_override_repr(k, v)}" for k, v in override.items())
+    return f'_spec({name!r}, {name!r}, "", "", {args})' if args else f'_spec({name!r}, {name!r}, "", "")'
+
+
+def build_planner_grid() -> List[Tuple[str, dict]]:
+    grid = []
+    for role in (Role.ALL, Role.ONION, Role.SERVE):
+        for pot in (PotPref.NEAREST, PotPref.LEFT, PotPref.RIGHT):
+            for rotation in (Rotation.NONE, Rotation.CLOCKWISE, Rotation.COUNTERCLOCKWISE):
+                for yield_wait in (1, YIELD_NEVER):
+                    override = dict(role=role, pot_preference=pot, rotation=rotation, yield_wait=yield_wait)
+                    grid.append((_grid_name(role, pot, rotation, yield_wait), override))
+    for pot in (PotPref.NEAREST, PotPref.LEFT, PotPref.RIGHT):
+        for rotation in (Rotation.NONE, Rotation.CLOCKWISE, Rotation.COUNTERCLOCKWISE):
+            for yield_wait in (1, YIELD_NEVER):
+                override = dict(role=Role.ONION, pot_preference=pot, rotation=rotation, yield_wait=yield_wait,
+                                counter_only=True)
+                grid.append((_grid_name(Role.ONION, pot, rotation, yield_wait, counter_only=True), override))
+    grid.append(("idle", dict(idle_prob=1.0)))
+    return grid
+
+
+def _make_pair_rollout(env, planner_policy, steps):
+    def episode(params0, params1, key):
+        reset_key, act_key, step_key = jax.random.split(key, 3)
+        obs, state = env.reset(reset_key)
+        h0 = planner_policy.init_hstate(1, {"agent_id": 0})
+        h1 = planner_policy.init_hstate(1, {"agent_id": 1})
+
+        def step(carry, t):
+            obs, state, h0, h1 = carry
+            k0, k1 = jax.random.split(jax.random.fold_in(act_key, t))
+            a0, h0, _ = planner_policy.policy.act(params0, obs["agent_0"], state, h0, k0)
+            a1, h1, _ = planner_policy.policy.act(params1, obs["agent_1"], state, h1, k1)
+            acts = {"agent_0": jnp.asarray([a0], jnp.uint32), "agent_1": jnp.asarray([a1], jnp.uint32)}
+            obs2, state2, _, _, einfo = env.step(jax.random.fold_in(step_key, t), state, acts)
+            team = einfo["soups"]["agent_0"] + einfo["soups"]["agent_1"]
+            return (obs2, state2, h0, h1), team
+
+        _, team = jax.lax.scan(step, (obs, state, h0, h1), jnp.arange(steps))
+        return team.sum()
+
+    return jax.jit(jax.vmap(episode, in_axes=(None, None, 0)))
+
+
+def run_planner_screen(layout_name: str, episodes: int, out_dir, steps: int = 400, seed: int = 0,
+                       grid: Optional[Sequence[Tuple[str, dict]]] = None):
+    grid = list(grid) if grid is not None else build_planner_grid()
+    names = [name for name, _ in grid]
+    overrides = [override for _, override in grid]
+    layout = overcooked_layouts[layout_name]
+    env = LogWrapper(make_env("overcooked", layout=layout, max_steps=steps))
+    policy = OvercookedPlannerPolicyWrapper(layout)
+    keys = jax.random.split(jax.random.PRNGKey(seed), episodes)
+    roll = _make_pair_rollout(env, policy, steps)
+    params = [_params_from_override(override) for override in overrides]
+    n = len(names)
+    M = np.zeros((n, n), float)
+    for i in range(n):
+        for j in range(n):
+            M[i, j] = float(np.asarray(roll(params[i], params[j], keys)).mean())
+
+    idle_i = names.index("idle")
+    ego_alone = float(M[:, idle_i].max())
+    floor = HELPFUL_RATIO * ego_alone
+    responder = M.max(axis=0)
+    works = [(i != idle_i) and (responder[i] >= floor) for i in range(n)]
+    candidates = [i for i in range(n) if works[i]]
+    best = M.max(axis=0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ratio = M / np.where(best == 0, np.nan, best)
+    chosen = largest_all_different(ratio, candidates, DIFFERENT_THRESHOLD)
+    chosen_set = set(chosen)
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    with open(out / "planner_screen.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["planner"] + names)
+        for i, name in enumerate(names):
+            w.writerow([name] + [f"{M[i, j]:.6g}" for j in range(n)])
+
+    known = {_params_key(planner_params(pid)) for pid in PLANNER_SPECS}
+    print(f"ego_alone={ego_alone} working={sum(works)} set_size={len(chosen)}")
+    for i in chosen:
+        if _params_key(params[i]) not in known:
+            print(_spec_line(names[i], overrides[i]))
+    return dict(names=names, matrix=M, works=works, chosen=chosen, chosen_set=chosen_set,
+                ego_alone=ego_alone, idle_index=idle_i)
+
+
+def main(argv=None):
+    import argparse
+    import sys
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if any(a == "--screen" or a.startswith("--screen=") for a in argv):
+        ap = argparse.ArgumentParser(description=__doc__)
+        ap.add_argument("--screen", required=True, help="layout name to screen")
+        ap.add_argument("--episodes", type=int, default=8)
+        ap.add_argument("--out", required=True)
+        ap.add_argument("--steps", type=int, default=400)
+        ap.add_argument("--seed", type=int, default=0)
+        args = ap.parse_args(argv)
+        run_planner_screen(args.screen, args.episodes, args.out, steps=args.steps, seed=args.seed)
+        return
     import tyro
     cfg = tyro.cli(QualityConfig)
     for layout in cfg.layouts:
