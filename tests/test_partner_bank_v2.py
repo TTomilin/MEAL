@@ -431,3 +431,25 @@ def test_brdiv_members_append_to_bank_v2(tmp_path):
     incomplete.write_text(json.dumps({**json.loads(incomplete.read_text()), "status": "running"}))
     with pytest.raises(ValueError, match=str(incomplete)):
         brdiv_members([dirs[0]])
+
+
+def test_import_local_run_places_members_after_planners(tmp_path, monkeypatch):
+    from experiments.partner_adaptation.jax_aht_bridge import fetch
+
+    run = save_run(tmp_path / "src_event_1", "final_params", "mlp", (2,), seed=0)
+    event = tmp_path / "event_partners" / LAYOUT / "event_1"
+    event.parent.mkdir(parents=True)
+    os.symlink(run, event)
+
+    monkeypatch.setattr(fetch, "import_set", lambda *a, **k: ([], {}))
+    monkeypatch.setattr(fetch, "shared_runs", lambda layout: set())
+    bank = fetch.build_layout_bank(
+        LAYOUT, tmp_path / "partners", download=False, concord=False,
+        planners=("P01", "P02"), local_ippo_runs=[event])
+    assert [r.kind for r in bank.records] == ["planner", "planner", "jaxaht", "jaxaht"]
+    assert [r.partner_id for r in bank.records] == list(range(4))
+    local = [r for r in bank.records if r.kind == "jaxaht"]
+    assert all(r.population == "jaxaht_local_event_1" for r in local)
+    gen = json.loads((tmp_path / "partners" / "jaxaht" / "local" / LAYOUT / "event_1" / "generation.json").read_text())
+    assert gen["source"] == "local" and gen["actor_type"] == "mlp" and gen["test_mode"] is True
+    assert gen["num_members"] == 2 and gen["ckpt_key"] == "final_params"

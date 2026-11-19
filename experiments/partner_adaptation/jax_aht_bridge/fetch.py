@@ -85,9 +85,27 @@ def brdiv_members(dirs) -> Tuple[List[Dict], Dict[str, Path]]:
     return entries, populations
 
 
+def local_ippo_members(dirs, layout: str, out_root: Path) -> Tuple[List[Dict], Dict[str, Path]]:
+    import json
+    entries, populations = [], {}
+    for d in dirs:
+        d = Path(d)
+        if d.parent.name != layout:
+            continue
+        name = d.name
+        gen_path = hf_partners.import_local_run(d, layout, name, out_root)
+        gen = json.loads(gen_path.read_text())
+        key = f"jaxaht_local_{name}"
+        populations[key] = gen_path
+        entries += [dict(kind=KIND, population=key, member_index=m["member_index"],
+                         checkpoint=gen_path.parent / m["file"]) for m in gen["members"]]
+        print(f"  [local] {name}: {gen['num_members']} members (mlp, run {d})")
+    return entries, populations
+
+
 def build_layout_bank(layout: str, root: Path, download: bool = True, extra_partners=None,
                       extra_populations=None, concord: bool = True, keep_shared_runs: bool = False,
-                      planners=()) -> PartnerBank:
+                      planners=(), local_ippo_runs=()) -> PartnerBank:
     print(f"{layout}:")
     excluded = set() if keep_shared_runs else shared_runs(layout)
     partners, populations = import_set("val", layout, root, download, exclude_runs=excluded)
@@ -102,6 +120,10 @@ def build_layout_bank(layout: str, root: Path, download: bool = True, extra_part
     for p in planners:
         print(f"  [planner] {p}")
     populations.update(extra_populations or {})
+    if local_ippo_runs:
+        loc_entries, loc_pops = local_ippo_members(local_ippo_runs, layout, root / "jaxaht")
+        partners += loc_entries
+        populations.update(loc_pops)
     bank = write_bank_v2(str(root / f"bank_{layout}.json"), layout, partners, heldout, populations,
                          name=f"aht_{layout}")
     print(f"  wrote {bank.source}: {len(bank.records)} training partners, {len(bank.heldout)} held-out")
@@ -118,13 +140,16 @@ def main(argv=None):
                         help="also train on val members whose run supplies held-out (eval) members")
     parser.add_argument("--planners", nargs="*", default=[], help="planner ids appended to training, e.g. P01")
     parser.add_argument("--brdiv-dirs", nargs="*", type=Path, default=[])
+    parser.add_argument("--local-ippo-runs", nargs="*", type=Path, default=[],
+                        help="locally trained jax-aht IPPO run dirs (appended after planners)")
     args = parser.parse_args(argv)
     root = (args.root or default_root()).resolve()
     extra, extra_pops = brdiv_members(args.brdiv_dirs)
     for layout in args.layouts:
         build_layout_bank(layout, root, download=not args.skip_download, concord=not args.no_concord,
                           keep_shared_runs=args.keep_shared_runs, planners=args.planners,
-                          extra_partners=extra, extra_populations=extra_pops)
+                          extra_partners=extra, extra_populations=extra_pops,
+                          local_ippo_runs=args.local_ippo_runs)
 
 
 if __name__ == "__main__":

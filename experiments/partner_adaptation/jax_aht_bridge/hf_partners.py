@@ -246,3 +246,20 @@ def import_spec(spec: TeammateSpec, local_dir: Path, out_root: Path) -> Path:
     return export_population(spec, members, Path(out_root) / spec.set_name / spec.layout / spec.name,
                              source=spec.repo_id, run=spec.run_path, extra=dict(effective_indices=effective),
                              **_hydra_settings(run_dir))
+
+
+def import_local_run(run_dir, layout: str, name: str, out_root) -> Path:
+    """Import a locally trained jax-aht IPPO run (one mlp member per seed)."""
+    import jax
+    run_dir = Path(run_dir)
+    restored = restore_checkpoint(run_dir / "saved_train_run")
+    params = restored["final_params"]
+    n_seeds = int(jax.tree.leaves(params)[0].shape[0])
+    spec = TeammateSpec(set_name="local", layout=layout, name=name, actor_type="mlp",
+                        run_path=str(run_dir), ckpt_key="final_params",
+                        idx_list=list(range(n_seeds)), pop_size=1, test_mode=True)
+    effective = effective_indices(spec.idx_list, jax.tree.leaves(params)[0].shape)
+    members = select_members(params, spec.idx_list)
+    return export_population(spec, members, Path(out_root) / spec.set_name / layout / name,
+                             source="local", run=str(run_dir), extra=dict(effective_indices=effective),
+                             **_hydra_settings(run_dir))
