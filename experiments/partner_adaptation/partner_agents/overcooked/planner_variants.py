@@ -225,6 +225,10 @@ PLANNER_SPECS: Dict[str, PlannerSpec] = {s.planner_id: s for s in (
           role=Role.ONION, counter_only=True, pot_preference=PotPref.RIGHT),
     _spec("idle", "idle", "never acts; reference for the ego working alone", "idle",
           idle_prob=1.0),
+    _spec('all_nearest_cw', 'all_nearest_cw', "", "", role=Role.ALL, pot_preference=PotPref.NEAREST, rotation=Rotation.CLOCKWISE, yield_wait=1),
+    _spec('onion_nearest_none_stubborn', 'onion_nearest_none_stubborn', "", "", role=Role.ONION, pot_preference=PotPref.NEAREST, rotation=Rotation.NONE, yield_wait=YIELD_NEVER),
+    _spec('onion_nearest_ccw', 'onion_nearest_ccw', "", "", role=Role.ONION, pot_preference=PotPref.NEAREST, rotation=Rotation.COUNTERCLOCKWISE, yield_wait=1),
+    _spec('serve_nearest_none', 'serve_nearest_none', "", "", role=Role.SERVE, pot_preference=PotPref.NEAREST, rotation=Rotation.NONE, yield_wait=1),
 )}
 
 NEW_PLANNER_IDS = tuple(pid for pid in PLANNER_SPECS if pid not in CLASSIC_PLANNER_IDS)

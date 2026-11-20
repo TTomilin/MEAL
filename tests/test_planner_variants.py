@@ -122,12 +122,12 @@ def ring():
 
 #  registry
 
-def test_registry_has_twelve_stable_distinct_planners():
+def test_registry_has_stable_distinct_planners():
     assert IDS == [f"P{i:02d}" for i in range(1, 13)]
-    assert list(NEW_PLANNER_IDS) == NEW_IDS and len(NEW_IDS) == 12
+    assert list(NEW_PLANNER_IDS) == NEW_IDS and len(NEW_IDS) == 17
     assert list(PLANNER_SPECS) == IDS + NEW_IDS
-    assert len({s.config_sha256 for s in PLANNER_SPECS.values()}) == 24
-    assert len({s.name for s in PLANNER_SPECS.values()}) == 24
+    assert len({s.config_sha256 for s in PLANNER_SPECS.values()}) == 29
+    assert len({s.name for s in PLANNER_SPECS.values()}) == 29
     assert {pid: PLANNER_SPECS[pid].config_sha256 for pid in IDS} == CLASSIC_CONFIG_SHA256
     p = {k: v.params for k, v in PLANNER_SPECS.items()}
     assert (p["P01"]["p_onion_on_counter"], p["P02"]["p_onion_on_counter"]) == (0.0, 0.8)
