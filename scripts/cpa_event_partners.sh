@@ -12,6 +12,9 @@ SETTING_SEED="${SETTING_SEED:-0}"
 SEEDS="${SEEDS:-2}"
 PARALLEL="${PARALLEL:-3}"
 AHT_DIR="${AHT_DIR:-third_party/jax-aht}"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# jax-aht imports brax through jaxmarl; the bridge stubs it out.
+RUN_WITH_BRIDGE='import runpy, sys, experiments.partner_adaptation.jax_aht_bridge; sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name="__main__")'
 [[ -d "${AHT_DIR}" ]] || { echo "${AHT_DIR} not found; run scripts/aht_setup.sh" >&2; exit 1; }
 
 mkdir -p "${MEAL_CPA_ROOT}"
@@ -57,7 +60,7 @@ PY
     (
         cd "${AHT_DIR}"
         export XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.3}"
-        python marl/run.py task=overcooked-v1/"${LAYOUT}" label="event_${k}" \
+        PYTHONPATH="${REPO_ROOT}" python -c "${RUN_WITH_BRIDGE}" marl/run.py task=overcooked-v1/"${LAYOUT}" label="event_${k}" \
             algorithm.NUM_SEEDS="${SEEDS}" logger.mode=disabled \
             hydra.run.dir="${run_dir}" \
             "${overrides[@]}"
