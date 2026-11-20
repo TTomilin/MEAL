@@ -327,7 +327,7 @@ def run_planner_screen(layout_name: str, episodes: int, out_dir, steps: int = 40
     candidates = [i for i in range(n) if works[i]]
     best = M.max(axis=0)
     with np.errstate(invalid="ignore", divide="ignore"):
-        ratio = M / np.where(best == 0, np.nan, best)
+        ratio = M[M.argmax(axis=0)] / np.where(best == 0, np.nan, best)
     chosen = largest_all_different(ratio, candidates, DIFFERENT_THRESHOLD)
     chosen_set = set(chosen)
 
