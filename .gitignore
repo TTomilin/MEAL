@@ -32,3 +32,14 @@ model_*
 *.txt
 *.csv
 /.env
+
+# Cluster submission
+/.config
+/runs.log
+/cpa_root/
+/videos/
+scripts/snellius
+experiments/results/
+
+# Partner generation metadata
+generation.json
