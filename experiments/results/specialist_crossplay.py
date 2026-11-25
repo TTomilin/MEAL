@@ -12,7 +12,7 @@ import numpy as np
 
 from experiments.partner_adaptation.jax_aht_bridge.heldout import AHT_EVAL_STEPS, make_aht_eval_env
 from experiments.partner_adaptation.partner_bank import load_bank_partners, load_partner_bank
-from experiments.partner_adaptation.run_br import build_ego_network
+from experiments.partner_adaptation.run_br import TrainConfig, build_ego_network, ego_arch_key
 from experiments.partner_adaptation.run_outputs import code_revision
 from experiments.partner_adaptation.train_br import PartnerRolloutState, make_partner_population
 from experiments.results.cpa_eval import resolve_run_dir
@@ -187,20 +187,30 @@ def main(argv=None):
         key = (type(population), population.policy_cls, getattr(population, "test_mode", None))
         groups.setdefault(key, []).append((j, population, params))
 
+    arch_defaults = {
+        k: getattr(TrainConfig, k)
+        for k in ("use_cnn", "activation", "use_multihead", "shared_backbone",
+                  "hidden_size", "num_layers", "use_task_id", "use_layer_norm")
+    }
+    ego_networks = {}
+    eval_fns = {}
     for i, label in enumerate(labels):
         spec = by_label[label]
-        cfg = SimpleNamespace(**spec.config)
-        ego_network = build_ego_network(cfg, NUM_ACTIONS)
+        cfg = SimpleNamespace(**{**arch_defaults, **spec.config})
+        arch_key = ego_arch_key(cfg)
+        if arch_key not in ego_networks:
+            ego_networks[arch_key] = build_ego_network(cfg, NUM_ACTIONS)
+        ego_network = ego_networks[arch_key]
         ego_params = spec.params
         head = jnp.asarray(spec.head, jnp.int32)
-        local_fns = {}
         for key, items in groups.items():
             population = items[0][1]
-            if key not in local_fns:
-                local_fns[key] = make_behaviour_eval_fn(
+            fn_key = (arch_key, key)
+            if fn_key not in eval_fns:
+                eval_fns[fn_key] = make_behaviour_eval_fn(
                     env, ego_network, population, args.episodes, bool(cfg.use_cnn),
                     height, width, num_pots)
-            fn = local_fns[key]
+            fn = eval_fns[fn_key]
             indices = jnp.asarray([j for j, _, _ in items], jnp.int32)
             stacked = jax.tree.map(lambda *xs: jnp.stack(xs), *(params for _, _, params in items))
             base = jax.random.fold_in(jax.random.PRNGKey(args.seed), i)

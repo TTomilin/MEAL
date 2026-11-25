@@ -69,3 +69,33 @@ def test_missing_specialist_lists_labels(specialists, tmp_path):
     bank, runs = specialists
     with pytest.raises(SystemExit, match=r"no specialist.*cramped_room/P02"):
         main(["--bank", str(bank), "--runs", str(runs[0]), "--episodes", "2", "--out", str(tmp_path / "out")])
+
+
+def test_heterogeneous_specialist_architectures_and_legacy_config_crossplay(tmp_path):
+    bank = write_bank(tmp_path / "bank.json")
+    spu = 4 * 16
+    cfg0 = TrainConfig(
+        mode="disabled", checkpoint_path=str(tmp_path / "s0"), layout_name=LAYOUT,
+        partner_bank=str(bank), num_heuristic_partners=0, num_envs=4, num_steps=16, total_timesteps=spu,
+        update_epochs=1, num_minibatches=2, num_eval_episodes=1, hidden_size=16, num_layers=1, seed=0,
+        reward_shaping_horizon=spu, aht_eval=False, record_video=False, only_stages=[0],
+        eval_schedule="pilot")
+    cfg1 = TrainConfig(
+        mode="disabled", checkpoint_path=str(tmp_path / "s1"), layout_name=LAYOUT,
+        partner_bank=str(bank), num_heuristic_partners=0, num_envs=4, num_steps=16, total_timesteps=spu,
+        update_epochs=1, num_minibatches=2, num_eval_episodes=1, hidden_size=32, num_layers=2, seed=0,
+        reward_shaping_horizon=spu, aht_eval=False, record_video=False, only_stages=[1],
+        eval_schedule="pilot")
+    r0 = execute(cfg0).run_dir
+    r1 = execute(cfg1).run_dir
+    # Simulate a legacy config.json missing a defaulted architecture field.
+    c0_path = r0 / "config.json"
+    c0 = json.loads(c0_path.read_text())
+    c0.pop("use_layer_norm")
+    c0_path.write_text(json.dumps(c0))
+    out = tmp_path / "out_het"
+    main(["--bank", str(bank), "--runs", str(r0), str(r1), "--episodes", "1", "--seed", "0",
+          "--env-dynamics", "aht", "--out", str(out)])
+    with open(out / "xp_matrix.csv") as f:
+        rows = list(csv.reader(f))
+    assert len(rows) == 3 and all(len(r) == 3 for r in rows)

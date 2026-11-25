@@ -413,6 +413,21 @@ def make_train_env(config, layout_name: str, agent_stats: bool = False):
     return LogWrapper(env, agent_stats=agent_stats)
 
 
+def ego_arch_key(config):
+    """Canonical hashable key covering every config field read by `build_ego_network`."""
+    return (
+        bool(config.use_cnn),
+        str(config.activation),
+        int(config.num_population_partners) + int(config.num_heuristic_partners),
+        bool(config.use_multihead),
+        bool(config.shared_backbone),
+        int(config.hidden_size),
+        int(config.num_layers),
+        bool(config.use_task_id),
+        bool(config.use_layer_norm),
+    )
+
+
 def build_ego_network(config, action_dim: int):
     """Actor-critic module for the learning ego; architecture follows `config`."""
     ac_cls = CNNActorCritic if config.use_cnn else MLPActorCritic
