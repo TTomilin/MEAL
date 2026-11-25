@@ -47,3 +47,27 @@ def test_onion_pot_plate_events_and_unchanged_rewards():
     assert rewards.sum() == 0.0
     assert shaped[:, 1].sum() == 0.0
     assert shaped[:, 0].sum() == BASE_REW_SHAPING_PARAMS["PLACEMENT_IN_POT_REW"]
+
+
+def test_train_ego_strips_non_scalar_diagnostics_from_rollout_info():
+    from experiments.partner_adaptation.jax_aht_bridge.heldout import AhtEvalOvercooked
+    from experiments.partner_adaptation.train_ego import ROLLOUT_INFO_KEYS_TO_DROP
+    from meal.wrappers.logging import LogWrapper
+
+    base_envs = [
+        ("meal", make_env("overcooked", layout=FrozenDict(cramped_room), max_steps=4)),
+        ("aht", AhtEvalOvercooked(FrozenDict(cramped_room), "cramped_room", max_steps=4)),
+    ]
+    for dyn, base_env in base_envs:
+        for agent_stats in (False, True):
+            env = LogWrapper(base_env, agent_stats=agent_stats)
+            _, state = env.reset(jax.random.PRNGKey(0))
+            _, _, _, _, info = env.step(jax.random.PRNGKey(1), state,
+                                        {"agent_0": jnp.uint32(4), "agent_1": jnp.uint32(4)})
+            assert "events" in info
+            kept = {k: v for k, v in info.items() if k not in ROLLOUT_INFO_KEYS_TO_DROP}
+            assert "events" not in kept
+            for k, v in kept.items():
+                assert hasattr(v, "shape") and v.shape == (env.num_agents,), (
+                    f"kept info[{k!r}] (dyn={dyn}, agent_stats={agent_stats}) has non-scalar-per-agent value "
+                    f"{type(v).__name__} {getattr(v, 'shape', None)}; add to ROLLOUT_INFO_KEYS_TO_DROP")

@@ -71,6 +71,9 @@ def team_episode_summary(returned_episode_soups, returned_episode_returns, retur
 # counts are indexed by the environment's own action value (`Actions`: up, down, right, left, stay, interact).
 ACTION_NAMES = tuple(a.name for a in Actions)
 STAY_INDEX = int(Actions.stay)
+ROLLOUT_INFO_KEYS_TO_DROP = frozenset({
+    "shaped_reward", "soups", "events", "returned_episode_shaped", "returned_episode_actions",
+})
 AGENT_STAT_COLUMNS = (
     ("ego_soups", "partner_soups", "ego_raw_shaped_return", "partner_raw_shaped_return",
      "ego_stay_fraction", "partner_stay_fraction")
@@ -636,8 +639,13 @@ def train_ppo_ego_agent(
                     agent_stats_step = jnp.where(completed[:, None], episode_stats, 0.0).sum(axis=0)
 
                 # note that num_actors = num_envs * num_agents; diagnostics must not enter the PPO batch
-                keys_to_drop = {"shaped_reward", "soups", "returned_episode_shaped", "returned_episode_actions"}
-                info = {k: v for k, v in info.items() if k not in keys_to_drop}
+                info = {k: v for k, v in info.items() if k not in ROLLOUT_INFO_KEYS_TO_DROP}
+                for k, v in info.items():
+                    if not hasattr(v, "shape") or v.shape != (config.num_envs, num_agents):
+                        raise ValueError(
+                            f"rollout info[{k!r}] has shape {getattr(v, 'shape', type(v).__name__)}, "
+                            f"expected {(config.num_envs, num_agents)}; add diagnostic keys to "
+                            f"ROLLOUT_INFO_KEYS_TO_DROP")
                 info_0 = jax.tree.map(lambda x: x[:, 0], info)
 
                 # Store agent_0 data in transition
