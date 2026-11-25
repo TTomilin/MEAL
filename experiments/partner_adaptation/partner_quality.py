@@ -67,6 +67,9 @@ FLAGS = ("pot_route", "counter_route", "plate_ready", "prefetch", "both", "block
          "complement_decided", "role_onion", "role_serve", "counter_only", "pot_preference", "never_yield", "idle")
 
 
+ENV_DYNAMICS = ("meal", "aht")
+
+
 @dataclass
 class QualityConfig:
     layouts: List[str] = field(default_factory=lambda: ["coord_ring", "cramped_room"])
@@ -75,6 +78,16 @@ class QualityConfig:
     episodes: int = 8
     steps: int = 400  # the training episode length
     seed: int = 0
+    env_dynamics: str = "meal"
+
+
+def _make_quality_env(layout, layout_name: str, steps: int, env_dynamics: str):
+    if env_dynamics not in ENV_DYNAMICS:
+        raise ValueError(f"env_dynamics must be one of {ENV_DYNAMICS}, got {env_dynamics!r}")
+    if env_dynamics == "aht":
+        from experiments.partner_adaptation.jax_aht_bridge.heldout import AhtEvalOvercooked
+        return LogWrapper(AhtEvalOvercooked(layout, layout_name, max_steps=steps))
+    return LogWrapper(make_env("overcooked", layout=layout, layout_name=layout_name, max_steps=steps))
 
 
 def _counterparts(layout):
@@ -133,7 +146,7 @@ def _make_rollout(env, planner_policy, counterpart, steps):
 
 def run_layout(layout_name: str, cfg: QualityConfig) -> Dict:
     layout = overcooked_layouts[layout_name]
-    env = LogWrapper(make_env("overcooked", layout=layout, max_steps=cfg.steps))
+    env = _make_quality_env(layout, layout_name, cfg.steps, cfg.env_dynamics)
     planner_policy = OvercookedPlannerPolicyWrapper(layout)
     keys = jax.random.split(jax.random.PRNGKey(cfg.seed), cfg.episodes)
     counterparts = {k: v for k, v in _counterparts(layout).items() if k in cfg.counterparts}
@@ -303,12 +316,12 @@ def _make_pair_rollout(env, planner_policy, steps):
 
 
 def run_planner_screen(layout_name: str, episodes: int, out_dir, steps: int = 400, seed: int = 0,
-                       grid: Optional[Sequence[Tuple[str, dict]]] = None):
+                       grid: Optional[Sequence[Tuple[str, dict]]] = None, env_dynamics: str = "meal"):
     grid = list(grid) if grid is not None else build_planner_grid()
     names = [name for name, _ in grid]
     overrides = [override for _, override in grid]
     layout = overcooked_layouts[layout_name]
-    env = LogWrapper(make_env("overcooked", layout=layout, max_steps=steps))
+    env = _make_quality_env(layout, layout_name, steps, env_dynamics)
     policy = OvercookedPlannerPolicyWrapper(layout)
     keys = jax.random.split(jax.random.PRNGKey(seed), episodes)
     roll = _make_pair_rollout(env, policy, steps)
@@ -359,8 +372,10 @@ def main(argv=None):
         ap.add_argument("--out", required=True)
         ap.add_argument("--steps", type=int, default=400)
         ap.add_argument("--seed", type=int, default=0)
+        ap.add_argument("--env-dynamics", choices=ENV_DYNAMICS, default="meal")
         args = ap.parse_args(argv)
-        run_planner_screen(args.screen, args.episodes, args.out, steps=args.steps, seed=args.seed)
+        run_planner_screen(args.screen, args.episodes, args.out, steps=args.steps, seed=args.seed,
+                           env_dynamics=args.env_dynamics)
         return
     import tyro
     cfg = tyro.cli(QualityConfig)

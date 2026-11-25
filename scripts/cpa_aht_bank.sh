@@ -14,6 +14,8 @@ LAYOUT="${LAYOUT:-coord_ring}"
 SEED="${SEED:-0}"
 NUM_ENVS="${NUM_ENVS:-2048}"
 TOTAL_TIMESTEPS="${TOTAL_TIMESTEPS:-1e7}"
+ENV_DYNAMICS="${ENV_DYNAMICS:-aht}"
+PYTHON="${PYTHON:-python}"
 GROUP="${GROUP:-cpa_aht_${LAYOUT}}"
 # a quarter of TOTAL_TIMESTEPS so shaping reaches 0 within every stage
 REWARD_SHAPING_HORIZON="${REWARD_SHAPING_HORIZON:-$(awk -v t="${TOTAL_TIMESTEPS}" 'BEGIN { printf "%.6g", t / 4 }')}"
@@ -29,6 +31,9 @@ args=(--layout-name "${LAYOUT}" --partner-bank "${BANK}" --seed "${SEED}"
       --no-use-task-id --no-use-multihead
       --eval-schedule pilot --checkpoint-path "${RUN_DIR}"
       --group "${GROUP}" --tags cpa aht "${LAYOUT}")
+if [[ ! " ${EXTRA_ARGS:-} " =~ [[:space:]]--env[-_]dynamics([[:space:]=]) ]]; then
+    args+=(--env-dynamics "${ENV_DYNAMICS}")
+fi
 [[ -n "${CL_METHOD:-}" ]] && args+=(--cl-method "${CL_METHOD}")
 # optional space-separated partner indices that set stage order
 [[ -n "${STAGE_ORDER:-}" ]] && args+=(--stage-order ${STAGE_ORDER})
@@ -39,4 +44,4 @@ if command -v nvidia-smi >/dev/null; then
     trap 'kill $! 2>/dev/null || true' EXIT
 fi
 # shellcheck disable=SC2086
-python -m experiments.partner_adaptation.run_br "${args[@]}" ${EXTRA_ARGS:-}
+"${PYTHON}" -m experiments.partner_adaptation.run_br "${args[@]}" ${EXTRA_ARGS:-}

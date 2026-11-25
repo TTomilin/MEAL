@@ -14,19 +14,22 @@ SEED="${SEED:-0}"
 NUM_ENVS="${NUM_ENVS:-1024}"
 TOTAL_TIMESTEPS="${TOTAL_TIMESTEPS:-4915200}"
 GROUP="${GROUP:-cpa_specialists_${LAYOUT}}"
+ENV_DYNAMICS="${ENV_DYNAMICS:-aht}"
+PYTHON="${PYTHON:-python}"
 USER_EXTRA="${EXTRA_ARGS:-}"
 
 [[ -f "${BANK}" ]] || { echo "${BANK} not found" >&2; exit 1; }
 
 # One line per partner: index<TAB>label<TAB>payload_or_config_sha256
-PARTNER_ROWS="$(python -c "
+PARTNER_ROWS="$("${PYTHON}" -c "
+import sys
 from experiments.partner_adaptation.partner_bank import load_partner_bank, partner_identity
-bank = load_partner_bank('${BANK}', '${LAYOUT}')
+bank = load_partner_bank(sys.argv[1], sys.argv[2])
 for r in bank.records:
     ident = partner_identity(r)
     digest = ident.get('payload_sha256') or ident.get('config_sha256') or ''
     print('%s\t%s\t%s' % (r.partner_id, ident['label'], digest))
-")"
+" "${BANK}" "${LAYOUT}")"
 
 if [[ -n "${PARTNERS:-}" ]]; then
     # shellcheck disable=SC2206
@@ -40,7 +43,7 @@ fi
 
 partner_status() {
     local index="$1" expected="$2" tag_root="$3" seed="$4"
-    python -c "
+    "${PYTHON}" -c "
 import json, sys
 from pathlib import Path
 root, index, expected, seed = Path(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4]
@@ -96,8 +99,12 @@ for index in "${SELECTED[@]}"; do
     fi
     outcome="trained"
     [[ "${status}" == "stale" || "${status}" == "incomplete" ]] && outcome="${status}"
-    EXTRA_ARGS="--only-stages ${index} --env-dynamics aht --no-record-video ${USER_EXTRA}"
-    export LAYOUT BANK SEED NUM_ENVS TOTAL_TIMESTEPS RUN_TAG GROUP EXTRA_ARGS
+    if [[ " ${USER_EXTRA} " =~ [[:space:]]--env[-_]dynamics([[:space:]=]) ]]; then
+        EXTRA_ARGS="--only-stages ${index} --no-record-video ${USER_EXTRA}"
+    else
+        EXTRA_ARGS="--only-stages ${index} --env-dynamics ${ENV_DYNAMICS} --no-record-video ${USER_EXTRA}"
+    fi
+    export MEAL_CPA_ROOT PYTHON LAYOUT BANK SEED NUM_ENVS TOTAL_TIMESTEPS ENV_DYNAMICS RUN_TAG GROUP EXTRA_ARGS
     if [[ -n "${DRY_RUN:-}" ]]; then
         echo "LAYOUT=${LAYOUT} BANK=${BANK} SEED=${SEED} NUM_ENVS=${NUM_ENVS} TOTAL_TIMESTEPS=${TOTAL_TIMESTEPS} RUN_TAG=${RUN_TAG} GROUP=${GROUP} EXTRA_ARGS=${EXTRA_ARGS} scripts/cpa_aht_bank.sh"
     else

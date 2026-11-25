@@ -310,6 +310,14 @@ def resolve_run(config: TrainConfig) -> Resolved:
     if config.num_heuristic_partners is None:
         config.num_heuristic_partners = 0 if config.partner_bank else 5
     validate_config(config)
+    if config.env_dynamics == "meal":
+        seat_mismatch = [r.label for r in bank.records
+                         if r.kind == "jaxaht" and r.actor_type == "actor_with_conditional_critic"]
+        if seat_mismatch:
+            log.warning(
+                "env_dynamics='meal' with %d jax-aht confederate partner(s) trained as agent_0 (%s): "
+                "fixed spawns and MEAL collision rules mismatch jax-aht training/eval; pass --env-dynamics aht",
+                len(seat_mismatch), ", ".join(seat_mismatch[:3]) + ("..." if len(seat_mismatch) > 3 else ""))
     cl = build_cl_method(config)
     num_heuristics = min(config.num_heuristic_partners, len(HEURISTIC_NAMES))
     identities = [partner_identity(r) for r in bank.records] + [

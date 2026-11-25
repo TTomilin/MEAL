@@ -143,3 +143,50 @@ def test_tiny_meal_run_records_env_dynamics_outside_fingerprint(tmp_path):
     run = json.loads((result.run_dir / "run.json").read_text())
     assert run["env_dynamics"] == "meal"
     assert "env_dynamics" not in run["fingerprint"]["config"]
+
+
+def test_seat_mismatch_warning_for_jaxaht_confederates_under_meal_only(tmp_path, caplog):
+    import pickle
+    from experiments.partner_adaptation import run_br
+    from experiments.partner_adaptation.partner_bank import write_bank_v2
+
+    def make_bank(kind: str, actor_type: str, trained_seat: str) -> str:
+        d = tmp_path / f"pop_{kind}_{actor_type}_{trained_seat}"
+        d.mkdir()
+        with open(d / "m0.pt", "wb") as f:
+            pickle.dump({"actor_params": {"w": np.zeros((1,), np.float32)}}, f)
+        gen = {
+            "status": "complete", "kind": kind, "layout_name": "cramped_room", "actor_type": actor_type,
+            "partner_pop_size": 3, "num_members": 1, "activation": "tanh", "fc_hidden_dim": 64,
+            "test_mode": False, "source": "test", "trained_seat": trained_seat,
+            "members": [{"member_index": 0, "file": "m0.pt", "performance_bounds": {}}],
+        }
+        gen_path = d / "generation.json"
+        gen_path.write_text(json.dumps(gen))
+        bank_path = d / "bank.json"
+        write_bank_v2(str(bank_path), "cramped_room",
+                      [{"kind": kind, "population": "p", "member_index": 0, "checkpoint": d / "m0.pt"}],
+                      [], {"p": gen_path})
+        return str(bank_path)
+
+    conf_bank = make_bank("jaxaht", "actor_with_conditional_critic", "agent_0")
+    with caplog.at_level("WARNING", logger=run_br.__name__):
+        resolve_run(tiny_config(tmp_path / "r1", conf_bank, env_dynamics="meal"))
+    assert any("--env-dynamics aht" in r.message for r in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger=run_br.__name__):
+        resolve_run(tiny_config(tmp_path / "r2", conf_bank, env_dynamics="aht"))
+    assert not any("--env-dynamics aht" in r.message for r in caplog.records)
+
+    mlp_bank = make_bank("jaxaht", "mlp", "self-play")
+    caplog.clear()
+    with caplog.at_level("WARNING", logger=run_br.__name__):
+        resolve_run(tiny_config(tmp_path / "r3", mlp_bank, env_dynamics="meal"))
+    assert not any("--env-dynamics aht" in r.message for r in caplog.records)
+
+    brdiv_bank = write_bundled_planner_bank(tmp_path / "brdiv_bank.json")
+    caplog.clear()
+    with caplog.at_level("WARNING", logger=run_br.__name__):
+        resolve_run(tiny_config(tmp_path / "r4", brdiv_bank, env_dynamics="meal"))
+    assert not any("--env-dynamics aht" in r.message for r in caplog.records)

@@ -664,3 +664,24 @@ def test_new_planners_load_through_bank_manifest_and_resolve(tmp_path):
     out = tmp_path / "classic.json"
     bank24 = assemble_bank("coord_ring", str(out), [], bundled=False, planners=("all",))
     assert [r.planner_id for r in bank24.records] == IDS
+
+
+def test_partner_quality_supports_aht_dynamics_and_rejects_unknown(tmp_path):
+    cfg = QualityConfig(layouts=["coord_ring"], planners=["P01"], counterparts=["onion"],
+                        episodes=4, steps=10, seed=0, env_dynamics="aht")
+    result = run_layout("coord_ring", cfg)
+    init_positions = {tuple(map(int, result["runs"]["P01", "onion"]["pos"][ep, 0])) for ep in range(4)}
+    assert len(init_positions) > 1, "env_dynamics='aht' should randomise start cells across episodes"
+
+    grid = [
+        ("all_nearest_none", dict(role=Role.ALL, pot_preference=PotPref.NEAREST, rotation=Rotation.NONE)),
+        ("idle", dict(idle_prob=1.0)),
+    ]
+    screen = run_planner_screen("cramped_room", 2, tmp_path / "aht_screen", steps=20, grid=grid,
+                                env_dynamics="aht")
+    assert screen["matrix"].shape == (2, 2)
+
+    with pytest.raises(ValueError, match="env_dynamics"):
+        run_layout("coord_ring", QualityConfig(layouts=["coord_ring"], planners=["P01"],
+                                               counterparts=["onion"], episodes=1, steps=5,
+                                               env_dynamics="invalid"))

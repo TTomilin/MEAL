@@ -108,3 +108,56 @@ def test_incomplete_run_retrains(tmp_path):
     assert result.returncode == 0, result.stderr
     assert "0 coord_ring/P01 incomplete" in result.stdout
     assert "RUN_TAG=specialists/coord_ring__P01" in result.stdout
+
+
+def test_cpa_aht_bank_defaults_to_aht_dynamics_without_duplicating(tmp_path):
+    bank = write_bank(tmp_path / "bank.json")
+    fake_py = tmp_path / "echo_py.sh"
+    fake_py.write_text("#!/bin/bash\nprintf '%s\\n' \"$@\"\n")
+    fake_py.chmod(0o755)
+    base_env = {
+        **os.environ,
+        "LAYOUT": LAYOUT,
+        "BANK": str(bank),
+        "MEAL_CPA_ROOT": str(tmp_path),
+        "PYTHON": str(fake_py),
+    }
+    aht_bank_script = REPO / "scripts" / "cpa_aht_bank.sh"
+    default_res = subprocess.run(["bash", str(aht_bank_script)], cwd=str(REPO), env=base_env,
+                                 text=True, capture_output=True, check=False)
+    assert default_res.returncode == 0, default_res.stderr
+    argv = default_res.stdout.splitlines()
+    assert argv.count("--env-dynamics") == 1
+    assert argv[argv.index("--env-dynamics") + 1] == "aht"
+
+    extra_res = subprocess.run(["bash", str(aht_bank_script)], cwd=str(REPO),
+                               env={**base_env, "EXTRA_ARGS": "--only-stages 0 --env-dynamics aht"},
+                               text=True, capture_output=True, check=False)
+    assert extra_res.returncode == 0, extra_res.stderr
+    extra_argv = extra_res.stdout.splitlines()
+    assert extra_argv.count("--env-dynamics") == 1
+
+
+def test_cpa_specialists_exports_python_and_avoids_duplicate_env_dynamics(tmp_path):
+    import sys
+
+    bank = write_bank(tmp_path / "bank.json")
+    argv_log = tmp_path / "run_br_argv.log"
+    fake_py = tmp_path / "wrap_py.sh"
+    fake_py.write_text(
+        "#!/bin/bash\n"
+        "if [[ \"$1\" == \"-m\" && \"$2\" == \"experiments.partner_adaptation.run_br\" ]]; then\n"
+        f"    printf '%s\n' \"$@\" > {str(argv_log)!r}\n"
+        "    exit 0\n"
+        "fi\n"
+        f"exec {sys.executable!r} \"$@\"\n"
+    )
+    fake_py.chmod(0o755)
+    res = run_specialists(
+        tmp_path, bank, DRY_RUN="", PARTNERS="0", PYTHON=str(fake_py),
+        EXTRA_ARGS="--env-dynamics meal",
+    )
+    assert res.returncode == 0, res.stderr
+    argv = argv_log.read_text().splitlines()
+    assert argv.count("--env-dynamics") == 1
+    assert argv[argv.index("--env-dynamics") + 1] == "meal"
