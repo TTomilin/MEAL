@@ -6,11 +6,10 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
-from sklearn.manifold import TSNE
-from sklearn.preprocessing import StandardScaler
 
 from experiments.partner_adaptation.partner_bank import load_partner_bank
 from experiments.results.cpa_eval import short
+from experiments.partner_adaptation.diversity import relative_xp
 from experiments.results.plotting.utils import save_plot
 from experiments.results.plotting.utils import cpa_csv
 
@@ -28,12 +27,6 @@ KIND_MARKERS = {
     "planner": "X",
 }
 FALLBACK_MARKER = "o"
-
-
-def relative_xp(xp):
-    diag = np.diag(xp).astype(float)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        return xp / np.where(diag == 0, np.nan, diag)
 
 
 def tsne_perplexity(n_partners):
@@ -83,29 +76,34 @@ def _row_shares(counts):
     return counts.astype(float) / total
 
 
-def behaviour_features(action_counts, visits, pot_interactions):
-    """Per-partner features: mean over specialists of action / visit / pot shares."""
+def behaviour_features(action_counts, visits, pot_interactions, *, own_only: bool = True):
+    """Per-partner features from own-specialist rollouts (default) or mean over all specialists."""
     p = action_counts.shape[0]
     feats = []
     for j in range(p):
-        act = np.mean([_row_shares(action_counts[i, j]) for i in range(p)], axis=0)
-        vis = np.mean([_row_shares(visits[i, j]) for i in range(p)], axis=0)
-        pot = np.mean([_row_shares(pot_interactions[i, j]) for i in range(p)], axis=0)
+        if own_only:
+            act = _row_shares(action_counts[j, j])
+            vis = _row_shares(visits[j, j])
+            pot = _row_shares(pot_interactions[j, j])
+        else:
+            act = np.mean([_row_shares(action_counts[i, j]) for i in range(p)], axis=0)
+            vis = np.mean([_row_shares(visits[i, j]) for i in range(p)], axis=0)
+            pot = np.mean([_row_shares(pot_interactions[i, j]) for i in range(p)], axis=0)
         feats.append(np.concatenate([act, vis, pot]))
     return np.asarray(feats, float)
 
 
 def load_behaviour_subset(path, labels):
-    data = np.load(path)
-    beh_labels = [str(x) for x in data["labels"]]
-    index = {lab: i for i, lab in enumerate(beh_labels)}
-    missing = [lab for lab in labels if lab not in index]
-    if missing:
-        raise SystemExit(f"{path}: missing partners {missing}")
-    idx = [index[lab] for lab in labels]
-    return (data["action_counts"][np.ix_(idx, idx)],
-            data["visits"][np.ix_(idx, idx)],
-            data["pot_interactions"][np.ix_(idx, idx)])
+    with np.load(path) as data:
+        beh_labels = [str(x) for x in data["labels"]]
+        index = {lab: i for i, lab in enumerate(beh_labels)}
+        missing = [lab for lab in labels if lab not in index]
+        if missing:
+            raise SystemExit(f"{path}: missing partners {missing}")
+        idx = [index[lab] for lab in labels]
+        return (np.asarray(data["action_counts"][np.ix_(idx, idx)]),
+                np.asarray(data["visits"][np.ix_(idx, idx)]),
+                np.asarray(data["pot_interactions"][np.ix_(idx, idx)]))
 
 
 def first_planner_index(kinds):
@@ -157,6 +155,9 @@ def plot_heatmap(rel, labels, kinds, distinct_rows, layout_name, out_dir, format
 
 
 def plot_tsne(features, labels, kinds, layout_name, seed, out_dir, formats):
+    from sklearn.manifold import TSNE
+    from sklearn.preprocessing import StandardScaler
+
     p = features.shape[0]
     if p < 2:
         raise SystemExit("t-SNE needs at least 2 partners")

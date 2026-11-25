@@ -318,3 +318,102 @@ def test_largest_all_different_exact_max_clique():
     assert largest_all_different(ratio, range(5), thr) == [0, 1, 2, 3]
     assert largest_all_different(ratio, [0, 4], thr) == [0, 4]
     assert largest_all_different(ratio, [1, 4], thr) == [1]
+
+
+def test_vendi_selection_and_diversity_json(tmp_path):
+    bank, labels, kinds = write_mixed_bank(tmp_path)
+    # Partner 0 & 1 are duplicates (rel 0.9), partner 2 distinct, partner 3 is idle/low-events, partner 4 distinct.
+    xp = np.array([
+        [10.0, 8.1, 1.0, 2.0, 1.0],
+        [9.0, 9.0, 1.0, 2.0, 1.0],
+        [1.0, 1.0, 8.0, 2.0, 1.0],
+        [2.0, 2.0, 2.0, 3.0, 2.0],
+        [1.0, 1.0, 1.0, 2.0, 7.0],
+    ], dtype=float)
+    xp_std = np.full_like(xp, 0.5)
+    matrix = tmp_path / "xp_matrix.csv"
+    std_csv = tmp_path / "xp_matrix_std.csv"
+    write_matrix_csv(matrix, labels, xp)
+    write_matrix_csv(std_csv, labels, xp_std)
+
+    # Partner behaviour npz (shuffled order to test alignment)
+    beh_path = tmp_path / "partner_behaviour.npz"
+    order = [4, 2, 0, 3, 1]
+    visits = np.zeros((5, 5, 5), dtype=float)
+    for idx_pos, orig in enumerate(order):
+        visits[idx_pos, idx_pos, orig] = 100.0
+    np.savez(beh_path, labels=np.asarray([labels[i] for i in order]), kinds=np.asarray([kinds[i] for i in order]),
+             visits=visits, episodes=np.asarray(10))
+
+    events_path = tmp_path / "partner_events.csv"
+    with open(events_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["partner", "onion_pickups", "deliveries"])
+        for i, lab in enumerate(labels):
+            w.writerow([lab, 0.0 if i == 3 else 10.0, 0.0 if i == 3 else 2.0])
+
+    runs = [write_matrix_run(tmp_path / "runs", i, labels[i], train_soups=[5.0] * 8) for i in range(5)]
+    out, out_bank = tmp_path / "out", tmp_path / "vendi_bank.json"
+    main(["--bank", str(bank), "--runs", *[str(r) for r in runs],
+          "--matrix", str(matrix), "--xp-std", str(std_csv), "--behaviour", str(beh_path),
+          "--events", str(events_path), "--reference", labels[3],
+          "--keep-by", "vendi", "--strict-specialists",
+          "--out", str(out), "--out-bank", str(out_bank)])
+    div_data = json.loads((out / "diversity.json").read_text())
+    sel = json.loads((out / "selection.json").read_text())
+    # Partner 3 (reference/idle) and partner 1 (duplicate of 0) are dropped -> kept = [0, 2, 4]
+    assert sel["kept"] == [0, 2, 4]
+    assert div_data["keep_by"] == "vendi"
+    assert div_data["specialist_health"]["healthy"] is True
+    assert div_data["kept"]["n_valid"] == 3
+    assert div_data["kept"]["vendi_resp"] > 2.5
+    assert "vendi_resp_ci" in div_data["kept"]
+    assert div_data["kept"]["vendi_beh"] == pytest.approx(3.0)
+    assert div_data["vendi_curve"]["recommended_k"] == 3
+
+
+def test_strict_specialists_rejects_weak_and_still_learning(tmp_path):
+    bank = write_bank(tmp_path / "bank.json")
+    xp_weak = XP.copy()
+    xp_weak[0, 1] = 10.0  # specialist 0 beats partner 1's own specialist (8.0)
+    runs = [write_run(tmp_path / "runs", i, xp_weak[i], train_soups=[1.0, 2.0, 3.0, 10.0] if i == 2 else [5.0] * 4)
+            for i in range(4)]
+    with pytest.raises(SystemExit, match="unhealthy specialist"):
+        main(["--bank", str(bank), "--runs", *[str(r) for r in runs],
+              "--strict-specialists", "--out", str(tmp_path / "out"), "--out-bank", str(tmp_path / "out_bank.json")])
+
+
+def test_strict_specialists_ignores_zero_score_reference_and_enforces_caps_and_beh_validation(tmp_path):
+    bank, labels, kinds = write_mixed_bank(tmp_path)
+    # Partner 3 is an idle reference partner with own_score = 0.0 (as on forced_coord).
+    xp = np.array([
+        [10.0, 1.0, 1.0, 0.0, 1.0],
+        [1.0, 9.0, 1.0, 0.0, 1.0],
+        [1.0, 1.0, 8.0, 0.0, 1.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0],
+        [1.0, 1.0, 1.0, 0.0, 7.0],
+    ], dtype=float)
+    matrix = tmp_path / "xp_matrix.csv"
+    write_matrix_csv(matrix, labels, xp)
+    runs = [write_matrix_run(tmp_path / "runs", i, labels[i], train_soups=[5.0] * 8) for i in range(5)]
+
+    # With --reference labels[3], --strict-specialists succeeds and --keep learned=2 caps learned partners under vendi.
+    out, out_bank = tmp_path / "out", tmp_path / "capped_bank.json"
+    main(["--bank", str(bank), "--runs", *[str(r) for r in runs], "--matrix", str(matrix),
+          "--reference", labels[3], "--strict-specialists", "--keep-by", "vendi", "--keep", "learned=2",
+          "--out", str(out), "--out-bank", str(out_bank)])
+    sel = json.loads((out / "selection.json").read_text())
+    assert sel["kept"] == [0, 1, 4]
+
+    # Malformed --keep fails cleanly.
+    with pytest.raises(SystemExit, match="KIND=N"):
+        main(["--bank", str(bank), "--runs", *[str(r) for r in runs], "--matrix", str(matrix),
+              "--keep", "learned", "--out", str(tmp_path / "out_bad"), "--out-bank", str(tmp_path / "bad.json")])
+
+    # Malformed behaviour npz fails cleanly with SystemExit.
+    bad_beh = tmp_path / "bad_beh.npz"
+    np.savez(bad_beh, labels=np.asarray(labels), visits=np.zeros((5, 5)))
+    with pytest.raises(SystemExit, match="visits shape"):
+        main(["--bank", str(bank), "--runs", *[str(r) for r in runs], "--matrix", str(matrix),
+              "--behaviour", str(bad_beh), "--out", str(tmp_path / "out_beh"),
+              "--out-bank", str(tmp_path / "beh_bank.json")])
