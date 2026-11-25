@@ -23,6 +23,8 @@ def shared_runs(layout: str) -> set:
 def import_set(set_name: str, layout: str, root: Path, download: bool, exclude_runs=(),
                bc_proxy: bool = True) -> Tuple[List[Dict], Dict[str, Path]]:
     import json
+    for name, actor_type in hf_partners.skipped_specs(set_name, layout, include_bc=bc_proxy):
+        print(f"  [{set_name}] {name}: skipped (unsupported actor_type {actor_type!r})")
     specs = []
     for spec in hf_partners.load_specs(set_name, layout):
         if spec.run_dir in exclude_runs:
@@ -44,7 +46,7 @@ def import_set(set_name: str, layout: str, root: Path, download: bool, exclude_r
         if download:
             hf_partners.download([spec], hf_dir)
         gen_path = hf_partners.import_bc_proxy(spec, hf_dir, root / "jaxaht")
-        key = f"{spec.population_key}"
+        key = spec.population_key
         populations[key] = gen_path
         entries.append(dict(kind="bc_proxy", population=key, member_index=0, checkpoint=gen_path.parent / "m0.pt"))
         print(f"  [{set_name}] {spec.name}: BC human proxy run {spec.idx_list[0]} ({spec.run_path})")

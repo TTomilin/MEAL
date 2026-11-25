@@ -453,3 +453,78 @@ def test_import_local_run_places_members_after_planners(tmp_path, monkeypatch):
     gen = json.loads((tmp_path / "partners" / "jaxaht" / "local" / LAYOUT / "event_1" / "generation.json").read_text())
     assert gen["source"] == "local" and gen["actor_type"] == "mlp" and gen["test_mode"] is True
     assert gen["num_members"] == 2 and gen["ckpt_key"] == "final_params"
+
+
+def test_skipped_specs_reported_and_logged(caplog):
+    skipped = hf_partners.skipped_specs("eval", LAYOUT, include_bc=True)
+    assert skipped and all(actor_type not in ("mlp", "actor_with_conditional_critic", "bc_proxy")
+                           for _, actor_type in skipped)
+    with caplog.at_level("WARNING", logger=hf_partners.__name__):
+        hf_partners.load_specs("eval", LAYOUT)
+    assert any("skipping" in r.message and "unsupported" in r.message for r in caplog.records)
+
+
+def test_hydra_settings_honors_spec_overrides_and_warns_when_missing(tmp_path, caplog):
+    missing_dir = tmp_path / "no_hydra"
+    missing_dir.mkdir()
+    with caplog.at_level("WARNING", logger=hf_partners.__name__):
+        got = hf_partners._hydra_settings(missing_dir)
+    assert got == {"activation": "tanh", "fc_hidden_dim": 64}
+    assert any("missing" in r.message for r in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger=hf_partners.__name__):
+        explicit = hf_partners._hydra_settings(missing_dir, activation="relu", fc_hidden_dim=256)
+    assert explicit == {"activation": "relu", "fc_hidden_dim": 256}
+    assert not caplog.records
+
+
+def test_jaxmarl_compat_policy_rejects_unsupported_inner():
+    class FakeRecurrent:
+        action_dim = 6
+        obs_dim = 650
+
+    with pytest.raises(TypeError, match="hidden-state forwarding"):
+        JaxMarlCompatPolicy(FakeRecurrent(), height=5, width=5, test_mode=False)
+
+
+def test_hydra_settings_precedence_and_bfs_over_nested_subconfigs(tmp_path):
+    run_dir = tmp_path / "run_with_hydra"
+    (run_dir / ".hydra").mkdir(parents=True)
+    # Nested ego_train_algorithm appears BEFORE top-level ACTIVATION/FC_HIDDEN_DIM.
+    (run_dir / ".hydra" / "config.yaml").write_text(
+        "algorithm:\n"
+        "  ego_train_algorithm:\n"
+        "    ACTIVATION: silu\n"
+        "    FC_HIDDEN_DIM: 32\n"
+        "  ACTIVATION: relu\n"
+        "  FC_HIDDEN_DIM: 128\n"
+    )
+    # Top-level algorithm keys beat nested sub-config keys.
+    assert hf_partners._hydra_settings(run_dir) == {"activation": "relu", "fc_hidden_dim": 128}
+    # Explicit YAML spec override wins over .hydra/config.yaml when both exist.
+    assert hf_partners._hydra_settings(run_dir, activation="tanh", fc_hidden_dim=256) == {
+        "activation": "tanh", "fc_hidden_dim": 256,
+    }
+
+
+def test_load_and_skipped_specs_ignore_null_yaml_entries(tmp_path):
+    cfg = tmp_path / "evaluation" / "configs" / "global_heldout_settings.yaml"
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text(
+        "heldout_set:\n"
+        "  overcooked-v1/coord_ring:\n"
+        "    removed_agent: null\n"
+        "    ippo:\n"
+        "      path: eval_teammates/overcooked-v1/coord_ring/ippo/saved_train_run\n"
+        "      actor_type: mlp\n"
+        "      idx_list: [0]\n"
+        "    human_proxy:\n"
+        "      path: eval_teammates/overcooked-v1/coord_ring/human_proxy/models\n"
+        "      actor_type: bc_proxy\n"
+        "    heuristic_x:\n"
+        "      actor_type: independent_agent\n"
+    )
+    assert hf_partners.skipped_specs("eval", "coord_ring", root=tmp_path) == [("heuristic_x", "independent_agent")]
+    assert [s.name for s in hf_partners.load_specs("eval", "coord_ring", root=tmp_path)] == ["ippo"]
+    assert [s.name for s in hf_partners.load_bc_specs("eval", "coord_ring", root=tmp_path)] == ["human_proxy"]

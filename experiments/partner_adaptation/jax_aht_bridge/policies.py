@@ -27,6 +27,11 @@ def make_jaxaht_policy(actor_type: str, obs_dim: int, action_dim: int = 6, pop_s
 class JaxMarlCompatPolicy(AgentPolicy):
 
     def __init__(self, inner, height: int, width: int, test_mode: bool):
+        if not isinstance(inner, (AhtMLPPolicy, AhtConditionalCriticPolicy)):
+            raise TypeError(
+                f"JaxMarlCompatPolicy only supports feed-forward jax-aht policies "
+                f"(MLPActorCriticPolicy, ActorWithConditionalCriticPolicy), got {type(inner).__name__}; "
+                f"recurrent policies require hidden-state forwarding")
         super().__init__(inner.action_dim, inner.obs_dim)
         self.inner = inner
         self.height, self.width = int(height), int(width)

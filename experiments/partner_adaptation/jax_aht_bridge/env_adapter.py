@@ -33,7 +33,6 @@ JAXAHT_BASE_REW_SHAPING_PARAMS = {
     "SOUP_DISTANCE_REW": [0, 0],
 }
 _UNSUPPORTED_SHAPING = ("DISH_DISP_DISTANCE_REW", "POT_DISTANCE_REW", "SOUP_DISTANCE_REW")
-_JAXAHT_POT_EMPTY_STATUS = 23  # OvercookedV1 samples pot status in [0, 24)
 
 
 def _symmetric_shaping(params) -> Dict[str, np.ndarray]:
@@ -141,7 +140,7 @@ class MealOvercookedAHT(BaseEnv):
             maze = maze.at[new_pos[:, 1], new_pos[:, 0], :].set(agent_tiles)
             state = state.replace(agent_pos=new_pos)
         if self.random_obj_state:
-            status = jax.random.randint(k_pot, (state.pot_pos.shape[0],), 0, _JAXAHT_POT_EMPTY_STATUS + 1)
+            status = jax.random.randint(k_pot, (state.pot_pos.shape[0],), 0, state.pot_empty_status + 1)
             status = jnp.where(state.pot_mask, status, maze[state.pot_pos[:, 1], state.pot_pos[:, 0], 2])
             maze = maze.at[state.pot_pos[:, 1], state.pot_pos[:, 0], 2].set(status.astype(maze.dtype))
             items = jnp.array([OBJECT_TO_INDEX["empty"], OBJECT_TO_INDEX["onion"], OBJECT_TO_INDEX["plate"],
@@ -164,7 +163,7 @@ class MealOvercookedAHT(BaseEnv):
             is_pot = tile == OBJECT_TO_INDEX["pot"]
             holding_onion = inv_pre == OBJECT_TO_INDEX["onion"]
             holding_plate = inv_pre == OBJECT_TO_INDEX["plate"]
-            placement = is_pot & holding_onion & (status > self.env.cook_time)
+            placement = is_pot & holding_onion & (status > prev.pot_full_status)
             soup_pickup = is_pot & holding_plate & (status == 0)
             pickup = (inv_pre == OBJECT_TO_INDEX["empty"]) & (inv_post != OBJECT_TO_INDEX["empty"]) & ~is_pot
             from_pile = (tile == OBJECT_TO_INDEX["onion_pile"]) | (tile == OBJECT_TO_INDEX["plate_pile"])
@@ -175,7 +174,7 @@ class MealOvercookedAHT(BaseEnv):
             # OvercookedV1's plate check always matches wall padding (grey == plate == 5), so it is 0 there
             picked_plate = pickup & (inv_post == OBJECT_TO_INDEX["plate"])
             pots = maze[prev.pot_pos[:, 1], prev.pot_pos[:, 0], 2]
-            notempty_pots = jnp.sum((pots != self.env.cook_time + 3) & prev.pot_mask)
+            notempty_pots = jnp.sum((pots != prev.pot_empty_status) & prev.pot_mask)
             useful = 0 < notempty_pots
             no_plates = jnp.sum(maze_after_own_turn[i] == OBJECT_TO_INDEX["plate"]) == 0
             plate_pickup = picked_plate & useful & no_plates
@@ -215,7 +214,6 @@ class MealOvercookedAHT(BaseEnv):
         maze_views = jnp.stack([nxt.maze_map] * self.num_agents)
         shaped = self._shaped_rewards(prev, acts, maze_views, nxt.agent_inv)
         soups = jnp.stack([info["soups"][a] for a in self.agents])
-        events = jnp.stack([info["events"][a] for a in self.agents])
 
         if reset_state is None:
             _, reset_wrapped = self.reset(k_reset)
@@ -229,7 +227,7 @@ class MealOvercookedAHT(BaseEnv):
         out_rewards = {a: base_reward[i] + self.do_reward_shaping * shaped[i] for i, a in enumerate(self.agents)}
         base_return = state.base_return_so_far + base_reward
         infos = {"shaped_reward": shaped, "base_reward": base_reward, "base_return": base_return,
-                 "soups": soups, "events": events}
+                 "soups": soups}
         new_state = WrappedEnvState(env_state=env_state,
                                     base_return_so_far=jnp.where(done, jnp.zeros(self.num_agents), base_return),
                                     avail_actions=jnp.zeros(self.num_agents),

@@ -160,3 +160,52 @@ def test_random_obj_state_randomises_pots_and_inventory():
     pots = np.asarray(s.maze_map)[:, np.asarray(s.pot_pos[0, :1, 1]), np.asarray(s.pot_pos[0, :1, 0]), 2]
     assert len(np.unique(pots)) > 1 and pots.max() <= 23
     assert len(np.unique(np.asarray(s.agent_inv))) > 1
+
+
+def test_step_info_leaves_match_jaxaht_num_agents_contract():
+    env = MealOvercookedAHT("coord_ring", random_reset=False, do_reward_shaping=True)
+    _, state = env.reset(jax.random.PRNGKey(0))
+    _, _, _, _, info = env.step(jax.random.PRNGKey(1), state, {"agent_0": jnp.int32(4), "agent_1": jnp.int32(4)})
+    assert "events" not in info
+    for key, val in info.items():
+        assert val.shape == (env.num_agents,), f"info[{key!r}] has shape {val.shape}, expected ({env.num_agents},)"
+
+
+def test_custom_cook_time_uses_dynamic_pot_empty_status():
+    env = MealOvercookedAHT("cramped_room", random_reset=False, random_obj_state=True,
+                            do_reward_shaping=True, cook_time=10)
+    _, states = jax.vmap(env.reset)(jax.random.split(jax.random.PRNGKey(0), 64))
+    s = states.env_state
+    pots = np.asarray(s.maze_map)[:, np.asarray(s.pot_pos[0, :1, 1]), np.asarray(s.pot_pos[0, :1, 0]), 2]
+    assert int(s.pot_empty_status[0]) == 13
+    assert len(np.unique(pots)) > 1 and pots.max() <= 13
+
+
+def test_custom_and_random_cook_time_step_shaping_under_jit():
+    from meal.env.overcooked.common import OBJECT_TO_INDEX
+
+    env = MealOvercookedAHT("cramped_room", random_reset=False, do_reward_shaping=True,
+                            reward_shaping_params={"PLACEMENT_IN_POT_REW": 3.0}, cook_time=10)
+    _, state = env.reset(jax.random.PRNGKey(0))
+    raw = state.env_state
+    # Agent 0 at (2, 1) facing up onto pot (2, 0), holding onion; pot status = 13 (> pot_full_status=10).
+    raw = raw.replace(
+        agent_pos=jnp.array([[2, 1], [3, 2]], dtype=raw.agent_pos.dtype),
+        agent_dir_idx=jnp.array([0, 0], dtype=raw.agent_dir_idx.dtype),
+        agent_inv=jnp.array([OBJECT_TO_INDEX["onion"], OBJECT_TO_INDEX["empty"]], dtype=raw.agent_inv.dtype),
+    )
+    _, nxt, _, _, info = env.step(jax.random.PRNGKey(1), state.replace(env_state=raw),
+                                  {"agent_0": jnp.int32(5), "agent_1": jnp.int32(4)})
+    assert float(info["shaped_reward"][0]) == pytest.approx(3.0)
+    assert int(nxt.env_state.maze_map[0, 2, 2]) == 12
+
+    rand_env = MealOvercookedAHT("cramped_room", random_reset=True, random_obj_state=True,
+                                 do_reward_shaping=True, random_cook_time=True, random_pot_size=True)
+    keys = jax.random.split(jax.random.PRNGKey(2), 16)
+    _, states = jax.vmap(rand_env.reset)(keys)
+    assert len(np.unique(np.asarray(states.env_state.pot_empty_status))) > 1
+    _, _, _, _, infos = jax.vmap(rand_env.step)(
+        jax.random.split(jax.random.PRNGKey(3), 16), states,
+        {"agent_0": jnp.full((16,), 5, jnp.int32), "agent_1": jnp.full((16,), 4, jnp.int32)},
+    )
+    assert infos["shaped_reward"].shape == (16, 2)

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import pickle
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import yaml
@@ -21,7 +22,9 @@ SETS = {
     "val": dict(config="evaluation/configs/global_validation_settings.yaml", repo_id="jaxaht/val-teammates",
                 path_prefix="val_teammates/"),
 }
+BC_ACTOR_TYPE = "bc_proxy"
 DEFAULT_ACTIVATION, DEFAULT_FC_HIDDEN = "tanh", 64
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -37,6 +40,8 @@ class TeammateSpec:
     test_mode: bool = False
     custom_loader: Optional[Dict[str, Any]] = None
     performance_bounds: Dict[str, Any] = field(default_factory=dict)
+    activation: Optional[str] = None
+    fc_hidden_dim: Optional[int] = None
 
     @property
     def repo_id(self) -> str:
@@ -52,40 +57,62 @@ class TeammateSpec:
         return f"jaxaht_{self.set_name}_{self.name}"
 
 
-def load_specs(set_name: str, layout: str, root: Path = JAX_AHT_ROOT, kinds=ACTOR_TYPES) -> List[TeammateSpec]:
+def _load_layout_entries(set_name: str, layout: str, root: Path = JAX_AHT_ROOT) -> Tuple[Dict[str, Any], str]:
     cfg = yaml.safe_load((Path(root) / SETS[set_name]["config"]).read_text())
     entries = cfg["heldout_set"].get(f"{TASK_PREFIX}/{layout}")
     if entries is None:
         raise KeyError(f"{SETS[set_name]['config']} has no {TASK_PREFIX}/{layout} entry")
-    prefix = SETS[set_name]["path_prefix"]
-    specs = []
+    return entries, SETS[set_name]["path_prefix"]
+
+
+def skipped_specs(set_name: str, layout: str, root: Path = JAX_AHT_ROOT, kinds=ACTOR_TYPES,
+                  include_bc: bool = True) -> List[Tuple[str, str]]:
+    entries, _ = _load_layout_entries(set_name, layout, root)
+    allowed = set(kinds) | ({BC_ACTOR_TYPE} if include_bc else set())
+    return [(name, str(entry.get("actor_type", "")))
+            for name, entry in entries.items()
+            if isinstance(entry, dict) and entry.get("actor_type") not in allowed]
+
+
+def load_specs(set_name: str, layout: str, root: Path = JAX_AHT_ROOT, kinds=ACTOR_TYPES) -> List[TeammateSpec]:
+    entries, prefix = _load_layout_entries(set_name, layout, root)
+    specs, skipped = [], []
     for name, entry in entries.items():
-        if entry.get("actor_type") not in kinds:
+        if not isinstance(entry, dict):
+            continue
+        actor_type = entry.get("actor_type")
+        if actor_type not in kinds:
+            if actor_type != BC_ACTOR_TYPE:
+                skipped.append(f"{name} ({actor_type})")
             continue
         path = str(entry["path"])
         if not path.startswith(prefix):
             raise ValueError(f"{set_name}/{layout}/{name}: path {path!r} does not start with {prefix!r}")
         specs.append(TeammateSpec(
-            set_name=set_name, layout=layout, name=name, actor_type=entry["actor_type"],
+            set_name=set_name, layout=layout, name=name, actor_type=actor_type,
             run_path=path[len(prefix):].rstrip("/"), ckpt_key=entry.get("ckpt_key", "checkpoints"),
             idx_list=entry.get("idx_list"), pop_size=entry.get("POP_SIZE"),
             test_mode=bool(entry.get("test_mode", False)), custom_loader=entry.get("custom_loader"),
-            performance_bounds=dict(entry.get("performance_bounds") or {})))
+            performance_bounds=dict(entry.get("performance_bounds") or {}),
+            activation=str(entry["ACTIVATION"]) if entry.get("ACTIVATION") is not None else None,
+            fc_hidden_dim=int(entry["FC_HIDDEN_DIM"]) if entry.get("FC_HIDDEN_DIM") is not None else None))
+    if skipped:
+        log.warning("%s/%s: skipping %d unsupported jax-aht teammates: %s",
+                    set_name, layout, len(skipped), ", ".join(skipped))
     return specs
 
 
-BC_ACTOR_TYPE = "bc_proxy"
-
-
 def load_bc_specs(set_name: str, layout: str, root: Path = JAX_AHT_ROOT) -> List[TeammateSpec]:
-    cfg = yaml.safe_load((Path(root) / SETS[set_name]["config"]).read_text())
-    prefix = SETS[set_name]["path_prefix"]
+    entries, prefix = _load_layout_entries(set_name, layout, root)
     out = []
-    for name, entry in (cfg["heldout_set"].get(f"{TASK_PREFIX}/{layout}") or {}).items():
-        if entry.get("actor_type") != BC_ACTOR_TYPE:
+    for name, entry in entries.items():
+        if not isinstance(entry, dict) or entry.get("actor_type") != BC_ACTOR_TYPE:
             continue
+        path = str(entry["path"])
+        if not path.startswith(prefix):
+            raise ValueError(f"{set_name}/{layout}/{name}: path {path!r} does not start with {prefix!r}")
         out.append(TeammateSpec(set_name=set_name, layout=layout, name=name, actor_type=BC_ACTOR_TYPE,
-                                run_path=str(entry["path"])[len(prefix):].rstrip("/"), ckpt_key="params",
+                                run_path=path[len(prefix):].rstrip("/"), ckpt_key="params",
                                 idx_list=[int(entry.get("run_id", 0))], pop_size=1,
                                 test_mode=bool(entry.get("test_mode", True)),
                                 performance_bounds=dict(entry.get("performance_bounds") or {})))
@@ -171,19 +198,28 @@ def _member_bounds(bounds: Dict[str, Any], k: int, n: int) -> Dict[str, List[flo
     return out
 
 
-def _hydra_settings(run_dir: Path) -> Dict[str, Any]:
+def _hydra_settings(run_dir: Path, *, activation: Optional[str] = None,
+                    fc_hidden_dim: Optional[int] = None) -> Dict[str, Any]:
     found = {}
     cfg_path = run_dir / ".hydra" / "config.yaml"
     if cfg_path.is_file():
-        def walk(d):
-            if isinstance(d, dict):
-                for k, v in d.items():
-                    if k in ("ACTIVATION", "FC_HIDDEN_DIM") and not isinstance(v, (dict, list)):
-                        found.setdefault(k, v)
-                    walk(v)
-        walk(((yaml.safe_load(cfg_path.read_text()) or {}).get("algorithm")) or {})
-    return dict(activation=str(found.get("ACTIVATION", DEFAULT_ACTIVATION)),
-                fc_hidden_dim=int(found.get("FC_HIDDEN_DIM", DEFAULT_FC_HIDDEN)))
+        queue = [((yaml.safe_load(cfg_path.read_text()) or {}).get("algorithm")) or {}]
+        while queue:
+            d = queue.pop(0)
+            if not isinstance(d, dict):
+                continue
+            for k, v in d.items():
+                if k in ("ACTIVATION", "FC_HIDDEN_DIM") and not isinstance(v, (dict, list)) and v is not None:
+                    found.setdefault(k, v)
+                elif isinstance(v, dict):
+                    queue.append(v)
+    elif activation is None or fc_hidden_dim is None:
+        log.warning("%s missing: falling back to defaults for unspecified settings (activation=%s, fc_hidden_dim=%d)",
+                    cfg_path, activation or DEFAULT_ACTIVATION,
+                    fc_hidden_dim if fc_hidden_dim is not None else DEFAULT_FC_HIDDEN)
+    resolved_act = activation if activation is not None else found.get("ACTIVATION", DEFAULT_ACTIVATION)
+    resolved_dim = fc_hidden_dim if fc_hidden_dim is not None else found.get("FC_HIDDEN_DIM", DEFAULT_FC_HIDDEN)
+    return dict(activation=str(resolved_act), fc_hidden_dim=int(resolved_dim))
 
 
 def export_population(spec: TeammateSpec, members: List[Any], out_dir: Path, *, source: str, run: str,
@@ -245,10 +281,11 @@ def import_spec(spec: TeammateSpec, local_dir: Path, out_root: Path) -> Path:
     members = select_members(params, spec.idx_list)
     return export_population(spec, members, Path(out_root) / spec.set_name / spec.layout / spec.name,
                              source=spec.repo_id, run=spec.run_path, extra=dict(effective_indices=effective),
-                             **_hydra_settings(run_dir))
+                             **_hydra_settings(run_dir, activation=spec.activation,
+                                               fc_hidden_dim=spec.fc_hidden_dim))
 
 
-def import_local_run(run_dir, layout: str, name: str, out_root) -> Path:
+def import_local_run(run_dir, layout: str, name: str, out_root, *, test_mode: bool = True) -> Path:
     """Import a locally trained jax-aht IPPO run (one mlp member per seed)."""
     import jax
     run_dir = Path(run_dir)
@@ -257,7 +294,7 @@ def import_local_run(run_dir, layout: str, name: str, out_root) -> Path:
     n_seeds = int(jax.tree.leaves(params)[0].shape[0])
     spec = TeammateSpec(set_name="local", layout=layout, name=name, actor_type="mlp",
                         run_path=str(run_dir), ckpt_key="final_params",
-                        idx_list=list(range(n_seeds)), pop_size=1, test_mode=True)
+                        idx_list=list(range(n_seeds)), pop_size=1, test_mode=test_mode)
     effective = effective_indices(spec.idx_list, jax.tree.leaves(params)[0].shape)
     members = select_members(params, spec.idx_list)
     return export_population(spec, members, Path(out_root) / spec.set_name / layout / name,
