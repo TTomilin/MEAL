@@ -209,3 +209,46 @@ actual trained behavior rather than logged metrics.
 ```bash
 python experiments/results/coordination_matrix.py --run_dir checkpoints/overcooked/EWC/run_A
 ```
+
+
+## 5. Behaviour Vendi of the jax-aht held-out teammates
+
+[`jaxaht_behaviour.py`](jaxaht_behaviour.py) plays each held-out teammate of a jax-aht Overcooked
+layout with its own trained best response (the pairs on the diagonal of
+`third_party/jax-aht/evaluation/xp_matrices/<layout>.csv`) and counts where the teammate stands
+and which action it takes. It prints the response Vendi of that csv next to two behaviour Vendi
+scores: one over tile visits (the Bhattacharyya kernel of `diversity.behaviour_kernel`) and one
+over (tile, action) pairs. Tile visits alone can't tell a clockwise from a counter-clockwise
+walker on `coord_ring` or `counter_circuit`; the (tile, action) version can.
+
+The best responses are recurrent S5 policies, and jax-aht's loaders import packages MEAL's
+environment doesn't install, so this runs in a separate Python 3.11 environment with jax-aht's own
+dependencies. One-time setup, from the repository root:
+
+```bash
+git submodule update --init third_party/jax-aht   # should be at 87a9e44, the commit that added the XP matrices
+conda create -n jaxaht python=3.11 -y && conda activate jaxaht
+python -m pip install -e third_party/jax-aht
+cd third_party/jax-aht
+python -c "from download_eval_data import download_hf_directory as d; d('jaxaht/eval-teammates', 'overcooked-v1', 'eval_teammates/')"
+cd ../..
+```
+
+Then, per layout, download its best responses and run. The best responses for all nine
+jax-aht tasks come to about 74 GB, so fetch one layout at a time:
+
+```bash
+cd third_party/jax-aht
+python -c "from huggingface_hub import snapshot_download as s; s('jaxaht/eval-teammates-br', repo_type='dataset', local_dir='eval_teammates', allow_patterns=['overcooked_v1_coord_ring/*'])"
+cd ../..
+python -m experiments.results.jaxaht_behaviour --layout coord_ring
+```
+
+`eval_teammates/` is git-ignored inside the submodule. Results go to
+`$MEAL_CPA_ROOT/behaviour/<layout>.json` (default `cpa_root/behaviour/`) together with the raw counts.
+The episodes use jax-aht's evaluation seeds, so each teammate's own score should match the csv
+diagonal; on CPU small float differences make it land near the diagonal instead, inside the csv's
+`ci_lower`/`ci_upper`. The interval on the behaviour scores comes from resampling episodes. Like the
+interval on the response Vendi, it is biased upwards (noise only adds apparent diversity), so the
+point estimate can sit at or just below its lower end.
+
